@@ -30,6 +30,10 @@
 
 #include "gamewin.h"
 
+#ifdef USE_LLM_AGENT
+#	include "llm/agentserver.h"
+#endif
+
 #include "Astar.h"
 #include "Audio.h"
 #include "AudioMixer.h"
@@ -2835,6 +2839,13 @@ void Game_window::lose_focus() {
 	if (!focus) {
 		return;    // Fixes SDL bug.
 	}
+#ifdef USE_LLM_AGENT
+	// When the LLM agent bridge is active, keep running in the background so
+	// the agent can observe and act without the window being focused.
+	if (LLM_agent::Agent_server_running()) {
+		return;
+	}
+#endif
 	cout << "Game paused" << endl;
 
 	string str;

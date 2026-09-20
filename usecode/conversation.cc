@@ -557,6 +557,7 @@ void Conversation::show_npc_message(const char* msg) {
 	string translated(msg);
 	translate_usecode_text(translated);
 	msg = translated.c_str();
+	last_npc_text = translated;    // Remember for the LLM agent bridge.
 	// Wait for any sprite effects to finish before showing text.
 	Effects_manager* eman = gwin->get_effects();
 	if (eman->has_active_sprites()) {

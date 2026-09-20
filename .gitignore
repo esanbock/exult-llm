@@ -334,3 +334,15 @@ android/lib/build/
 docs/xml/web_tmp/docs.html
 docs/xml/web_tmp/faq.html
 docs/xml/web_tmp/studio.html
+
+# --- LLM agent fork: local artifacts ---
+/blackgate/
+/exult.cfg
+/run_out.log
+/run_err.log
+/agent_out*.log
+/agent_err*.log
+/build_llm*.log
+tools/llm_agent/driver_out.log
+tools/llm_agent/driver_err.log
+tools/llm_agent/__pycache__/

@@ -64,6 +64,9 @@
 #include "items.h"
 #include "keyactions.h"
 #include "keys.h"
+#ifdef USE_LLM_AGENT
+#	include "llm/agentserver.h"
+#endif
 #include "mouse.h"
 #include "palette.h"
 #include "party.h"
@@ -211,6 +214,11 @@ static bool   arg_write_xml    = false;    // Write out game's config. as XML.
 static bool   arg_reset_video  = false;    // Resets the video setings.
 static bool   arg_verify_files = false;    // Verify a game's files.
 
+#ifdef USE_LLM_AGENT
+static bool arg_llmagent      = false;    // Enable the LLM agent TCP server.
+static int  arg_llmagent_port = 0;        // Port (0 => default 45999).
+#endif
+
 static string arg_installmod  = {};
 static string arg_installdata = {};
 
@@ -310,6 +318,10 @@ int main(int argc, char* argv[]) {
 	parameters.declare("--verify-files", &arg_verify_files, true);
 	parameters.declare("--installdata", &arg_installdata);
 	parameters.declare("--installmod", &arg_installmod);
+#ifdef USE_LLM_AGENT
+	parameters.declare("--llmagent", &arg_llmagent, true);
+	parameters.declare("--llmagent-port", &arg_llmagent_port, 0);
+#endif
 #if defined _WIN32
 	bool portable = false;
 	parameters.declare("-p", &portable, true);
@@ -1138,6 +1150,13 @@ static void Init() {
 
 	gwin->init_files();
 	gwin->read_gwin();
+#ifdef USE_LLM_AGENT
+	// Open the agent bridge before setup_game() so the port is available
+	// immediately (setup_game may run a blocking intro loop for a new game).
+	if (arg_llmagent) {
+		LLM_agent::Agent_server_init(arg_llmagent_port);
+	}
+#endif
 	gwin->setup_game(arg_edit_mode);    // This will start the scene.
 										// Get scale factor for mouse.
 #ifdef USE_EXULTSTUDIO
@@ -1163,6 +1182,10 @@ static int Play() {
 									   //// of gwin->read(), so no need to call it here, I hope...
 		}
 	} while (quitting_time == QUIT_TIME_RESTART);
+
+#ifdef USE_LLM_AGENT
+	LLM_agent::Agent_server_close();
+#endif
 
 	delete gwin;
 
@@ -1351,6 +1374,9 @@ static void Handle_events() {
 #else
 		Delay();    // Wait a fraction of a second.
 #endif
+#ifdef USE_LLM_AGENT
+		LLM_agent::Agent_server_poll();    // Service the LLM agent bridge.
+#endif
 		// Mouse scale factor
 		// int scale = gwin->get_fastmouse() ? 1 :
 		//              gwin->get_win()->get_scale();
@@ -1390,6 +1416,13 @@ static void Handle_events() {
 		if (gwin->have_focus() && !dragging) {
 			gwin->get_tqueue()->activate(ticks);
 		}
+#ifdef USE_LLM_AGENT
+		else if (LLM_agent::Agent_server_running() && !dragging) {
+			// Keep the world ticking for the LLM agent even when the window
+			// is not focused (e.g. running headless/in the background).
+			gwin->get_tqueue()->activate(ticks);
+		}
+#endif
 
 		// Moved this out of the animation loop, since we want movement to be
 		// more responsive. Also, if the step delta is only 1 tile,
@@ -2342,6 +2375,12 @@ static bool Get_click(
 	while (true) {
 		SDL_Event event;
 		Delay();    // Wait a fraction of a second.
+#ifdef USE_LLM_AGENT
+		// Service the LLM agent bridge while blocked here (e.g. during a
+		// conversation's answer-selection loop) so the agent can push its
+		// answer/key events, which this loop then consumes.
+		LLM_agent::Agent_server_poll();
+#endif
 
 		const uint32 ticks = SDL_GetTicks();
 		Game::set_ticks(ticks);

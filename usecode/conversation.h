@@ -48,10 +48,22 @@ private:
 
 	std::vector<std::string>             answers;
 	std::deque<std::vector<std::string>> answer_stack;
+	std::string                          last_npc_text;    // Most recent NPC line (for LLM agent).
 
 public:
 	inline int get_num_answers() const {
 		return answers.size();
+	}
+
+	// True while the Avatar's answer choices are being shown (used by the
+	// LLM agent bridge to detect an interactive conversation prompt).
+	inline bool are_choices_active() const {
+		return choices_active;
+	}
+
+	// The most recent line spoken by an NPC in the current conversation.
+	inline const std::string& get_last_npc_text() const {
+		return last_npc_text;
 	}
 
 	inline int get_num_faces_on_screen() const {

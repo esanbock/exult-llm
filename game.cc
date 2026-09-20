@@ -44,6 +44,9 @@
 #include "istring.h"
 #include "items.h"
 #include "keys.h"
+#ifdef USE_LLM_AGENT
+#	include "llm/agentserver.h"
+#endif
 #include "menulist.h"
 #include "mouse.h"
 #include "palette.h"
@@ -892,6 +895,10 @@ int wait_delay(int ms, int startcol, int ncol, int rotspd) {
 
 	for (int i = 0; i < loops; i++) {
 		const unsigned long ticks1 = SDL_GetTicks();
+#ifdef USE_LLM_AGENT
+		// Keep the LLM agent bridge alive during intro/menu wait loops.
+		LLM_agent::Agent_server_poll();
+#endif
 		// this may be a bit risky... How fast can events be generated?
 		while (SDL_PollEvent(&event)) {
 			switch (event.type) {

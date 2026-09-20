@@ -96,6 +96,12 @@ public:
 		avatar_is_thief       = 0x2eb,
 	};
 
+	// Get the active conversation object (may be nullptr).  Added for the
+	// LLM agent bridge so external observers can read pending answer choices.
+	Conversation* get_conversation() const {
+		return conv;
+	}
+
 	// Get ith flag, without bounds checks.
 	bool get_global_flag_unsafe(int i) {
 		return gflags[i] != 0;

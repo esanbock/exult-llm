@@ -182,6 +182,12 @@
     <ClCompile Include="..\..\args.cc">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\llm\agent.cc">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\llm\agentserver.cc">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\browser.cc">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -788,6 +794,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\args.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\llm\agent.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\llm\agentserver.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\browser.h">
