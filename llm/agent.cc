@@ -796,6 +796,83 @@ namespace LLM_agent {
 			return "{\"ok\":false,\"error\":\"could not carry '" + json_escape(nm) + "'\"}";
 		}
 
+		if (type == "goto") {
+			// Pathfind (A*) to a destination: an explicit tile {tx,ty}, or the
+			// nearest NPC/object matching {name}.  Routes around walls and
+			// through doorways automatically.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			const Tile_coord at = av->get_tile();
+			long tx = -1;
+			long ty = -1;
+			Tile_coord dest(0, 0, at.tz);
+			bool have_dest = false;
+			if (get_int(action_json, "tx", tx) && get_int(action_json, "ty", ty)) {
+				dest      = Tile_coord(static_cast<int>(tx), static_cast<int>(ty), at.tz);
+				have_dest = true;
+			} else {
+				string want;
+				if (get_string(action_json, "name", want)) {
+					std::string wlow = want;
+					std::transform(wlow.begin(), wlow.end(), wlow.begin(), ::tolower);
+					// Search NPCs first, then objects.
+					int best_d = 1 << 30;
+					std::vector<Actor*> npcs;
+					gwin->get_nearby_npcs(npcs);
+					for (Actor* npc : npcs) {
+						if (!npc || npc == av) {
+							continue;
+						}
+						std::string nlow = npc->get_name();
+						std::transform(nlow.begin(), nlow.end(), nlow.begin(), ::tolower);
+						if (nlow.find(wlow) == std::string::npos) {
+							continue;
+						}
+						const Tile_coord nt = npc->get_tile();
+						const int d = std::abs(nt.tx - at.tx) + std::abs(nt.ty - at.ty);
+						if (d < best_d) {
+							best_d = d;
+							dest = nt;
+							have_dest = true;
+						}
+					}
+					if (!have_dest) {
+						Game_object_vector objs;
+						Game_object::find_nearby(objs, at, -1, 18, 0);
+						for (Game_object* obj : objs) {
+							if (!obj || obj->as_actor() || obj->get_name().empty()) {
+								continue;
+							}
+							std::string nlow = obj->get_name();
+							std::transform(nlow.begin(), nlow.end(), nlow.begin(), ::tolower);
+							if (nlow.find(wlow) == std::string::npos) {
+								continue;
+							}
+							const Tile_coord ot = obj->get_tile();
+							const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+							if (d < best_d) {
+								best_d = d;
+								dest = ot;
+								have_dest = true;
+							}
+						}
+					}
+				}
+			}
+			if (!have_dest) {
+				return "{\"ok\":false,\"error\":\"no destination (give tx/ty or a visible name)\"}";
+			}
+			long speed = 200;
+			get_int(action_json, "speed", speed);
+			if (av->walk_path_to_tile(dest, static_cast<int>(speed))) {
+				return "{\"ok\":true,\"did\":\"goto\"," + json_int("tx", dest.tx) + ","
+					   + json_int("ty", dest.ty) + "}";
+			}
+			return "{\"ok\":false,\"error\":\"no path to destination\"}";
+		}
+
 		if (type == "open") {
 			// Open (toggle) the nearest door within a few tiles.  Optional
 			// {"dir":...} biases toward a door in that compass direction.

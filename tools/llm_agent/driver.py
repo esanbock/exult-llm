@@ -92,6 +92,11 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   move    - Walk one step. params: {"dir": one of n,s,e,w,ne,nw,se,sw}
             Use the grid: step onto '.' tiles, never into '#'. To reach an
             NPC/object, move toward its (dx,dy).
+  goto    - PATHFIND to a destination and walk there automatically, routing
+            around walls and THROUGH doorways. params: {"name": "<NPC/object>"}
+            to go to the nearest thing with that name, OR {"tx":<int>,"ty":<int>}
+            for an absolute tile. PREFER "goto" over many "move" steps when you
+            want to reach a specific NPC, item, or building entrance.
   stop    - Stop walking. params: none.
   talk    - START a conversation with a nearby NPC. params: {"name": "<NPC name>"}
             This is the ONLY way to begin dialog. Walking next to an NPC does
@@ -129,9 +134,10 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
      IMPORTANT: do NOT "talk" to anyone already in "already_talked_to" - you
      have covered them. Pick a DIFFERENT nearby NPC, or explore to find new
      people and places (like the stables) by "move"-ing to unexplored areas.
-  4. Else explore with "move", using the grid to avoid '#' and head toward
-     interesting NPCs/objects. If a closed door '+' blocks your path, move next
-     to it, use "open", then move through the '/' opening.
+  4. Else explore. To reach a specific NPC, item, or building/entrance, PREFER
+     "goto" (it pathfinds around walls and through doors). Use single "move"
+     steps only for small local adjustments. If a closed door '+' blocks you,
+     you can also move next to it, "open" it, then move through the '/' opening.
   4b. AT A CRIME/LOOT SCENE: when you see a body ('x') or items ('*' / entries
      in "objects") nearby, do NOT just pace around them. Move adjacent, then
      "search" a body/container, and "pickup" important items (keys, jewelry,
