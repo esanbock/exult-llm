@@ -689,6 +689,105 @@ namespace LLM_agent {
 					  : "{\"ok\":false,\"error\":\"no bandage in party\"}";
 		}
 
+		if (type == "search") {
+			// Open (activate) the nearest body or unlocked container so its
+			// contents become accessible - this is how you loot a murder
+			// victim or a chest.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			const Tile_coord   at = av->get_tile();
+			Game_object_vector objs;
+			Game_object::find_nearby(objs, at, -1, 4, 0);
+			Game_object* best   = nullptr;
+			int          best_d = 1 << 30;
+			for (Game_object* obj : objs) {
+				if (!obj) {
+					continue;
+				}
+				const Shape_info& info = obj->get_info();
+				const bool        is_container
+						= info.get_shape_class() == Shape_info::container;
+				if (!info.is_body_shape() && !is_container) {
+					continue;
+				}
+				const Tile_coord ot = obj->get_tile();
+				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+				if (d < best_d) {
+					best_d = d;
+					best   = obj;
+				}
+			}
+			if (!best) {
+				return "{\"ok\":false,\"error\":\"no body or container nearby\"}";
+			}
+			const std::string nm = best->get_name();
+			best->activate();    // opens the body/container
+			return "{\"ok\":true,\"did\":\"search\",\"target\":\"" + json_escape(nm) + "\"}";
+		}
+
+		if (type == "pickup") {
+			// Take the nearest takeable world object (optionally matching a
+			// name) into the avatar's inventory.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			string want;
+			get_string(action_json, "name", want);
+			std::string wlow = want;
+			std::transform(wlow.begin(), wlow.end(), wlow.begin(), ::tolower);
+
+			const Tile_coord   at = av->get_tile();
+			Game_object_vector objs;
+			Game_object::find_nearby(objs, at, -1, 3, 0);
+			Game_object* best   = nullptr;
+			int          best_d = 1 << 30;
+			for (Game_object* obj : objs) {
+				if (!obj || obj->as_actor()) {
+					continue;
+				}
+				const Shape_info& info = obj->get_info();
+				// Skip fixed scenery: doors, furniture-like, buildings.
+				if (info.is_door()) {
+					continue;
+				}
+				const std::string nm = obj->get_name();
+				if (nm.empty()) {
+					continue;
+				}
+				if (!wlow.empty()) {
+					std::string nlow = nm;
+					std::transform(nlow.begin(), nlow.end(), nlow.begin(), ::tolower);
+					if (nlow.find(wlow) == std::string::npos) {
+						continue;
+					}
+				}
+				const Tile_coord ot = obj->get_tile();
+				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+				if (d < best_d) {
+					best_d = d;
+					best   = obj;
+				}
+			}
+			if (!best) {
+				return "{\"ok\":false,\"error\":\"no takeable object nearby\"}";
+			}
+			const std::string nm = best->get_name();
+			// Detach from the world, keeping a shared ref alive, then add to
+			// the avatar's inventory.
+			Game_object_shared keep;
+			best->remove_this(&keep);
+			if (av->add(best, false, true)) {
+				return "{\"ok\":true,\"did\":\"pickup\",\"item\":\"" + json_escape(nm) + "\"}";
+			}
+			// Couldn't carry it - drop it back where the avatar stands.
+			best->set_invalid();
+			best->move(at.tx, at.ty, at.tz);
+			return "{\"ok\":false,\"error\":\"could not carry '" + json_escape(nm) + "'\"}";
+		}
+
 		if (type == "open") {
 			// Open (toggle) the nearest door within a few tiles.  Optional
 			// {"dir":...} biases toward a door in that compass direction.

@@ -24,6 +24,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -99,6 +102,13 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
             Doors show as '+' (closed) or '/' (open) on the grid and in "doors".
             A closed door ('+') blocks you - walk adjacent to it, "open" it, then
             "move" through the now-open ('/') doorway.
+  search  - Open the nearest body or container to see/take what is inside.
+            params: none. Use this on a murder victim's body ('x' on the grid)
+            or a chest to reveal loot. After searching, use "pickup" to take items.
+  pickup  - Take a nearby item off the ground/scene into your inventory.
+            params: {"name": "<item name>"} (optional; omit to grab the closest
+            takeable item). Use this to collect clues and loot like keys, jewelry,
+            gold, etc. that appear as '*' on the grid or in "objects".
   answer  - Choose a reply during a conversation. params: {"index": <int>} (0-based
             into the "answers" list) OR {"text": "<answer text>"}.
             Only valid when conversation_active is true.
@@ -116,9 +126,16 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
      answer choices appear. Do NOT "talk" again or "move" during a conversation.
   3. Else if you want to talk to someone in "nearby" -> "talk" with their name.
      Do NOT repeatedly "move" toward them expecting dialog to auto-start.
+     IMPORTANT: do NOT "talk" to anyone already in "already_talked_to" - you
+     have covered them. Pick a DIFFERENT nearby NPC, or explore to find new
+     people and places (like the stables) by "move"-ing to unexplored areas.
   4. Else explore with "move", using the grid to avoid '#' and head toward
      interesting NPCs/objects. If a closed door '+' blocks your path, move next
      to it, use "open", then move through the '/' opening.
+  4b. AT A CRIME/LOOT SCENE: when you see a body ('x') or items ('*' / entries
+     in "objects") nearby, do NOT just pace around them. Move adjacent, then
+     "search" a body/container, and "pickup" important items (keys, jewelry,
+     gold, notes) to collect evidence. Pick up each listed object in "objects".
   5. If your food is low, use "feed". If threatened, "combat".
 
 Reply with ONLY the single JSON object. No prose, no markdown.
@@ -130,16 +147,19 @@ def summarize_state(state: dict, memory: dict | None = None) -> str:
     p = state.get("player") or {}
     nearby = state.get("nearby") or []
     objects = state.get("objects") or []
+    # Only surface dialog fields when a conversation is actually open, so the
+    # model isn't misled by stale npc_text into pressing space forever.
+    in_convo = bool(state.get("conversation_in_progress"))
     view = {
         "player": {
             "tx": p.get("tx"), "ty": p.get("ty"),
             "hp": p.get("hp"), "dead": p.get("dead"),
         },
         "in_combat": state.get("in_combat"),
-        "conversation_in_progress": state.get("conversation_in_progress"),
+        "conversation_in_progress": in_convo,
         "conversation_active": state.get("conversation_active"),
-        "npc_text": state.get("npc_text"),
-        "answers": state.get("answers"),
+        "npc_text": state.get("npc_text") if in_convo else None,
+        "answers": state.get("answers") if in_convo else [],
         "nearby": [
             {"name": n.get("name"), "dx": n.get("dx"), "dy": n.get("dy")}
             for n in nearby[:8]
@@ -159,7 +179,11 @@ def summarize_state(state: dict, memory: dict | None = None) -> str:
             for d in doors[:6]
         ]
     if memory:
-        view["already_talked_to"] = sorted(memory.get("talked", []))
+        talked = memory.get("talked", {})
+        if isinstance(talked, dict):
+            view["already_talked_to"] = sorted(talked.keys())
+        else:
+            view["already_talked_to"] = sorted(talked)
         if memory.get("journal"):
             view["journal"] = memory["journal"][-8:]  # recent notes
     return json.dumps(view)
@@ -237,6 +261,65 @@ def scripted_reply(step: int, state: dict) -> tuple[str, dict]:
     return (f"Exploring; moving {d}.", {"type": "move", "dir": d})
 
 
+def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _find_exult_exe(explicit: str | None) -> str | None:
+    """Locate Exult.exe: explicit path, else repo root above tools/llm_agent."""
+    if explicit and os.path.isfile(explicit):
+        return explicit
+    here = os.path.dirname(os.path.abspath(__file__))       # tools/llm_agent
+    repo = os.path.abspath(os.path.join(here, os.pardir, os.pardir))
+    for name in ("Exult.exe", "exult.exe", "exult"):
+        cand = os.path.join(repo, name)
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def ensure_exult_running(args) -> subprocess.Popen | None:
+    """If the bridge port isn't open, launch Exult and wait for it. Returns the
+    process we started (so we can shut it down), or None if it was already up."""
+    if _port_open(args.host, args.port):
+        print(f"[+] Exult already listening on {args.host}:{args.port}")
+        return None
+    if args.no_launch:
+        raise ConnectionError(
+            f"Exult not running on {args.host}:{args.port} and --no-launch set")
+
+    exe = _find_exult_exe(args.exult_exe)
+    if not exe:
+        raise FileNotFoundError(
+            "Could not find Exult.exe. Pass --exult-exe <path> or start Exult "
+            "manually with: Exult.exe --bg --nomenu --llmagent")
+
+    cwd = os.path.dirname(exe)
+    cmd = [exe, "--bg", "--nomenu", "--llmagent"]
+    if args.port != 45999:
+        cmd += ["--llmagent-port", str(args.port)]
+    print(f"[+] Launching Exult: {' '.join(cmd)}")
+    out = open(os.path.join(cwd, "run_out.log"), "w")
+    err = open(os.path.join(cwd, "run_err.log"), "w")
+    proc = subprocess.Popen(cmd, cwd=cwd, stdout=out, stderr=err)
+
+    # Wait for the bridge to come up (Exult loads data, then opens the port).
+    for _ in range(60):
+        if _port_open(args.host, args.port):
+            print(f"[+] Exult bridge is up on {args.host}:{args.port}")
+            return proc
+        if proc.poll() is not None:
+            raise RuntimeError(
+                f"Exult exited during startup (code {proc.returncode}); "
+                f"see {cwd}\\run_err.log")
+        time.sleep(1.0)
+    raise TimeoutError("Exult did not open the agent port within 60s")
+
+
 def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> None:
     state = exult.observe()
     if window.available:
@@ -256,9 +339,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> Non
         time.sleep(args.delay)
         return
 
-    # Record NPC dialog into the journal (dedup consecutive dups).
+    # Record NPC dialog into the journal (only while in a conversation, and
+    # dedup consecutive duplicates).
     npc_text = state.get("npc_text")
-    if npc_text and (not memory["journal"] or memory["journal"][-1] != npc_text):
+    if (state.get("conversation_in_progress") and npc_text
+            and (not memory["journal"] or memory["journal"][-1] != npc_text)):
         memory["journal"].append(npc_text)
 
     if args.dry_run:
@@ -273,33 +358,92 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> Non
         window.set_thinking(reason)
 
     # --- Driver-side guards to keep behavior sane ------------------------
+    talked = memory["talked"]  # name -> times talked
+    MAX_TALKS = 2              # don't re-talk the same NPC more than this
+
     # 1) If a conversation is open but no choices are shown yet, advance text.
     if state.get("conversation_in_progress") and not state.get("conversation_active"):
         action = {"type": "key", "key": "space"}
         reason = "(guard) advancing NPC dialog"
-    # 2) Anti-chase: if the model keeps trying to MOVE toward a talkable NPC
-    #    that is already close, just talk to it instead of pacing.
-    elif (isinstance(action, dict) and action.get("type") == "move"
-          and not state.get("conversation_in_progress")):
-        pos = (state.get("player") or {}).get("tx"), (state.get("player") or {}).get("ty")
-        recent_positions.append(pos)
-        if len(recent_positions) > 6:
-            recent_positions.pop(0)
-        stuck = len(recent_positions) >= 4 and len(set(recent_positions)) <= 2
-        close_npcs = [n for n in (state.get("nearby") or [])
-                      if not n.get("dead") and abs(n.get("dx", 99)) <= 4
-                      and abs(n.get("dy", 99)) <= 4]
-        if stuck and close_npcs:
-            target = min(close_npcs, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
-            action = {"type": "talk", "name": target["name"]}
-            reason = f"(guard) stuck near {target['name']}; talking instead of moving"
-            recent_positions.clear()
+    else:
+        # 1b) A "space"/"key" press outside a conversation does nothing. If the
+        #     model tries it (misled by stale text), redirect to something
+        #     useful: talk to a fresh nearby NPC, else explore.
+        if (isinstance(action, dict) and action.get("type") == "key"
+                and not state.get("conversation_in_progress")):
+            fresh = [n for n in (state.get("nearby") or [])
+                     if not n.get("dead") and talked.get(n.get("name"), 0) < MAX_TALKS]
+            if fresh:
+                target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
+                action = {"type": "talk", "name": target["name"]}
+                reason = f"(guard) no conversation open; talking to {target['name']}"
+            else:
+                d = ["n", "e", "s", "w", "ne", "sw"][step % 6]
+                action = {"type": "move", "dir": d}
+                reason = f"(guard) no conversation and NPCs exhausted; exploring {d}"
+        # 2) If the model wants to talk to someone we've already exhausted,
+        #    redirect to a not-yet-talked nearby NPC, else explore.
+        if isinstance(action, dict) and action.get("type") == "talk":
+            nm = action.get("name", "")
+            if nm and talked.get(nm, 0) >= MAX_TALKS:
+                fresh = [n for n in (state.get("nearby") or [])
+                         if not n.get("dead") and talked.get(n.get("name"), 0) < MAX_TALKS]
+                if fresh:
+                    target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
+                    action = {"type": "talk", "name": target["name"]}
+                    reason = f"(guard) already talked to {nm}; trying {target['name']}"
+                else:
+                    # Everyone nearby is exhausted -> go explore for new NPCs.
+                    action = {"type": "move", "dir": "n"}
+                    reason = "(guard) all nearby NPCs exhausted; exploring"
+        # 3) Anti-chase: if the model keeps MOVING and oscillating near a
+        #    NOT-yet-talked NPC, talk to it instead of pacing.
+        elif (isinstance(action, dict) and action.get("type") == "move"
+              and not state.get("conversation_in_progress")):
+            pos = (state.get("player") or {}).get("tx"), (state.get("player") or {}).get("ty")
+            recent_positions.append(pos)
+            if len(recent_positions) > 6:
+                recent_positions.pop(0)
+            stuck = len(recent_positions) >= 4 and len(set(recent_positions)) <= 2
+            fresh = [n for n in (state.get("nearby") or [])
+                     if not n.get("dead") and abs(n.get("dx", 99)) <= 4
+                     and abs(n.get("dy", 99)) <= 4 and talked.get(n.get("name"), 0) < MAX_TALKS]
+            if stuck and fresh:
+                target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
+                action = {"type": "talk", "name": target["name"]}
+                reason = f"(guard) stuck near {target['name']}; talking instead of moving"
+                recent_positions.clear()
+            elif stuck:
+                # Stuck near loot? Grab it. Bodies -> search; items -> pickup.
+                objs = [o for o in (state.get("objects") or [])
+                        if abs(o.get("dx", 99)) <= 3 and abs(o.get("dy", 99)) <= 3
+                        and o.get("name") not in memory.get("picked", set())]
+                dead_bodies = [n for n in (state.get("nearby") or [])
+                               if n.get("dead") and abs(n.get("dx", 99)) <= 2
+                               and abs(n.get("dy", 99)) <= 2]
+                if dead_bodies and not memory.get("searched_body"):
+                    action = {"type": "search"}
+                    reason = "(guard) stuck near a body; searching it"
+                    memory["searched_body"] = True
+                    recent_positions.clear()
+                elif objs:
+                    it = min(objs, key=lambda o: abs(o["dx"]) + abs(o["dy"]))
+                    action = {"type": "pickup", "name": it["name"]}
+                    reason = f"(guard) stuck near {it['name']}; picking it up"
+                    memory.setdefault("picked", set()).add(it["name"])
+                    recent_positions.clear()
+                else:
+                    # Nothing to grab: explore in a varying direction.
+                    d = ["n", "e", "s", "w", "ne", "sw"][step % 6]
+                    action = {"type": "move", "dir": d}
+                    reason = f"(guard) stuck; exploring {d} for new areas"
+                    recent_positions.clear()
 
     # "talk" is a top-level command, not an act() action.
     if isinstance(action, dict) and action.get("type") == "talk":
         tname = action.get("name", "")
         if tname:
-            memory["talked"].add(tname)
+            talked[tname] = talked.get(tname, 0) + 1
         result = exult.talk(tname)
     else:
         result = exult.act(action)
@@ -315,7 +459,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> Non
 
 def run_loop(args, window: ThoughtsWindow, ollama) -> None:
     recent_positions: list = []
-    memory: dict = {"talked": set(), "journal": []}
+    memory: dict = {"talked": {}, "journal": []}
     exult = ExultClient(args.host, args.port)
     try:
         exult.connect()
@@ -356,6 +500,10 @@ def main() -> int:
                     help="periodically restore food so the party can't starve")
     ap.add_argument("--auto-feed-every", type=int, default=20,
                     help="feed every N turns when --auto-feed is set")
+    ap.add_argument("--exult-exe", default=None,
+                    help="path to Exult.exe (auto-detected at repo root if omitted)")
+    ap.add_argument("--no-launch", action="store_true",
+                    help="do not auto-launch Exult; require it to be running")
     args = ap.parse_args()
 
     ollama = None
@@ -369,17 +517,33 @@ def main() -> int:
             )
             return 2
 
+    # Make sure the game is running (launch it if needed).
+    try:
+        exult_proc = ensure_exult_running(args)
+    except Exception as e:
+        print(f"[!] {e}", file=sys.stderr)
+        return 3
+
     window = ThoughtsWindow()
     if args.show_thoughts:
         window.start()
 
-    if window.available and args.show_thoughts:
-        # Tkinter must own the main thread; run the game loop in a worker.
-        worker = threading.Thread(target=run_loop, args=(args, window, ollama), daemon=True)
-        worker.start()
-        window.mainloop()
-    else:
-        run_loop(args, window, ollama)
+    try:
+        if window.available and args.show_thoughts:
+            # Tkinter must own the main thread; run the game loop in a worker.
+            worker = threading.Thread(target=run_loop, args=(args, window, ollama), daemon=True)
+            worker.start()
+            window.mainloop()
+        else:
+            run_loop(args, window, ollama)
+    finally:
+        # Only shut down Exult if WE launched it.
+        if exult_proc is not None:
+            print("[+] Shutting down the Exult instance we launched...")
+            try:
+                exult_proc.terminate()
+            except Exception:
+                pass
 
     return 0
 
