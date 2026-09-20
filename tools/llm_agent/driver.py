@@ -82,8 +82,8 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
                                 dx>0 = east, dx<0 = west, dy>0 = south, dy<0 = north
   objects (list)              - items on the ground: {name, dx, dy}
   grid (string)               - top-down ASCII map centered on you (@):
-                                  @ you   & NPC   x body   * object
-                                  + closed door   / open door
+                                  @ you   C companion   & other NPC   x body
+                                  * object   + closed door   / open door
                                   # blocked/impassable   . open ground
                                 north=up, south=down, east=right, west=left
   doors (list)                - nearby doors: {name, dx, dy, closed}

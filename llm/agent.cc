@@ -329,7 +329,15 @@ namespace {
 					continue;
 				}
 				const Tile_coord nt = npc->get_tile();
-				plot(nt.tx, nt.ty, npc->is_dead() ? 'x' : '&');
+				char glyph;
+				if (npc->is_dead()) {
+					glyph = 'x';                       // body
+				} else if (npc->get_party_id() >= 0) {
+					glyph = 'C';                       // party companion
+				} else {
+					glyph = '&';                       // other NPC
+				}
+				plot(nt.tx, nt.ty, glyph);
 			}
 		}
 
@@ -494,7 +502,7 @@ namespace LLM_agent {
 			std::string grid   = build_grid(av, radius);
 			os << ',' << json_int("grid_radius", radius);
 			os << ',' << json_str("grid_legend",
-					"@=you &=npc x=body *=object +=closed_door /=open_door #=blocked .=open; north=up east=right");
+					"@=you C=companion &=npc x=body *=object +=closed_door /=open_door #=blocked .=open; north=up east=right");
 			os << ',' << json_str("grid", grid);
 		}
 
