@@ -699,9 +699,23 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             picked.add(chosen_idx)
 
     # 1) If a conversation is open but no choices are shown yet, advance text.
+    #    But if it has stayed 'in progress' with no choices for many turns
+    #    (a hung conversation), Escape out of it instead of pressing space
+    #    forever - space isn't advancing it.
     if state.get("conversation_in_progress") and not state.get("conversation_active"):
-        action = {"type": "key", "key": "space"}
-        reason = "(guard) advancing NPC dialog"
+        cur_text = state.get("npc_text")
+        if cur_text == session.get("stuck_convo_text"):
+            session["stuck_convo_n"] = session.get("stuck_convo_n", 0) + 1
+        else:
+            session["stuck_convo_n"] = 0
+            session["stuck_convo_text"] = cur_text
+        if session.get("stuck_convo_n", 0) >= 4:
+            action = {"type": "key", "key": "escape"}
+            reason = "(guard) conversation hung with no choices; escaping"
+            session["stuck_convo_n"] = 0
+        else:
+            action = {"type": "key", "key": "space"}
+            reason = "(guard) advancing NPC dialog"
     # 0.5) Wedged (position unchanged for several turns, e.g. against the ocean
     #      or a wall while repeating the same goto): step out with raw single
     #      moves toward open grid tiles (goto can keep failing on long paths).
