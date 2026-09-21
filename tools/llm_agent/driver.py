@@ -81,8 +81,11 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   npc_text (string|null)      - the last thing an NPC said to you
   answers (list[string])      - the reply choices you may pick (only when
                                 conversation_active is true)
-  nearby (list)               - NPCs you can see: {name, dx, dy, in_party, dead}
+  nearby (list)               - NPCs you can see: {name, dx, dy, in_party, status}
                                 dx>0 = east, dx<0 = west, dy>0 = south, dy<0 = north
+                                status = new (never talked) | talked (may have more)
+                                | exhausted (you already asked all they know for now -
+                                talking again wastes turns until the situation changes)
   objects (list)              - items on the ground: {name, dx, dy}
   grid (string)               - top-down ASCII map centered on you (@):
                                   @ you   C companion   & other NPC   x body
@@ -168,12 +171,13 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
      choices yet) -> use "key" with "space" to advance the NPC's text until the
      answer choices appear. Do NOT "talk" again or "move" during a conversation.
   3. Else if you want to talk to someone in "nearby" -> "talk" with their name.
-     Do NOT repeatedly "move" toward them expecting dialog to auto-start.
-     Generally don't re-talk to someone in "already_talked_to" just to repeat
-     the same topics. BUT it is often right to talk to them AGAIN after you have
-     made progress (finished a task they mentioned, found an item, learned
-     something new) - NPCs frequently have new dialogue once the situation
-     changes. So: revisit an NPC when you have a genuinely new reason to.
+     Choose by their "status": prefer NPCs marked "new", then "talked". Do NOT
+     "talk" to an NPC marked "exhausted" - you have already learned what they
+     know for now, and asking again just wastes turns (a smart adventurer moves
+     on). It is fine to revisit someone AFTER real progress (you completed a task
+     they mentioned, found an item) - their status resets when things change.
+     If everyone nearby is "exhausted", explore to a NEW area to find fresh
+     people/places (use "goto" toward unexplored parts of the map).
   3b. USE YOUR JOURNAL: consult "quests" - work on the "focus" quest (highest
      priority you can act on now). When you learn a new goal, "add_quest"; when
      you finish one, mark it "done" with "update_quest"; record leads with
@@ -214,7 +218,8 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None) -> str:
         "answers": state.get("answers") if in_convo else [],
         "nearby": [
             {"name": n.get("name"), "dx": n.get("dx"), "dy": n.get("dy"),
-             "in_party": n.get("in_party")}
+             "in_party": n.get("in_party"),
+             "status": (kb.talk_status(n.get("name")) if kb and n.get("name") else "new")}
             for n in nearby[:8]
         ],
         "objects": [

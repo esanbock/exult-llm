@@ -189,6 +189,18 @@ class KnowledgeBase:
         for rec in self.npcs.values():
             rec["talked_this_epoch"] = 0
 
+    def talk_status(self, name: str, exhausted_at: int = 3) -> str:
+        """Classify how worthwhile talking to this NPC is right now:
+        'new' (never talked), 'talked' (spoken to but may have more), or
+        'exhausted' (asked enough since last progress - unlikely to offer new
+        info until the situation changes)."""
+        rec = self.npcs.get(name)
+        if not rec or rec.get("times_talked", 0) == 0:
+            return "new"
+        if rec.get("talked_this_epoch", 0) >= exhausted_at:
+            return "exhausted"
+        return "talked"
+
     def npc_view(self, names: Optional[list] = None) -> dict:
         """NPC notes; if names given, only those, else all known."""
         src = self.npcs
