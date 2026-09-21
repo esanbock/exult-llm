@@ -646,6 +646,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         hist.pop(0)
     if len(hist) >= 5 and len(set(hist)) == 1 and pos_now[0] is not None and not in_convo:
         wedged = True
+    if not wedged:
+        session["wedge_try"] = 0
 
     # Track how long we've been in the current conversation, and which answer
     # choices we've already picked, so we can detect a loop and bail out.
@@ -716,10 +718,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         else:
             action = {"type": "key", "key": "space"}
             reason = "(guard) advancing NPC dialog"
-    # 0.5) Wedged (position unchanged for several turns, e.g. against the ocean
-    #      or a wall while repeating the same goto): step out with raw single
-    #      moves toward open grid tiles (goto can keep failing on long paths).
+    # 0.5) Wedged: try hard to escape. Likely sealed in a building (closed
+    #      door) or against terrain. Try in order: open a door, then goto a
+    #      ring of far tiles (pathfinder opens doors it walks through), then raw
+    #      moves toward open grid tiles.
     elif wedged:
+        n = session.get("wedge_try", 0)
+        session["wedge_try"] = n + 1
+        p = state.get("player") or {}
+        px, py = p.get("tx", 0), p.get("ty", 0)
         rows = (state.get("grid") or "").split("\n")
         cx = cy = 12
         def _cell(dx, dy):
@@ -727,23 +734,29 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
                 return rows[y][x]
             return "#"
-        deltas = {"n": (0,-1),"s": (0,1),"e": (1,0),"w": (-1,0),
-                  "ne": (1,-1),"nw": (-1,-1),"se": (1,1),"sw": (-1,1)}
-        # rotate a preferred starting direction each stuck-streak so we sweep
-        pref = list(deltas.keys())
-        offset = session.get("stuck_count", 0) % len(pref)
-        pref = pref[offset:] + pref[:offset]
-        picked = None
-        for d in pref:
-            if _cell(*deltas[d]) in ".*&C/x":
-                picked = d
-                break
-        if picked:
-            action = {"type": "move", "dir": picked, "speed": 120}
-            reason = f"(guard) wedged; stepping {picked} toward open ground"
+        # There is a closed door '+' nearby? open it.
+        has_door = any(_cell(dx, dy) == "+"
+                       for dx in range(-3, 4) for dy in range(-3, 4))
+        if (n % 3) == 0 and (has_door or (state.get("doors") or [])):
+            action = {"type": "open"}
+            reason = "(guard) wedged; opening a nearby door to escape"
+        elif (n % 3) == 1:
+            # Try a ring of distant targets; goto the first (pathfinder will
+            # route through doors). Rotate the ring by attempt count.
+            ring = [(0,-20),(20,0),(0,20),(-20,0),(16,-16),(-16,16),(16,16),(-16,-16)]
+            k = (n // 3) % len(ring)
+            dx, dy = ring[k]
+            action = {"type": "goto", "tx": px+dx, "ty": py+dy}
+            reason = "(guard) wedged; goto far tile to path out"
         else:
-            action = {"type": "move", "dir": pref[0], "speed": 120}
-            reason = "(guard) wedged; nudging to break free"
+            deltas = {"n": (0,-1),"s": (0,1),"e": (1,0),"w": (-1,0),
+                      "ne": (1,-1),"nw": (-1,-1),"se": (1,1),"sw": (-1,1)}
+            pref = list(deltas.keys())
+            off = n % len(pref)
+            pref = pref[off:] + pref[:off]
+            picked = next((d for d in pref if _cell(*deltas[d]) in ".*&C/x"), pref[0])
+            action = {"type": "move", "dir": picked, "speed": 120}
+            reason = f"(guard) wedged; stepping {picked}"
     else:
         # 1b) A "space"/"key" press outside a conversation does nothing.
         if (isinstance(action, dict) and action.get("type") == "key"
