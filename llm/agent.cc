@@ -881,6 +881,36 @@ namespace LLM_agent {
 				return "{\"ok\":true,\"did\":\"goto\"," + json_int("tx", dest.tx) + ","
 					   + json_int("ty", dest.ty) + "}";
 			}
+			// Path failed - a closed door may be blocking. Open the nearest
+			// closed door and retry once (the pathfinder also auto-opens doors
+			// it walks into, but only if it found a path in the first place).
+			{
+				Game_object_vector nd;
+				Game_object::find_nearby(nd, at, -1, 6, 0);
+				Game_object* door = nullptr;
+				int          bd   = 1 << 30;
+				for (Game_object* obj : nd) {
+					if (!obj || !obj->get_info().is_door()) {
+						continue;
+					}
+					if ((obj->get_framenum() % 4) >= 2) {
+						continue;    // already open
+					}
+					const Tile_coord ot = obj->get_tile();
+					const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+					if (d < bd) {
+						bd = d;
+						door = obj;
+					}
+				}
+				if (door) {
+					door->activate();    // open it
+					if (av->walk_path_to_tile(dest, static_cast<int>(speed))) {
+						return "{\"ok\":true,\"did\":\"goto\",\"opened_door\":true,"
+							   + json_int("tx", dest.tx) + "," + json_int("ty", dest.ty) + "}";
+					}
+				}
+			}
 			return "{\"ok\":false,\"error\":\"no path to destination\"}";
 		}
 

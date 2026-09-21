@@ -86,9 +86,11 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   objects (list)              - items on the ground: {name, dx, dy}
   grid (string)               - top-down ASCII map centered on you (@):
                                   @ you   C companion   & other NPC   x body
-                                  * object   + closed door   / open door
-                                  # blocked/impassable   . open ground
-                                north=up, south=down, east=right, west=left
+                                  * object   + closed door (PASSAGE - openable)
+                                  / open door   # wall/impassable   . open ground
+                                north=up, south=down, east=right, west=left.
+                                To enter a building/room head for its door
+                                ('+' or '/'), NOT the '#' walls around it.
   doors (list)                - nearby doors: {name, dx, dy, closed}
 
 # YOUR JOURNAL (you maintain this - it persists across turns)
@@ -121,8 +123,10 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
             townspeople and party companions (in_party:true).
   open    - Open (or close) the nearest door within a few tiles. params: none.
             Doors show as '+' (closed) or '/' (open) on the grid and in "doors".
-            A closed door ('+') blocks you - walk adjacent to it, "open" it, then
-            "move" through the now-open ('/') doorway.
+            A closed door '+' is NOT a wall - it is a passage you can use. To go
+            through: either use "goto" a tile/room beyond it (goto opens doors on
+            the way automatically), OR move adjacent to the '+' door, "open" it,
+            then "move" through the '/' opening. Never treat '+' as impassable.
   search  - Open the nearest body or container to see/take what is inside.
             params: none. Use this on a murder victim's body ('x' on the grid)
             or a chest to reveal loot. After searching, use "pickup" to take items.
