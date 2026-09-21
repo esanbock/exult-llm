@@ -890,9 +890,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # Redirect it to real exploration.
     if isinstance(action, dict) and action.get("type") == "goto" and "tx" in action:
         _pp = state.get("player") or {}
-        if abs(action["tx"] - _pp.get("tx", 0)) + abs(action["ty"] - _pp.get("ty", 0)) <= 2:
+        tgt = (action["tx"], action["ty"])
+        # If the previous goto to (about) this same target didn't move us, or the
+        # target is basically our current tile, abandon it and explore instead.
+        last_goto = session.get("last_goto_target")
+        no_progress = (session.get("last_goto_pos") == (_pp.get("tx"), _pp.get("ty"))
+                       and last_goto is not None
+                       and abs(last_goto[0]-tgt[0]) + abs(last_goto[1]-tgt[1]) <= 3)
+        near_here = abs(tgt[0]-_pp.get("tx",0)) + abs(tgt[1]-_pp.get("ty",0)) <= 2
+        if near_here or no_progress:
             action = _explore_far(state, session, True)
-            reason = "(guard) goto target is here already; exploring instead"
+            reason = "(guard) goto not making progress; exploring instead"
+        else:
+            session["last_goto_target"] = tgt
+            session["last_goto_pos"] = (_pp.get("tx"), _pp.get("ty"))
 
     # "talk" is a top-level command, not an act() action.
     if isinstance(action, dict) and action.get("type") == "talk":
