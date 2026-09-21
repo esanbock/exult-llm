@@ -171,9 +171,23 @@ class KnowledgeBase:
             return
         rec = self.npcs.setdefault(name, {"name": name, "times_talked": 0, "notes": []})
         rec["times_talked"] = rec.get("times_talked", 0) + 1
+        # Per-progress-epoch counter (used to decide "talked enough for NOW").
+        rec["talked_this_epoch"] = rec.get("talked_this_epoch", 0) + 1
 
     def times_talked(self, name: str) -> int:
         return self.npcs.get(name, {}).get("times_talked", 0)
+
+    def talked_recently(self, name: str) -> int:
+        """How many times we've talked to this NPC since the last meaningful
+        progress. Resets when the world changes (quest/item/area), so NPCs
+        become worth revisiting after you have accomplished something."""
+        return self.npcs.get(name, {}).get("talked_this_epoch", 0)
+
+    def reset_talk_gate(self) -> None:
+        """Meaningful progress happened - allow revisiting NPCs (they may now
+        have new dialogue)."""
+        for rec in self.npcs.values():
+            rec["talked_this_epoch"] = 0
 
     def npc_view(self, names: Optional[list] = None) -> dict:
         """NPC notes; if names given, only those, else all known."""

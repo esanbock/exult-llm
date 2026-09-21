@@ -169,9 +169,11 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
      answer choices appear. Do NOT "talk" again or "move" during a conversation.
   3. Else if you want to talk to someone in "nearby" -> "talk" with their name.
      Do NOT repeatedly "move" toward them expecting dialog to auto-start.
-     IMPORTANT: do NOT "talk" to anyone already in "already_talked_to" unless
-     you have a new reason - you have covered them. Pick a DIFFERENT nearby NPC,
-     or explore to find new people and places.
+     Generally don't re-talk to someone in "already_talked_to" just to repeat
+     the same topics. BUT it is often right to talk to them AGAIN after you have
+     made progress (finished a task they mentioned, found an item, learned
+     something new) - NPCs frequently have new dialogue once the situation
+     changes. So: revisit an NPC when you have a genuinely new reason to.
   3b. USE YOUR JOURNAL: consult "quests" - work on the "focus" quest (highest
      priority you can act on now). When you learn a new goal, "add_quest"; when
      you finish one, mark it "done" with "update_quest"; record leads with
@@ -393,6 +395,8 @@ def _apply_meta(action: dict, kb: "KnowledgeBase") -> str:
             notes=action.get("notes", ""),
             depends_on=action.get("depends_on"),
             status=action.get("status", "active"))
+        # New goal discovered = progress; NPCs may have new things to say.
+        kb.reset_talk_gate()
         return f"added quest '{qid}'"
     if t == "update_quest":
         qid = action.get("id") or action.get("title", "")
@@ -403,6 +407,8 @@ def _apply_meta(action: dict, kb: "KnowledgeBase") -> str:
             notes=action.get("notes"),
             depends_on=action.get("depends_on"),
             title=action.get("title"))
+        # Progress on a quest = revisit NPCs (their dialogue is stateful).
+        kb.reset_talk_gate()
         return f"updated quest '{qid}'"
     if t == "note_npc":
         kb.note_npc(action.get("name", ""), action.get("note", ""))
@@ -458,10 +464,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         reason = f"(after {note})"
 
     # --- Driver-side guards to keep behavior sane ------------------------
-    MAX_TALKS = 3              # don't re-talk the same NPC more than this
+    MAX_TALKS = 3              # re-talk limit *since last progress* (resets on
+                               # meaningful progress so NPCs can be revisited)
     MAX_CONVO_TURNS = 12       # force-end a conversation that drags on
     def talked(nm):
-        return kb.times_talked(nm)
+        return kb.talked_recently(nm)
 
     in_convo = bool(state.get("conversation_in_progress"))
     answers = state.get("answers") or []
@@ -599,6 +606,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         detail = action.get("name") or action.get("dir") or ""
         kb.record_action(f"{atype} {detail}".strip()
                          + f" @({p0.get('tx')},{p0.get('ty')})")
+    # A successful pickup/search changes the world -> NPCs may now have new
+    # dialogue, so allow revisiting them.
+    if atype in ("pickup", "search") and isinstance(result, dict) and result.get("ok"):
+        kb.reset_talk_gate()
 
     p = state.get("player") or {}
     print(f"[{step:03d}] pos=({p.get('tx')},{p.get('ty')}) "
