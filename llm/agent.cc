@@ -580,6 +580,17 @@ namespace LLM_agent {
 			return "{\"ok\":true,\"did\":\"wait\"}";
 		}
 
+		if (type == "save") {
+			// Persist the game (writes gamedat / quicksave) so progress is not
+			// lost when the instance is closed.
+			try {
+				gwin->write();
+			} catch (...) {
+				return "{\"ok\":false,\"error\":\"save failed\"}";
+			}
+			return "{\"ok\":true,\"did\":\"save\"}";
+		}
+
 		if (type == "stop") {
 			gwin->stop_actor();
 			return "{\"ok\":true,\"did\":\"stop\"}";

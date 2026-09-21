@@ -34,6 +34,7 @@ import time
 from exult_client import ExultClient
 from ollama_client import OllamaClient
 from thoughts_window import ThoughtsWindow
+from knowledge import KnowledgeBase
 
 SYSTEM_PROMPT = """\
 You are an autonomous agent playing Ultima VII: The Black Gate as the Avatar.
@@ -90,6 +91,14 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
                                 north=up, south=down, east=right, west=left
   doors (list)                - nearby doors: {name, dx, dy, closed}
 
+# YOUR JOURNAL (you maintain this - it persists across turns)
+  quests: {focus, actionable[], blocked[]}
+      - focus: the single highest-priority quest you can act on now (or null)
+      - actionable: quests you can work on now, sorted by priority (1=highest)
+      - blocked: quests waiting on a prerequisite (see each quest's depends_on)
+      Each quest: {id, title, priority, status(active|blocked|done), notes, depends_on[]}
+  npc_notes: what you have recorded about nearby/known NPCs (their leads, wants)
+
 # TOOLS (the complete list of things you can do - nothing else is possible)
   move    - Walk one step. params: {"dir": one of n,s,e,w,ne,nw,se,sw}
             Use the grid: step onto '.' tiles, never into '#'. To reach an
@@ -123,7 +132,23 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
             Use "space" to advance NPC text when there is npc_text but no answers.
   combat  - Toggle combat/attack mode on or off. params: none.
   feed    - Eat food to refill your food level (prevents starving). params: none.
+  save    - Save the game so progress is not lost. params: none. (The driver
+            also auto-saves periodically; you rarely need this.)
   wait    - Do nothing this turn. params: none.
+
+# JOURNAL TOOLS (manage your own quest log & notes - do NOT affect the game)
+  add_quest    - Record a goal you discovered. params: {"title": "...",
+                 "priority": 1-9 (1=highest), "notes": "...",
+                 "depends_on": ["<quest id>", ...] (optional prerequisites)}.
+                 Use when an NPC gives you a task or you infer a goal. If quest B
+                 requires finishing quest A first, set B.depends_on=["<A id>"].
+  update_quest - Change a quest. params: {"id": "<quest id>", "status":
+                 "active|blocked|done", "priority": n, "notes": "...",
+                 "depends_on": [...]}. Mark a quest "done" when you complete it.
+  note_npc     - Save a note about an NPC. params: {"name": "...", "note": "..."}.
+                 Record leads, what they want, or what they told you.
+  (These journal tools do not advance the game, so after using one, keep taking
+   game actions. Use them sparingly - only to capture genuinely new information.)
 
 # HOW TO DECIDE (policy)
   1. If conversation_active is true -> use "answer" (pick the index of the reply
@@ -133,9 +158,14 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
      answer choices appear. Do NOT "talk" again or "move" during a conversation.
   3. Else if you want to talk to someone in "nearby" -> "talk" with their name.
      Do NOT repeatedly "move" toward them expecting dialog to auto-start.
-     IMPORTANT: do NOT "talk" to anyone already in "already_talked_to" - you
-     have covered them. Pick a DIFFERENT nearby NPC, or explore to find new
-     people and places (like the stables) by "move"-ing to unexplored areas.
+     IMPORTANT: do NOT "talk" to anyone already in "already_talked_to" unless
+     you have a new reason - you have covered them. Pick a DIFFERENT nearby NPC,
+     or explore to find new people and places.
+  3b. USE YOUR JOURNAL: consult "quests" - work on the "focus" quest (highest
+     priority you can act on now). When you learn a new goal, "add_quest"; when
+     you finish one, mark it "done" with "update_quest"; record leads with
+     "note_npc". Respect prerequisites: a "blocked" quest needs its depends_on
+     quests done first, so complete those first.
   4. Else explore. To reach a specific NPC, item, or building/entrance, PREFER
      "goto" (it pathfinds around walls and through doors). Use single "move"
      steps only for small local adjustments. If a closed door '+' blocks you,
@@ -150,7 +180,7 @@ Reply with ONLY the single JSON object. No prose, no markdown.
 """
 
 
-def summarize_state(state: dict, memory: dict | None = None) -> str:
+def summarize_state(state: dict, kb: "KnowledgeBase | None" = None) -> str:
     """Compact the observation to keep the prompt small and focused."""
     p = state.get("player") or {}
     nearby = state.get("nearby") or []
@@ -169,7 +199,8 @@ def summarize_state(state: dict, memory: dict | None = None) -> str:
         "npc_text": state.get("npc_text") if in_convo else None,
         "answers": state.get("answers") if in_convo else [],
         "nearby": [
-            {"name": n.get("name"), "dx": n.get("dx"), "dy": n.get("dy")}
+            {"name": n.get("name"), "dx": n.get("dx"), "dy": n.get("dy"),
+             "in_party": n.get("in_party")}
             for n in nearby[:8]
         ],
         "objects": [
@@ -186,14 +217,14 @@ def summarize_state(state: dict, memory: dict | None = None) -> str:
              "closed": d.get("closed")}
             for d in doors[:6]
         ]
-    if memory:
-        talked = memory.get("talked", {})
-        if isinstance(talked, dict):
-            view["already_talked_to"] = sorted(talked.keys())
-        else:
-            view["already_talked_to"] = sorted(talked)
-        if memory.get("journal"):
-            view["journal"] = memory["journal"][-8:]  # recent notes
+    if kb is not None:
+        view["quests"] = kb.quest_view()
+        view["already_talked_to"] = sorted(kb.npcs.keys())
+        # NPC notes: focus on those currently nearby, plus recently noted.
+        nearby_names = [n.get("name") for n in nearby[:8] if n.get("name")]
+        notes = kb.npc_view(nearby_names)
+        if notes:
+            view["npc_notes"] = notes
     return json.dumps(view)
 
 
@@ -328,7 +359,37 @@ def ensure_exult_running(args) -> subprocess.Popen | None:
     raise TimeoutError("Exult did not open the agent port within 60s")
 
 
-def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> None:
+META_TOOLS = {"add_quest", "update_quest", "note_npc"}
+
+
+def _apply_meta(action: dict, kb: "KnowledgeBase") -> str:
+    """Apply a journal meta-tool to the knowledge base. Returns a short note."""
+    t = action.get("type")
+    if t == "add_quest":
+        qid = kb.add_quest(
+            title=action.get("title", "quest"),
+            priority=action.get("priority", 5),
+            notes=action.get("notes", ""),
+            depends_on=action.get("depends_on"),
+            status=action.get("status", "active"))
+        return f"added quest '{qid}'"
+    if t == "update_quest":
+        qid = action.get("id") or action.get("title", "")
+        kb.update_quest(
+            qid,
+            status=action.get("status"),
+            priority=action.get("priority"),
+            notes=action.get("notes"),
+            depends_on=action.get("depends_on"),
+            title=action.get("title"))
+        return f"updated quest '{qid}'"
+    if t == "note_npc":
+        kb.note_npc(action.get("name", ""), action.get("note", ""))
+        return f"noted NPC '{action.get('name','')}'"
+    return "no-op"
+
+
+def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -> None:
     state = exult.observe()
     if window.available:
         window.update_turn(step)
@@ -347,17 +408,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> Non
         time.sleep(args.delay)
         return
 
-    # Record NPC dialog into the journal (only while in a conversation, and
-    # dedup consecutive duplicates).
+    # Record NPC dialog into the journal (only while in a conversation).
     npc_text = state.get("npc_text")
-    if (state.get("conversation_in_progress") and npc_text
-            and (not memory["journal"] or memory["journal"][-1] != npc_text)):
-        memory["journal"].append(npc_text)
+    if state.get("conversation_in_progress") and npc_text:
+        kb.add_journal(npc_text)
 
     if args.dry_run:
         reason, action = scripted_reply(step, state)
     else:
-        reply = ollama.chat(SYSTEM_PROMPT, summarize_state(state, memory))
+        reply = ollama.chat(SYSTEM_PROMPT, summarize_state(state, kb))
         reason, action = parse_reply(reply)
         if window.available:
             window.set_thinking(reply)
@@ -365,22 +424,32 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> Non
     if window.available and args.dry_run:
         window.set_thinking(reason)
 
+    # --- Journal meta-tools: update the KB, then take a game action too. ---
+    if isinstance(action, dict) and action.get("type") in META_TOOLS:
+        note = _apply_meta(action, kb)
+        if window.available:
+            window.set_action(f"[journal] {note}\n{json.dumps(action)}")
+        print(f"[{step:03d}] journal: {note} :: {reason!r}")
+        # Meta-tools don't advance the game; fall through with a light game
+        # action so the turn still does something useful.
+        action = {"type": "wait"}
+        reason = f"(after {note})"
+
     # --- Driver-side guards to keep behavior sane ------------------------
-    talked = memory["talked"]  # name -> times talked
-    MAX_TALKS = 2              # don't re-talk the same NPC more than this
+    MAX_TALKS = 3              # don't re-talk the same NPC more than this
+    def talked(nm):
+        return kb.times_talked(nm)
 
     # 1) If a conversation is open but no choices are shown yet, advance text.
     if state.get("conversation_in_progress") and not state.get("conversation_active"):
         action = {"type": "key", "key": "space"}
         reason = "(guard) advancing NPC dialog"
     else:
-        # 1b) A "space"/"key" press outside a conversation does nothing. If the
-        #     model tries it (misled by stale text), redirect to something
-        #     useful: talk to a fresh nearby NPC, else explore.
+        # 1b) A "space"/"key" press outside a conversation does nothing.
         if (isinstance(action, dict) and action.get("type") == "key"
                 and not state.get("conversation_in_progress")):
             fresh = [n for n in (state.get("nearby") or [])
-                     if not n.get("dead") and talked.get(n.get("name"), 0) < MAX_TALKS]
+                     if not n.get("dead") and talked(n.get("name")) < MAX_TALKS]
             if fresh:
                 target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
                 action = {"type": "talk", "name": target["name"]}
@@ -389,23 +458,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> Non
                 d = ["n", "e", "s", "w", "ne", "sw"][step % 6]
                 action = {"type": "move", "dir": d}
                 reason = f"(guard) no conversation and NPCs exhausted; exploring {d}"
-        # 2) If the model wants to talk to someone we've already exhausted,
-        #    redirect to a not-yet-talked nearby NPC, else explore.
+        # 2) Redirect re-talk to an exhausted NPC toward a fresh one.
         if isinstance(action, dict) and action.get("type") == "talk":
             nm = action.get("name", "")
-            if nm and talked.get(nm, 0) >= MAX_TALKS:
+            if nm and talked(nm) >= MAX_TALKS:
                 fresh = [n for n in (state.get("nearby") or [])
-                         if not n.get("dead") and talked.get(n.get("name"), 0) < MAX_TALKS]
+                         if not n.get("dead") and talked(n.get("name")) < MAX_TALKS]
                 if fresh:
                     target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
                     action = {"type": "talk", "name": target["name"]}
                     reason = f"(guard) already talked to {nm}; trying {target['name']}"
                 else:
-                    # Everyone nearby is exhausted -> go explore for new NPCs.
                     action = {"type": "move", "dir": "n"}
                     reason = "(guard) all nearby NPCs exhausted; exploring"
-        # 3) Anti-chase: if the model keeps MOVING and oscillating near a
-        #    NOT-yet-talked NPC, talk to it instead of pacing.
+        # 3) Anti-chase / auto-loot when stuck.
         elif (isinstance(action, dict) and action.get("type") == "move"
               and not state.get("conversation_in_progress")):
             pos = (state.get("player") or {}).get("tx"), (state.get("player") or {}).get("ty")
@@ -415,33 +481,31 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> Non
             stuck = len(recent_positions) >= 4 and len(set(recent_positions)) <= 2
             fresh = [n for n in (state.get("nearby") or [])
                      if not n.get("dead") and abs(n.get("dx", 99)) <= 4
-                     and abs(n.get("dy", 99)) <= 4 and talked.get(n.get("name"), 0) < MAX_TALKS]
+                     and abs(n.get("dy", 99)) <= 4 and talked(n.get("name")) < MAX_TALKS]
             if stuck and fresh:
                 target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
                 action = {"type": "talk", "name": target["name"]}
                 reason = f"(guard) stuck near {target['name']}; talking instead of moving"
                 recent_positions.clear()
             elif stuck:
-                # Stuck near loot? Grab it. Bodies -> search; items -> pickup.
                 objs = [o for o in (state.get("objects") or [])
                         if abs(o.get("dx", 99)) <= 3 and abs(o.get("dy", 99)) <= 3
-                        and o.get("name") not in memory.get("picked", set())]
+                        and o.get("name") not in session["picked"]]
                 dead_bodies = [n for n in (state.get("nearby") or [])
                                if n.get("dead") and abs(n.get("dx", 99)) <= 2
                                and abs(n.get("dy", 99)) <= 2]
-                if dead_bodies and not memory.get("searched_body"):
+                if dead_bodies and not session.get("searched_body"):
                     action = {"type": "search"}
                     reason = "(guard) stuck near a body; searching it"
-                    memory["searched_body"] = True
+                    session["searched_body"] = True
                     recent_positions.clear()
                 elif objs:
                     it = min(objs, key=lambda o: abs(o["dx"]) + abs(o["dy"]))
                     action = {"type": "pickup", "name": it["name"]}
                     reason = f"(guard) stuck near {it['name']}; picking it up"
-                    memory.setdefault("picked", set()).add(it["name"])
+                    session["picked"].add(it["name"])
                     recent_positions.clear()
                 else:
-                    # Nothing to grab: explore in a varying direction.
                     d = ["n", "e", "s", "w", "ne", "sw"][step % 6]
                     action = {"type": "move", "dir": d}
                     reason = f"(guard) stuck; exploring {d} for new areas"
@@ -451,7 +515,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> Non
     if isinstance(action, dict) and action.get("type") == "talk":
         tname = action.get("name", "")
         if tname:
-            talked[tname] = talked.get(tname, 0) + 1
+            kb.mark_talked(tname)
         result = exult.talk(tname)
     else:
         result = exult.act(action)
@@ -465,50 +529,32 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> Non
     time.sleep(args.delay)
 
 
-def _load_memory(path: str) -> dict:
-    mem = {"talked": {}, "journal": [], "picked": set()}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        mem["talked"] = dict(data.get("talked", {}))
-        mem["journal"] = list(data.get("journal", []))
-        mem["picked"] = set(data.get("picked", []))
-        print(f"[+] Loaded memory from {path}: "
-              f"{len(mem['talked'])} NPCs, {len(mem['journal'])} journal notes")
-    except (OSError, ValueError):
-        pass
-    return mem
-
-
-def _save_memory(path: str, mem: dict) -> None:
-    try:
-        data = {
-            "talked": mem.get("talked", {}),
-            "journal": mem.get("journal", []),
-            "picked": sorted(mem.get("picked", set())),
-        }
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-    except OSError:
-        pass
-
-
-def run_loop(args, window: ThoughtsWindow, ollama) -> None:
+def run_loop(args, window: ThoughtsWindow, ollama, exult_proc=None) -> None:
     recent_positions: list = []
-    mem_path = args.memory_file
-    memory: dict = _load_memory(mem_path) if mem_path else {"talked": {}, "journal": [], "picked": set()}
+    session = {"picked": set(), "searched_body": False}
+    kb = KnowledgeBase.load(args.memory_file) if args.memory_file else KnowledgeBase()
+    if args.memory_file:
+        print(f"[+] Loaded journal: {len(kb.quests)} quests, "
+              f"{len(kb.npcs)} NPCs, {len(kb.journal)} notes")
     exult = ExultClient(args.host, args.port)
+    saved_this_run = False
     try:
         exult.connect()
         print(f"[+] Connected to Exult bridge: {exult.ping()}")
         for step in range(args.steps):
             try:
-                _do_turn(args, window, ollama, exult, step, recent_positions, memory)
-                if mem_path and step % 5 == 0:
-                    _save_memory(mem_path, memory)
+                _do_turn(args, window, ollama, exult, step, recent_positions, kb, session)
+                if args.memory_file and step % 5 == 0:
+                    kb.save(args.memory_file)
+                # Periodically save the GAME so progress survives a crash/close.
+                if step > 0 and step % args.save_every == 0:
+                    try:
+                        r = exult.act({"type": "save"})
+                        saved_this_run = True
+                        print(f"[{step:03d}] game saved -> {r}")
+                    except Exception as e:
+                        print(f"[{step:03d}] game save failed: {e}")
             except (ConnectionError, OSError) as e:
-                # Lost the game connection (Exult closed, or a probe stole the
-                # socket). Try to reconnect and keep going.
                 print(f"[{step:03d}] connection issue: {e}; reconnecting...")
                 try:
                     exult.close()
@@ -520,8 +566,16 @@ def run_loop(args, window: ThoughtsWindow, ollama) -> None:
                 print(f"[{step:03d}] turn error: {type(e).__name__}: {e}")
                 time.sleep(args.delay)
     finally:
-        if mem_path:
-            _save_memory(mem_path, memory)
+        if args.memory_file:
+            kb.save(args.memory_file)
+        # Save the GAME before disconnecting. This is essential when we (the
+        # driver) launched Exult and will terminate it on exit, so in-game
+        # progress is not lost.
+        try:
+            r = exult.act({"type": "save"})
+            print(f"[+] Final game save -> {r}")
+        except Exception as e:
+            print(f"[!] Final game save failed: {e}")
         exult.close()
         if window.available:
             window.close()
@@ -548,6 +602,8 @@ def main() -> int:
     ap.add_argument("--memory-file", default="agent_memory.json",
                     help="persist the agent's journal/known-NPCs here across "
                          "driver restarts (set to '' to disable)")
+    ap.add_argument("--save-every", type=int, default=40,
+                    help="save the in-game progress every N turns")
     args = ap.parse_args()
 
     ollama = None
@@ -581,9 +637,11 @@ def main() -> int:
         else:
             run_loop(args, window, ollama)
     finally:
-        # Only shut down Exult if WE launched it.
+        # Only shut down Exult if WE launched it. run_loop already issued a
+        # final in-game save before disconnecting; give it a moment to flush.
         if exult_proc is not None:
-            print("[+] Shutting down the Exult instance we launched...")
+            print("[+] Shutting down the Exult instance we launched (progress saved)...")
+            time.sleep(2.0)
             try:
                 exult_proc.terminate()
             except Exception:
