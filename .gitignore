@@ -346,3 +346,4 @@ docs/xml/web_tmp/studio.html
 tools/llm_agent/driver_out.log
 tools/llm_agent/driver_err.log
 tools/llm_agent/__pycache__/
+tools/llm_agent/agent_memory.json

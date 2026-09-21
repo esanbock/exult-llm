@@ -42,31 +42,33 @@ click, use a mouse, or do anything not listed as a TOOL. Think of this as an
 API: the only way to affect the game is to call one TOOL per turn.
 
 # MISSION (your purpose - let this drive every decision)
-Ultima VII is a mystery and adventure. You have just arrived in the town of
-Trinsic and discovered that a gruesome murder has taken place. Your long-term
-goal is to investigate this mystery, follow the clues, and ultimately uncover
-and defeat the hidden enemy behind it (a sinister organization called the
-Fellowship and its master, the Guardian).
+You are the Avatar, the hero of Ultima VII: The Black Gate - an open-world
+role-playing adventure full of towns, people, mysteries, quests, dungeons, and
+a larger unfolding plot. There is no single scripted objective from your side:
+you must discover goals by playing. Your enduring purpose is to explore the
+world, understand what is happening, help people, follow leads, and advance the
+main story as it reveals itself.
 
-Play with intent, in roughly this order:
-  1. INVESTIGATE: Talk to the townspeople of Trinsic (Finnigan the mayor, Petre,
-     guards, the gargoyle Spark's father, etc.). Ask them about the murder, the
-     victim, and anything suspicious. Exhaust their useful dialog topics.
-  2. GATHER CLUES: Examine the crime scene (the stables) and note names, places,
-     and leads people mention.
-  3. PROGRESS: Once you have learned what Trinsic can tell you, travel onward to
-     pursue the investigation (e.g. toward Britain) - but early on, focus on
-     Trinsic.
-Prefer actions that advance this investigation over aimless wandering. Do not
-repeat the same conversation or pace back and forth. If you have already learned
-what an NPC has to say, move on to a new NPC or a new place.
+General principles (apply to ANY situation, not one specific puzzle):
+  * INVESTIGATE by talking: NPCs are your main source of information and quests.
+    Ask them their name, job, and about any topic they or others mention. New
+    dialog topics often appear as answer choices - explore the useful ones.
+  * FOLLOW LEADS: when someone mentions a person, place, item, or event, treat
+    it as a lead worth pursuing. Use your journal to remember what you learned.
+  * EXAMINE THE WORLD: investigate notable objects, bodies, and containers you
+    come across; collect items that look important (keys, notes, valuables).
+  * MAKE PROGRESS: prefer purposeful action over aimless wandering or repeating
+    yourself. If you have exhausted a person or place, move on to somewhere new.
+  * SURVIVE: keep fed and stay alive; avoid needless danger.
+You are not told the solution to anything - reason from what you observe and are
+told, as a curious, capable adventurer would.
 
 # PROTOCOL
 Each turn you receive a STATE object (schema below) and must reply with EXACTLY
 one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
 "action" (do NOT nest them under a "params" key):
   {"reason": "<one short sentence>", "action": {"type": "move", "dir": "n"}}
-  {"reason": "greet Iolo", "action": {"type": "talk", "name": "Iolo"}}
+  {"reason": "greet the nearby NPC", "action": {"type": "talk", "name": "Iolo"}}
   {"reason": "pick first reply", "action": {"type": "answer", "index": 0}}
 
 # STATE SCHEMA (what you receive each turn)
@@ -138,10 +140,10 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
      "goto" (it pathfinds around walls and through doors). Use single "move"
      steps only for small local adjustments. If a closed door '+' blocks you,
      you can also move next to it, "open" it, then move through the '/' opening.
-  4b. AT A CRIME/LOOT SCENE: when you see a body ('x') or items ('*' / entries
+  4b. INVESTIGATING A SCENE: when you see a body ('x') or items ('*' / entries
      in "objects") nearby, do NOT just pace around them. Move adjacent, then
-     "search" a body/container, and "pickup" important items (keys, jewelry,
-     gold, notes) to collect evidence. Pick up each listed object in "objects".
+     "search" a body/container, and "pickup" items that look important (keys,
+     jewelry, gold, notes, tools). Collecting evidence and useful items helps.
   5. If your food is low, use "feed". If threatened, "combat".
 
 Reply with ONLY the single JSON object. No prose, no markdown.
@@ -463,9 +465,38 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, memory) -> Non
     time.sleep(args.delay)
 
 
+def _load_memory(path: str) -> dict:
+    mem = {"talked": {}, "journal": [], "picked": set()}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        mem["talked"] = dict(data.get("talked", {}))
+        mem["journal"] = list(data.get("journal", []))
+        mem["picked"] = set(data.get("picked", []))
+        print(f"[+] Loaded memory from {path}: "
+              f"{len(mem['talked'])} NPCs, {len(mem['journal'])} journal notes")
+    except (OSError, ValueError):
+        pass
+    return mem
+
+
+def _save_memory(path: str, mem: dict) -> None:
+    try:
+        data = {
+            "talked": mem.get("talked", {}),
+            "journal": mem.get("journal", []),
+            "picked": sorted(mem.get("picked", set())),
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except OSError:
+        pass
+
+
 def run_loop(args, window: ThoughtsWindow, ollama) -> None:
     recent_positions: list = []
-    memory: dict = {"talked": {}, "journal": []}
+    mem_path = args.memory_file
+    memory: dict = _load_memory(mem_path) if mem_path else {"talked": {}, "journal": [], "picked": set()}
     exult = ExultClient(args.host, args.port)
     try:
         exult.connect()
@@ -473,6 +504,8 @@ def run_loop(args, window: ThoughtsWindow, ollama) -> None:
         for step in range(args.steps):
             try:
                 _do_turn(args, window, ollama, exult, step, recent_positions, memory)
+                if mem_path and step % 5 == 0:
+                    _save_memory(mem_path, memory)
             except (ConnectionError, OSError) as e:
                 # Lost the game connection (Exult closed, or a probe stole the
                 # socket). Try to reconnect and keep going.
@@ -487,6 +520,8 @@ def run_loop(args, window: ThoughtsWindow, ollama) -> None:
                 print(f"[{step:03d}] turn error: {type(e).__name__}: {e}")
                 time.sleep(args.delay)
     finally:
+        if mem_path:
+            _save_memory(mem_path, memory)
         exult.close()
         if window.available:
             window.close()
@@ -510,6 +545,9 @@ def main() -> int:
                     help="path to Exult.exe (auto-detected at repo root if omitted)")
     ap.add_argument("--no-launch", action="store_true",
                     help="do not auto-launch Exult; require it to be running")
+    ap.add_argument("--memory-file", default="agent_memory.json",
+                    help="persist the agent's journal/known-NPCs here across "
+                         "driver restarts (set to '' to disable)")
     args = ap.parse_args()
 
     ollama = None
