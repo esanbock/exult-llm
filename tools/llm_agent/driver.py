@@ -181,10 +181,13 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
      "goto" (it pathfinds around walls and through doors). Use single "move"
      steps only for small local adjustments. If a closed door '+' blocks you,
      you can also move next to it, "open" it, then move through the '/' opening.
-  4b. INVESTIGATING A SCENE: when you see a body ('x') or items ('*' / entries
-     in "objects") nearby, do NOT just pace around them. Move adjacent, then
-     "search" a body/container, and "pickup" items that look important (keys,
-     jewelry, gold, notes, tools). Collecting evidence and useful items helps.
+  4b. INVESTIGATING A SCENE: the "objects" list names what is on the ground
+     nearby (e.g. body, blood, candle, bucket, key, sword). Bodies also show as
+     'x' on the grid and carry "body":true. When you find a notable scene
+     (a body 'x', blood, ritual items, weapons, keys), do NOT just pace around.
+     "goto"/move adjacent, "search" bodies/containers, and "pickup" meaningful
+     items (keys, weapons, jewelry, notes) as evidence. Read object names to
+     understand what you are looking at.
   5. If your food is low, use "feed". If threatened, "combat".
 
 Reply with ONLY the single JSON object. No prose, no markdown.
@@ -215,8 +218,9 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None) -> str:
             for n in nearby[:8]
         ],
         "objects": [
-            {"name": o.get("name"), "dx": o.get("dx"), "dy": o.get("dy")}
-            for o in objects[:8]
+            {"name": o.get("name"), "dx": o.get("dx"), "dy": o.get("dy"),
+             **({"body": True} if o.get("body") else {})}
+            for o in objects[:14]
         ],
         "grid_legend": state.get("grid_legend"),
         "grid": state.get("grid"),

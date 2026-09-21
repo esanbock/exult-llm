@@ -300,7 +300,7 @@ namespace {
 		// Object layer.
 		{
 			Game_object_vector objs;
-			Game_object::find_nearby(objs, at, -1, radius, 0);
+			Game_object::find_nearby(objs, at, -1, radius, 128);
 			for (Game_object* obj : objs) {
 				if (!obj || obj->as_actor()) {
 					continue;
@@ -316,7 +316,8 @@ namespace {
 				if (obj->get_name().empty()) {
 					continue;
 				}
-				plot(ot.tx, ot.ty, '*');
+				// Bodies/remains show as 'x' (like dead actors); other items '*'.
+				plot(ot.tx, ot.ty, info.is_body_shape() ? 'x' : '*');
 			}
 		}
 
@@ -460,37 +461,49 @@ namespace LLM_agent {
 		}
 		os << ']';
 
-		// Nearby interactable objects (non-NPC items on screen), by name.
+		// Nearby interactable objects (non-NPC items on screen), by name,
+		// closest first so a busy scene (e.g. a murder scene) leads with its
+		// most relevant items rather than random furniture.
 		os << ',' << "\"objects\":[";
 		if (av) {
 			Game_object_vector objs;
 			const Tile_coord   at = av->get_tile();
-			Game_object::find_nearby(objs, at, -1, 12, 0);
+			Game_object::find_nearby(objs, at, -1, 12, 128);
+			// Collect (distance, obj) for named, non-actor objects.
+			std::vector<std::pair<int, Game_object*>> items;
+			for (Game_object* obj : objs) {
+				if (!obj || obj->as_actor()) {
+					continue;
+				}
+				if (obj->get_name().empty()) {
+					continue;
+				}
+				const Tile_coord ot = obj->get_tile();
+				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+				items.emplace_back(d, obj);
+			}
+			std::sort(items.begin(), items.end(),
+					  [](const auto& a, const auto& b) { return a.first < b.first; });
 			bool first = true;
 			int  count = 0;
-			for (Game_object* obj : objs) {
-				if (!obj) {
-					continue;
-				}
-				if (obj->as_actor()) {
-					continue;    // NPCs are already in "nearby"
-				}
-				const std::string nm = obj->get_name();
-				if (nm.empty()) {
-					continue;
-				}
+			for (auto& [d, obj] : items) {
 				if (count++ >= 24) {
 					break;
 				}
-				const Tile_coord ot = obj->get_tile();
+				const Tile_coord  ot   = obj->get_tile();
+				const Shape_info& info = obj->get_info();
+				const bool is_body = info.is_body_shape();
 				if (!first) {
 					os << ',';
 				}
 				first = false;
 				os << '{';
-				os << json_str("name", nm);
+				os << json_str("name", obj->get_name());
 				os << ',' << json_int("dx", ot.tx - at.tx);
 				os << ',' << json_int("dy", ot.ty - at.ty);
+				if (is_body) {
+					os << ',' << json_bool("body", true);
+				}
 				os << '}';
 			}
 		}
@@ -512,7 +525,7 @@ namespace LLM_agent {
 		if (av) {
 			Game_object_vector objs;
 			const Tile_coord   at = av->get_tile();
-			Game_object::find_nearby(objs, at, -1, 12, 0);
+			Game_object::find_nearby(objs, at, -1, 12, 128);
 			bool first = true;
 			int  count = 0;
 			for (Game_object* obj : objs) {
@@ -718,7 +731,7 @@ namespace LLM_agent {
 			}
 			const Tile_coord   at = av->get_tile();
 			Game_object_vector objs;
-			Game_object::find_nearby(objs, at, -1, 4, 0);
+			Game_object::find_nearby(objs, at, -1, 4, 128);
 			Game_object* best   = nullptr;
 			int          best_d = 1 << 30;
 			for (Game_object* obj : objs) {
@@ -760,7 +773,7 @@ namespace LLM_agent {
 
 			const Tile_coord   at = av->get_tile();
 			Game_object_vector objs;
-			Game_object::find_nearby(objs, at, -1, 3, 0);
+			Game_object::find_nearby(objs, at, -1, 3, 128);
 			Game_object* best   = nullptr;
 			int          best_d = 1 << 30;
 			for (Game_object* obj : objs) {
@@ -851,7 +864,7 @@ namespace LLM_agent {
 					}
 					if (!have_dest) {
 						Game_object_vector objs;
-						Game_object::find_nearby(objs, at, -1, 18, 0);
+						Game_object::find_nearby(objs, at, -1, 18, 128);
 						for (Game_object* obj : objs) {
 							if (!obj || obj->as_actor() || obj->get_name().empty()) {
 								continue;
@@ -886,7 +899,7 @@ namespace LLM_agent {
 			// it walks into, but only if it found a path in the first place).
 			{
 				Game_object_vector nd;
-				Game_object::find_nearby(nd, at, -1, 6, 0);
+				Game_object::find_nearby(nd, at, -1, 6, 128);
 				Game_object* door = nullptr;
 				int          bd   = 1 << 30;
 				for (Game_object* obj : nd) {
@@ -923,7 +936,7 @@ namespace LLM_agent {
 			}
 			const Tile_coord   at = av->get_tile();
 			Game_object_vector objs;
-			Game_object::find_nearby(objs, at, -1, 4, 0);
+			Game_object::find_nearby(objs, at, -1, 4, 128);
 			Game_object* best   = nullptr;
 			int          best_d = 1 << 30;
 			for (Game_object* obj : objs) {
