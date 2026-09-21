@@ -439,7 +439,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     npc_text = state.get("npc_text")
     if state.get("conversation_in_progress") and npc_text:
         kb.add_journal(npc_text)
-        kb.record_npc_line(session.get("current_npc", "?"), npc_text)
+        cur_npc = session.get("current_npc", "?")
+        kb.record_npc_line(cur_npc, npc_text)
+        # Passively capture durable knowledge (NPC notes + task-like quests)
+        # from each NEW line, so the structured memory builds up even though
+        # the model rarely calls the journal tools itself.
+        if npc_text != session.get("last_captured_line"):
+            session["last_captured_line"] = npc_text
+            kb.auto_note_from_dialogue(cur_npc, npc_text)
 
     if args.dry_run:
         reason, action = scripted_reply(step, state)
