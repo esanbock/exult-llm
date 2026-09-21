@@ -37,10 +37,18 @@ class KnowledgeBase:
         # name -> {name, times_talked, notes:[str]}
         self.npcs: dict[str, dict] = {}
         self.journal: list[str] = []
+        # Rolling window of recent conversation exchanges (kept fairly long -
+        # dialogue carries the story/clues). Each: {"npc":str,"said":str} or
+        # {"me":str} for the answer the agent chose.
+        self.dialogue_history: list[dict] = []
+        # Short rolling window of meaningful actions taken (open/pickup/etc).
+        self.action_history: list[str] = []
 
     # ----- persistence ---------------------------------------------------
     def to_dict(self) -> dict:
-        return {"quests": self.quests, "npcs": self.npcs, "journal": self.journal}
+        return {"quests": self.quests, "npcs": self.npcs, "journal": self.journal,
+                "dialogue_history": self.dialogue_history,
+                "action_history": self.action_history}
 
     @classmethod
     def load(cls, path: Optional[str]) -> "KnowledgeBase":
@@ -53,6 +61,8 @@ class KnowledgeBase:
             kb.quests = dict(data.get("quests", {}))
             kb.npcs = dict(data.get("npcs", {}))
             kb.journal = list(data.get("journal", []))
+            kb.dialogue_history = list(data.get("dialogue_history", []))
+            kb.action_history = list(data.get("action_history", []))
         except (OSError, ValueError):
             pass
         return kb
@@ -180,3 +190,36 @@ class KnowledgeBase:
         if text and (not self.journal or self.journal[-1] != text):
             self.journal.append(text)
             self.journal = self.journal[-500:]
+
+    # ----- dialogue history (long window - story/clues live here) --------
+    DIALOGUE_WINDOW = 30
+
+    def record_npc_line(self, npc: str, said: str) -> None:
+        if not said:
+            return
+        entry = {"npc": npc or "?", "said": said}
+        if self.dialogue_history and self.dialogue_history[-1] == entry:
+            return
+        self.dialogue_history.append(entry)
+        self.dialogue_history = self.dialogue_history[-self.DIALOGUE_WINDOW:]
+
+    def record_my_reply(self, text: str) -> None:
+        if not text:
+            return
+        self.dialogue_history.append({"me": text})
+        self.dialogue_history = self.dialogue_history[-self.DIALOGUE_WINDOW:]
+
+    def dialogue_view(self, limit: int = 30) -> list:
+        return self.dialogue_history[-limit:]
+
+    # ----- action history (short window - avoid repetition) --------------
+    ACTION_WINDOW = 10
+
+    def record_action(self, text: str) -> None:
+        if not text:
+            return
+        self.action_history.append(text)
+        self.action_history = self.action_history[-self.ACTION_WINDOW:]
+
+    def action_view(self, limit: int = 10) -> list:
+        return self.action_history[-limit:]

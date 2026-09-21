@@ -98,6 +98,11 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
       - blocked: quests waiting on a prerequisite (see each quest's depends_on)
       Each quest: {id, title, priority, status(active|blocked|done), notes, depends_on[]}
   npc_notes: what you have recorded about nearby/known NPCs (their leads, wants)
+  recent_dialogue: a running transcript of the last conversation exchanges
+      ({"npc":name,"said":...} for NPC lines, {"me":...} for your replies).
+      Use this to remember what you have learned and what was said earlier.
+  recent_actions: your last few meaningful actions (talk/open/pickup/etc).
+      Use this to avoid repeating something you just did.
 
 # TOOLS (the complete list of things you can do - nothing else is possible)
   move    - Walk one step. params: {"dir": one of n,s,e,w,ne,nw,se,sw}
@@ -227,6 +232,14 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None) -> str:
         notes = kb.npc_view(nearby_names)
         if notes:
             view["npc_notes"] = notes
+        # Growing window of recent CONVERSATION (story/clues live here) and a
+        # short window of recent ACTIONS (to avoid repeating yourself).
+        dh = kb.dialogue_view(30)
+        if dh:
+            view["recent_dialogue"] = dh
+        ah = kb.action_view(10)
+        if ah:
+            view["recent_actions"] = ah
     return json.dumps(view)
 
 
@@ -410,10 +423,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         time.sleep(args.delay)
         return
 
-    # Record NPC dialog into the journal (only while in a conversation).
+    # Record NPC dialog into the journal + dialogue history (with speaker).
     npc_text = state.get("npc_text")
     if state.get("conversation_in_progress") and npc_text:
         kb.add_journal(npc_text)
+        kb.record_npc_line(session.get("current_npc", "?"), npc_text)
 
     if args.dry_run:
         reason, action = scripted_reply(step, state)
@@ -550,16 +564,35 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     reason = f"(guard) stuck; exploring {d} for new areas"
                     recent_positions.clear()
 
+    # Record the agent's own reply into the dialogue history (so the model
+    # remembers what IT said, not just what NPCs said).
+    if isinstance(action, dict) and action.get("type") == "answer":
+        idx = action.get("index")
+        if isinstance(idx, int) and 0 <= idx < len(answers):
+            kb.record_my_reply(answers[idx])
+        elif action.get("text"):
+            kb.record_my_reply(str(action.get("text")))
+
     # "talk" is a top-level command, not an act() action.
     if isinstance(action, dict) and action.get("type") == "talk":
         tname = action.get("name", "")
         if tname:
             kb.mark_talked(tname)
+            session["current_npc"] = tname
         result = exult.talk(tname)
     else:
         result = exult.act(action)
     if window.available:
         window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
+
+    # Log meaningful actions (not routine moves/waits) to the short action
+    # history so the agent can avoid repeating itself.
+    atype = action.get("type") if isinstance(action, dict) else None
+    if atype in ("talk", "open", "pickup", "search", "goto", "combat", "feed"):
+        p0 = state.get("player") or {}
+        detail = action.get("name") or action.get("dir") or ""
+        kb.record_action(f"{atype} {detail}".strip()
+                         + f" @({p0.get('tx')},{p0.get('ty')})")
 
     p = state.get("player") or {}
     print(f"[{step:03d}] pos=({p.get('tx')},{p.get('ty')}) "
