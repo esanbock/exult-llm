@@ -595,10 +595,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if args.dry_run:
         reason, action = scripted_reply(step, state)
     else:
-        reply = ollama.chat(SYSTEM_PROMPT, summarize_state(state, kb))
+        res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb))
+        reply = res["content"]
         reason, action = parse_reply(reply)
+        # Track context usage so we can see if the prompt is bloating/truncating.
+        ctx_max = session.get("ctx_max") or ollama.num_ctx
+        pt = res.get("prompt_tokens", 0)
+        pct = int(100 * pt / ctx_max) if ctx_max else 0
+        session["last_ctx"] = f"context: {pt} prompt + {res.get('response_tokens',0)} resp tok / {ctx_max} ({pct}%)"
+        if pt > 0.9 * ctx_max:
+            print(f"[{step:03d}] WARNING: prompt {pt} tok near context limit {ctx_max}")
         if window.available:
-            window.set_thinking(reply)
+            window.set_thinking(session["last_ctx"] + "\n\n" + reply)
 
     if window.available and args.dry_run:
         window.set_thinking(reason)
@@ -946,7 +954,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     p = state.get("player") or {}
     print(f"[{step:03d}] pos=({p.get('tx')},{p.get('ty')}) "
           f"conv={state.get('conversation_active')} "
-          f"reason={reason!r} action={action} -> {result}")
+          f"reason={reason!r} action={action} -> {result}"
+          + (f"  [{session.get('last_ctx')}]" if session.get('last_ctx') else ""))
     time.sleep(args.delay)
 
 
@@ -1025,11 +1034,16 @@ def main() -> int:
                          "driver restarts (set to '' to disable)")
     ap.add_argument("--save-every", type=int, default=40,
                     help="save the in-game progress every N turns")
+    ap.add_argument("--num-ctx", type=int, default=8192,
+                    help="Ollama context window (tokens). Must exceed the prompt "
+                         "size or the prompt is silently truncated (Ollama default "
+                         "is only 2048).")
     args = ap.parse_args()
 
     ollama = None
     if not args.dry_run:
-        ollama = OllamaClient(model=args.model, host=args.ollama_host)
+        ollama = OllamaClient(model=args.model, host=args.ollama_host,
+                              num_ctx=args.num_ctx)
         if not ollama.is_up():
             print(
                 f"[!] Ollama not reachable at {args.ollama_host}. "
@@ -1037,6 +1051,10 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
+        maxctx = ollama.context_size()
+        print(f"[+] Model '{args.model}': max context {maxctx or '?'} tokens; "
+              f"using num_ctx={args.num_ctx} (full prompt must fit here or it is "
+              f"silently truncated).")
 
     # Make sure the game is running (launch it if needed).
     try:

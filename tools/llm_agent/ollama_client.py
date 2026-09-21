@@ -18,10 +18,15 @@ class OllamaClient:
         model: str = "llama3.1",
         host: str = "http://127.0.0.1:11434",
         timeout: float = 120.0,
+        num_ctx: int = 8192,
     ):
         self.model = model
         self.host = host.rstrip("/")
         self.timeout = timeout
+        # IMPORTANT: Ollama defaults num_ctx to 2048, which would silently
+        # TRUNCATE our multi-thousand-token prompt (dropping tool/policy text so
+        # the model never sees it). Set it large enough to hold the whole prompt.
+        self.num_ctx = num_ctx
 
     def chat(
         self,
@@ -39,7 +44,7 @@ class OllamaClient:
                 {"role": "user", "content": user},
             ],
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": {"temperature": temperature, "num_ctx": self.num_ctx},
         }
         if force_json:
             # Ask Ollama to constrain output to a JSON object.
@@ -55,6 +60,69 @@ class OllamaClient:
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         return body.get("message", {}).get("content", "")
+
+    def chat_ex(
+        self,
+        system: str,
+        user: str,
+        *,
+        force_json: bool = True,
+        temperature: float = 0.2,
+    ) -> dict:
+        """Like chat() but returns {content, prompt_tokens, response_tokens,
+        total_tokens} using Ollama's own token counts. If the model was given a
+        num_ctx, we also include it so callers can compute % of context used."""
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "options": {"temperature": temperature, "num_ctx": self.num_ctx},
+        }
+        if force_json:
+            payload["format"] = "json"
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.host}/api/chat", data=data,
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        pt = int(body.get("prompt_eval_count", 0) or 0)
+        rt = int(body.get("eval_count", 0) or 0)
+        return {
+            "content": body.get("message", {}).get("content", ""),
+            "prompt_tokens": pt,
+            "response_tokens": rt,
+            "total_tokens": pt + rt,
+        }
+
+    def context_size(self) -> int:
+        """Query the model's context window (num_ctx) via /api/show. Returns 0
+        if unknown."""
+        try:
+            data = json.dumps({"model": self.model}).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self.host}/api/show", data=data,
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=10.0) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            # Look for context length in model_info (key varies by arch).
+            info = body.get("model_info", {}) or {}
+            for k, v in info.items():
+                if k.endswith(".context_length") and isinstance(v, int):
+                    return v
+            params = body.get("parameters", "") or ""
+            for line in params.splitlines():
+                if line.strip().startswith("num_ctx"):
+                    try:
+                        return int(line.split()[-1])
+                    except ValueError:
+                        pass
+        except Exception:
+            pass
+        return 0
 
     def is_up(self) -> bool:
         try:
