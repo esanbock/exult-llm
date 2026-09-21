@@ -424,6 +424,51 @@ def _apply_meta(action: dict, kb: "KnowledgeBase") -> str:
     return "no-op"
 
 
+def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
+    """Pick a distant goto target in a direction that is actually OPEN on the
+    grid (avoid heading into ocean/walls). When wedged, rotate to a brand-new
+    direction each turn until we break free."""
+    p = state.get("player") or {}
+    tx, ty = p.get("tx", 0), p.get("ty", 0)
+    rows = (state.get("grid") or "").split("\n")
+    cx = cy = 12
+
+    def openness(dx, dy):
+        score = 0
+        for r in range(1, 10):
+            x, y = cx + dx * r, cy + dy * r
+            if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
+                ch = rows[y][x]
+                if ch in ".&C*x/":
+                    score += 1
+                elif ch == "#":
+                    break
+        return score
+
+    dirs = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0),
+            "ne": (1, -1), "nw": (-1, -1), "se": (1, 1), "sw": (-1, 1)}
+    tried = session.setdefault("failed_dirs", set())
+    ranked = sorted(dirs.items(), key=lambda kv: -openness(*kv[1]))
+    choice = None
+    for name, (dx, dy) in ranked:
+        if wedged and name in tried:
+            continue
+        if openness(dx, dy) >= 3:
+            choice = (name, dx, dy)
+            break
+    if not choice and ranked:
+        name, (dx, dy) = ranked[0]
+        choice = (name, dx, dy)
+    name, dx, dy = choice
+    if wedged:
+        tried.add(name)
+        if len(tried) >= 6:
+            tried.clear()
+    else:
+        tried.clear()
+    return {"type": "goto", "tx": tx + dx * 12, "ty": ty + dy * 12}
+
+
 def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -> None:
     state = exult.observe()
     if window.available:
@@ -488,6 +533,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     in_convo = bool(state.get("conversation_in_progress"))
     answers = state.get("answers") or []
 
+    # Global stuck detection: if the avatar's tile hasn't changed for several
+    # turns while not in a conversation, we're wedged (e.g. against the ocean
+    # or a wall). Track this so exploration can pick a genuinely new heading.
+    p_now = state.get("player") or {}
+    pos_now = (p_now.get("tx"), p_now.get("ty"))
+    if in_convo:
+        session["stuck_count"] = 0
+    elif pos_now == session.get("last_pos"):
+        session["stuck_count"] = session.get("stuck_count", 0) + 1
+    else:
+        session["stuck_count"] = 0
+    session["last_pos"] = pos_now
+    wedged = session.get("stuck_count", 0) >= 3
+
     # Track how long we've been in the current conversation, and which answer
     # choices we've already picked, so we can detect a loop and bail out.
     if in_convo:
@@ -525,18 +584,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if state.get("conversation_in_progress") and not state.get("conversation_active"):
         action = {"type": "key", "key": "space"}
         reason = "(guard) advancing NPC dialog"
+    # 0.5) Wedged (position unchanged for several turns, e.g. against the ocean
+    #      or a wall while repeating the same goto): force a NEW open heading.
+    elif wedged:
+        action = _explore_far(state, session, wedged)
+        reason = "(guard) stuck against a barrier; heading a new open direction"
     else:
-        # Helper: commit to exploring a distant tile so the agent leaves an
-        # exhausted area instead of oscillating between adjacent NPCs.
-        def _explore_far():
-            p = state.get("player") or {}
-            tx, ty = p.get("tx", 0), p.get("ty", 0)
-            # Rotate heading every ~8 turns so it sweeps the map over time.
-            headings = [(0, -18), (18, 0), (0, 18), (-18, 0),
-                        (14, -14), (-14, 14), (14, 14), (-14, -14)]
-            hx, hy = headings[(step // 8) % len(headings)]
-            return {"type": "goto", "tx": tx + hx, "ty": ty + hy}
-
         # 1b) A "space"/"key" press outside a conversation does nothing.
         if (isinstance(action, dict) and action.get("type") == "key"
                 and not state.get("conversation_in_progress")):
@@ -547,7 +600,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 action = {"type": "talk", "name": target["name"]}
                 reason = f"(guard) no conversation open; talking to {target['name']}"
             else:
-                action = _explore_far()
+                action = _explore_far(state, session, wedged)
                 reason = "(guard) NPCs exhausted; exploring a new area"
         # 2) Redirect re-talk to an exhausted NPC toward a fresh one.
         if isinstance(action, dict) and action.get("type") == "talk":
@@ -560,7 +613,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = {"type": "talk", "name": target["name"]}
                     reason = f"(guard) already talked to {nm}; trying {target['name']}"
                 else:
-                    action = _explore_far()
+                    action = _explore_far(state, session, wedged)
                     reason = "(guard) all nearby NPCs exhausted; exploring a new area"
         # 3) Anti-chase / auto-loot when stuck.
         elif (isinstance(action, dict) and action.get("type") == "move"
