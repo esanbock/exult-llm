@@ -183,10 +183,13 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
      you finish one, mark it "done" with "update_quest"; record leads with
      "note_npc". Respect prerequisites: a "blocked" quest needs its depends_on
      quests done first, so complete those first.
-  4. Else explore. To reach a specific NPC, item, or building/entrance, PREFER
-     "goto" (it pathfinds around walls and through doors). Use single "move"
-     steps only for small local adjustments. If a closed door '+' blocks you,
-     you can also move next to it, "open" it, then move through the '/' opening.
+  4. Else explore. To reach anywhere more than a step or two away (an NPC, an
+     item, a building/entrance, a new part of town) ALWAYS use "goto" - it
+     pathfinds around walls and through doors for you. Only use single "move"
+     steps for tiny local adjustments, and NEVER move onto a '#' wall: on the
+     grid you (@) can only step onto '.', items '*', or an open door '/'. If you
+     keep bumping the same spot, you are against a wall - use "goto" to route
+     around it.
   4b. PAY ATTENTION TO OBJECTS: the "objects" list names what is on the ground
      around you; bodies also show as 'x' on the grid. When something looks
      relevant to your goals or curiosity, interact with it rather than pacing:
@@ -598,6 +601,53 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = {"type": "move", "dir": d}
                     reason = f"(guard) stuck; exploring {d} for new areas"
                     recent_positions.clear()
+
+    # --- Wall-aware move guard: never walk into a '#'. ------------------
+    # The grid is centered on the avatar (radius 12 -> center [12][12]).
+    # A '.' or open door '/' or an item '*' or NPC is walkable; '#' and a
+    # closed door '+' are not directly walkable (a closed door needs goto,
+    # which opens it). If the model's move heads into a wall, pick the closest
+    # walkable direction toward the same heading, else pathfind/turn.
+    if isinstance(action, dict) and action.get("type") == "move":
+        grid = state.get("grid") or ""
+        rows = grid.split("\n")
+        if len(rows) >= 25 and len(rows[0]) >= 25:
+            cx = cy = 12
+            deltas = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0),
+                      "ne": (1, -1), "nw": (-1, -1), "se": (1, 1), "sw": (-1, 1)}
+            def cell(dx, dy):
+                x, y = cx + dx, cy + dy
+                if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
+                    return rows[y][x]
+                return "#"
+            def walkable(ch):
+                return ch in ".*&Cx/@"   # open, item, npc, body, open door
+            d = action.get("dir", "")
+            dxy = deltas.get(d)
+            if dxy and not walkable(cell(*dxy)):
+                # Requested direction is blocked. Try nearby directions in
+                # order of similarity to the intended heading.
+                order = {
+                    "n": ["n","ne","nw","e","w"], "s": ["s","se","sw","e","w"],
+                    "e": ["e","ne","se","n","s"], "w": ["w","nw","sw","n","s"],
+                    "ne": ["ne","n","e","nw","se"], "nw": ["nw","n","w","ne","sw"],
+                    "se": ["se","s","e","sw","ne"], "sw": ["sw","s","w","se","nw"],
+                }.get(d, ["n","e","s","w","ne","nw","se","sw"])
+                picked = None
+                for cand in order:
+                    if walkable(cell(*deltas[cand])):
+                        picked = cand
+                        break
+                if picked:
+                    action = {"type": "move", "dir": picked}
+                    reason = f"(guard) '{d}' hits a wall; moving {picked} instead"
+                else:
+                    # Fully boxed in locally -> pathfind toward the heading.
+                    p = state.get("player") or {}
+                    hx, hy = deltas.get(d, (0, -1))
+                    action = {"type": "goto", "tx": p.get("tx", 0) + hx * 12,
+                              "ty": p.get("ty", 0) + hy * 12}
+                    reason = f"(guard) '{d}' blocked; pathfinding around walls"
 
     # Record the agent's own reply into the dialogue history (so the model
     # remembers what IT said, not just what NPCs said).
