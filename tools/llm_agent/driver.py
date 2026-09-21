@@ -446,25 +446,30 @@ def _pursue_focus_quest(state: dict, kb: "KnowledgeBase"):
     """Turn the highest-priority actionable quest into a concrete action:
     if its NPC is nearby -> talk to them; else -> goto their last-known
     position. Returns (action, reason) or (None, None) if not applicable."""
+    party = {n.get("name") for n in (state.get("nearby") or []) if n.get("in_party")}
     qv = kb.quest_view()
-    focus = qv.get("focus")
-    if not focus:
-        return None, None
-    npc = focus.get("npc")
-    if not npc:
-        return None, None
-    # Is the quest's NPC visible right now?
-    for n in (state.get("nearby") or []):
-        if n.get("name") == npc and not n.get("dead"):
-            if kb.talk_status(npc) != "exhausted":
-                return ({"type": "talk", "name": npc},
-                        f"(quest) pursuing '{focus.get('title')}': talk {npc}")
-            break  # nearby but exhausted -> fall through to elsewhere
-    # Otherwise head to where we last saw them.
-    pos = kb.npc_last_pos(npc)
-    if pos:
-        return ({"type": "goto", "tx": pos[0], "ty": pos[1]},
-                f"(quest) pursuing '{focus.get('title')}': goto {npc}")
+    # Consider the focus quest, then other actionable quests, skipping any whose
+    # NPC is a party companion (they follow you, so "go to them" is pointless).
+    for focus in ([qv.get("focus")] + qv.get("actionable", [])):
+        if not focus:
+            continue
+        npc = focus.get("npc")
+        if not npc or npc in party:
+            continue
+        # Is the quest's NPC visible right now?
+        seen = False
+        for n in (state.get("nearby") or []):
+            if n.get("name") == npc and not n.get("dead"):
+                seen = True
+                if kb.talk_status(npc) != "exhausted":
+                    return ({"type": "talk", "name": npc},
+                            f"(quest) pursuing '{focus.get('title')}': talk {npc}")
+                break
+        if not seen:
+            pos = kb.npc_last_pos(npc)
+            if pos and pos[0] is not None:
+                return ({"type": "goto", "tx": pos[0], "ty": pos[1]},
+                        f"(quest) pursuing '{focus.get('title')}': goto {npc}")
     return None, None
 
 
@@ -566,7 +571,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # the model rarely calls the journal tools itself.
         if npc_text != session.get("last_captured_line"):
             session["last_captured_line"] = npc_text
-            kb.auto_note_from_dialogue(cur_npc, npc_text)
+            # Party companions follow you, so a "follow up with them" quest is a
+            # useless navigation target - just note what they said, no quest.
+            _party = {n.get("name") for n in (state.get("nearby") or []) if n.get("in_party")}
+            if cur_npc in _party:
+                kb.note_npc(cur_npc, npc_text[:200])
+            else:
+                kb.auto_note_from_dialogue(cur_npc, npc_text)
 
     if args.dry_run:
         reason, action = scripted_reply(step, state)
