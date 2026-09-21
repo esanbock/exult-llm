@@ -152,7 +152,9 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
 
 # HOW TO DECIDE (policy)
   1. If conversation_active is true -> use "answer" (pick the index of the reply
-     you want; prefer moving the conversation forward, use the "bye" reply to end).
+     you want). Explore genuinely NEW topics, but once you have asked the useful
+     ones (or you see the same choices again), END the conversation by choosing
+     the "bye"/"leave" reply. Do NOT keep re-picking the same topics in a loop.
   2. Else if conversation_in_progress is true (a conversation is open but no
      choices yet) -> use "key" with "space" to advance the NPC's text until the
      answer choices appear. Do NOT "talk" again or "move" during a conversation.
@@ -437,8 +439,45 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
 
     # --- Driver-side guards to keep behavior sane ------------------------
     MAX_TALKS = 3              # don't re-talk the same NPC more than this
+    MAX_CONVO_TURNS = 12       # force-end a conversation that drags on
     def talked(nm):
         return kb.times_talked(nm)
+
+    in_convo = bool(state.get("conversation_in_progress"))
+    answers = state.get("answers") or []
+
+    # Track how long we've been in the current conversation, and which answer
+    # choices we've already picked, so we can detect a loop and bail out.
+    if in_convo:
+        session["convo_turns"] = session.get("convo_turns", 0) + 1
+    else:
+        session["convo_turns"] = 0
+        session["picked_answers"] = set()
+
+    def _bye_action():
+        """Choose the answer that ends the conversation ('bye'/'leave'/last)."""
+        low = [a.lower() for a in answers]
+        for kw in ("bye", "leave", "farewell", "goodbye", "nothing", "done"):
+            for i, a in enumerate(low):
+                if kw in a:
+                    return {"type": "answer", "index": i}
+        # Fall back to the last option (usually the exit), else press escape.
+        if answers:
+            return {"type": "answer", "index": len(answers) - 1}
+        return {"type": "key", "key": "escape"}
+
+    # 0) Auto-end a conversation that has gone on too long or is repeating the
+    #    same answer choices (the model won't pick 'bye' on its own).
+    if state.get("conversation_active") and answers:
+        picked = session.setdefault("picked_answers", set())
+        chosen_idx = action.get("index") if isinstance(action, dict) and action.get("type") == "answer" else None
+        too_long = session.get("convo_turns", 0) >= MAX_CONVO_TURNS
+        repeating = chosen_idx is not None and chosen_idx in picked and len(picked) >= max(1, len(answers) - 1)
+        if too_long or repeating:
+            action = _bye_action()
+            reason = f"(guard) ending conversation ({'too long' if too_long else 'looping'})"
+        elif chosen_idx is not None:
+            picked.add(chosen_idx)
 
     # 1) If a conversation is open but no choices are shown yet, advance text.
     if state.get("conversation_in_progress") and not state.get("conversation_active"):
