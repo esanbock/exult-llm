@@ -97,12 +97,21 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   doors (list)                - nearby doors: {name, dx, dy, closed}
 
 # YOUR JOURNAL (you maintain this - it persists across turns)
-  quests: {focus, actionable[], blocked[]}
-      - focus: the single highest-priority quest you can act on now (or null)
-      - actionable: quests you can work on now, sorted by priority (1=highest)
-      - blocked: quests waiting on a prerequisite (see each quest's depends_on)
-      Each quest: {id, title, priority, status(active|blocked|done), notes, depends_on[]}
+  quests: {focus, actionable[], blocked[], resolved, unresolved}
+      - Your MAIN DRIVE is to work through quests: pursue the highest-priority
+        UNRESOLVED quest you can act on, gather new quests as you discover them,
+        and mark quests resolved when done. Respect prerequisites.
+      - focus: the single highest-priority quest to work on now (or null)
+      - actionable: unresolved quests you can act on now (priority 1=highest)
+      - blocked: unresolved quests waiting on a prerequisite (see depends_on)
+      - Each quest: {id, title, priority, status(active|blocked|done),
+        resolved(true/false), npc (who it involves), depends_on[]}
+      - A quest with "npc" set can be pursued by going to/talking to that NPC.
   npc_notes: what you have recorded about nearby/known NPCs (their leads, wants)
+  known_places: your MENTAL MAP of discovered locations (landmarks, buildings,
+      gates, shops, etc.), nearest first, each {name, kind, dx, dy}. You can
+      "goto" any of these by name to travel back to them - useful for returning
+      to a town, building, or quest location you found earlier.
   recent_dialogue: a running transcript of the last conversation exchanges
       ({"npc":name,"said":...} for NPC lines, {"me":...} for your replies).
       Use this to remember what you have learned and what was said earlier.
@@ -114,10 +123,11 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
             Use the grid: step onto '.' tiles, never into '#'. To reach an
             NPC/object, move toward its (dx,dy).
   goto    - PATHFIND to a destination and walk there automatically, routing
-            around walls and THROUGH doorways. params: {"name": "<NPC/object>"}
-            to go to the nearest thing with that name, OR {"tx":<int>,"ty":<int>}
-            for an absolute tile. PREFER "goto" over many "move" steps when you
-            want to reach a specific NPC, item, or building entrance.
+            around walls and THROUGH doorways. params: {"name": "<NPC/object/
+            place>"} to go to the nearest thing with that name OR a remembered
+            place/NPC from known_places/npc memory (even if off-screen), OR
+            {"tx":<int>,"ty":<int>} for an absolute tile. PREFER "goto" over many
+            "move" steps to reach an NPC, item, building, or known place.
   stop    - Stop walking. params: none.
   talk    - START a conversation with a nearby NPC. params: {"name": "<NPC name>"}
             This is the ONLY way to begin dialog. Walking next to an NPC does
@@ -170,23 +180,24 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   2. Else if conversation_in_progress is true (a conversation is open but no
      choices yet) -> use "key" with "space" to advance the NPC's text until the
      answer choices appear. Do NOT "talk" again or "move" during a conversation.
-  3. Else if you want to talk to someone in "nearby" -> "talk" with their name.
-     Choose by their "status": prefer NPCs marked "new", then "talked". Do NOT
-     "talk" to an NPC marked "exhausted" - you have already learned what they
-     know for now, and asking again just wastes turns (a smart adventurer moves
-     on). It is fine to revisit someone AFTER real progress (you completed a task
-     they mentioned, found an item) - their status resets when things change.
-     If everyone nearby is "exhausted", explore to a NEW area to find fresh
-     people/places (use "goto" toward unexplored parts of the map).
-  3b. USE YOUR JOURNAL: consult "quests" - work on the "focus" quest (highest
-     priority you can act on now). When you learn a new goal, "add_quest"; when
-     you finish one, mark it "done" with "update_quest"; record leads with
-     "note_npc". Respect prerequisites: a "blocked" quest needs its depends_on
-     quests done first, so complete those first.
-  4. Else explore. To reach anywhere more than a step or two away (an NPC, an
-     item, a building/entrance, a new part of town) ALWAYS use "goto" - it
-     pathfinds around walls and through doors for you. Only use single "move"
-     steps for tiny local adjustments, and NEVER move onto a '#' wall: on the
+  3. YOUR MAIN DRIVE - WORK THE QUESTS: look at "quests.focus" (the highest
+     priority unresolved quest you can act on). Pursue it:
+       - if it has an "npc" who is in "nearby" -> "talk" to them;
+       - if it has an "npc" who is NOT nearby -> "goto" that npc (by name);
+       - otherwise act on what its notes describe.
+     When you learn a new goal, "add_quest" (set priority; set depends_on if it
+     requires another quest first). When you finish one, mark it "done" with
+     "update_quest" (that resolves it). Record leads with "note_npc". Always
+     prefer the highest-priority UNRESOLVED, non-blocked quest.
+  3a. Talking to NEW people is how you discover quests. Prefer nearby NPCs with
+     status "new", then "talked". Do NOT "talk" to an "exhausted" NPC - you
+     already learned what they know for now (revisiting only helps after real
+     progress, which resets their status).
+  4. Only if you have NO actionable quest and no new NPC to meet -> explore to a
+     NEW area to find fresh people/places. To travel anywhere more than a step
+     or two (an NPC, item, building, or new part of town) ALWAYS use "goto" - it
+     pathfinds around walls and through doors. Use single "move" steps only for
+     tiny local adjustments, and NEVER move onto a '#' wall: on the
      grid you (@) can only step onto '.', items '*', or an open door '/'. If you
      keep bumping the same spot, you are against a wall - use "goto" to route
      around it.
@@ -243,6 +254,10 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None) -> str:
     if kb is not None:
         view["quests"] = kb.quest_view()
         view["already_talked_to"] = sorted(kb.npcs.keys())
+        # Known places (mental map), nearest first, with direction from here.
+        places = kb.places_view(p.get("tx", 0), p.get("ty", 0), limit=12)
+        if places:
+            view["known_places"] = places
         # NPC notes: focus on those currently nearby, plus recently noted.
         nearby_names = [n.get("name") for n in nearby[:8] if n.get("name")]
         notes = kb.npc_view(nearby_names)
@@ -424,6 +439,32 @@ def _apply_meta(action: dict, kb: "KnowledgeBase") -> str:
     return "no-op"
 
 
+def _pursue_focus_quest(state: dict, kb: "KnowledgeBase"):
+    """Turn the highest-priority actionable quest into a concrete action:
+    if its NPC is nearby -> talk to them; else -> goto their last-known
+    position. Returns (action, reason) or (None, None) if not applicable."""
+    qv = kb.quest_view()
+    focus = qv.get("focus")
+    if not focus:
+        return None, None
+    npc = focus.get("npc")
+    if not npc:
+        return None, None
+    # Is the quest's NPC visible right now?
+    for n in (state.get("nearby") or []):
+        if n.get("name") == npc and not n.get("dead"):
+            if kb.talk_status(npc) != "exhausted":
+                return ({"type": "talk", "name": npc},
+                        f"(quest) pursuing '{focus.get('title')}': talk {npc}")
+            break  # nearby but exhausted -> fall through to elsewhere
+    # Otherwise head to where we last saw them.
+    pos = kb.npc_last_pos(npc)
+    if pos:
+        return ({"type": "goto", "tx": pos[0], "ty": pos[1]},
+                f"(quest) pursuing '{focus.get('title')}': goto {npc}")
+    return None, None
+
+
 def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
     """Pick a distant goto target in a direction that is actually OPEN on the
     grid (avoid heading into ocean/walls). When wedged, rotate to a brand-new
@@ -487,6 +528,24 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             window.set_thinking("World not loaded yet; waiting...")
         time.sleep(args.delay)
         return
+
+    # Remember where nearby NPCs are, so quests involving them can be navigated
+    # to later even after we walk away.
+    _p = state.get("player") or {}
+    _ptx, _pty = _p.get("tx", 0), _p.get("ty", 0)
+    for _n in (state.get("nearby") or []):
+        if _n.get("name") and not _n.get("dead"):
+            kb.see_npc(_n["name"], _ptx + _n.get("dx", 0), _pty + _n.get("dy", 0))
+    # Build the mental map: record notable named places (signs and building-
+    # like objects) so the agent can navigate a growing multi-region world.
+    _PLACE_WORDS = ("sign", "gate", "door", "stairs", "ladder", "bridge",
+                    "well", "shrine", "altar", "chest", "bed", "counter",
+                    "stables", "inn", "tavern", "shop", "temple")
+    for _o in (state.get("objects") or []):
+        nm = (_o.get("name") or "").lower()
+        if any(w in nm for w in _PLACE_WORDS):
+            kb.record_place(_o["name"], _ptx + _o.get("dx", 0),
+                            _pty + _o.get("dy", 0), kind="landmark")
 
     # Record NPC dialog into the journal + dialogue history (with speaker).
     npc_text = state.get("npc_text")
@@ -600,8 +659,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 action = {"type": "talk", "name": target["name"]}
                 reason = f"(guard) no conversation open; talking to {target['name']}"
             else:
-                action = _explore_far(state, session, wedged)
-                reason = "(guard) NPCs exhausted; exploring a new area"
+                qa, qr = _pursue_focus_quest(state, kb)
+                if qa:
+                    action, reason = qa, qr
+                else:
+                    action = _explore_far(state, session, wedged)
+                    reason = "(guard) no active quest lead; exploring a new area"
         # 2) Redirect re-talk to an exhausted NPC toward a fresh one.
         if isinstance(action, dict) and action.get("type") == "talk":
             nm = action.get("name", "")
@@ -613,8 +676,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = {"type": "talk", "name": target["name"]}
                     reason = f"(guard) already talked to {nm}; trying {target['name']}"
                 else:
-                    action = _explore_far(state, session, wedged)
-                    reason = "(guard) all nearby NPCs exhausted; exploring a new area"
+                    qa, qr = _pursue_focus_quest(state, kb)
+                    if qa and not (qa.get("type") == "talk" and qa.get("name") == nm):
+                        action, reason = qa, qr
+                    else:
+                        action = _explore_far(state, session, wedged)
+                        reason = "(guard) no active quest lead; exploring a new area"
         # 3) Anti-chase / auto-loot when stuck.
         elif (isinstance(action, dict) and action.get("type") == "move"
               and not state.get("conversation_in_progress")):
@@ -710,6 +777,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             kb.record_my_reply(answers[idx])
         elif action.get("text"):
             kb.record_my_reply(str(action.get("text")))
+
+    # If the model asks to "goto" a named target that isn't visible but IS a
+    # remembered place or NPC, resolve it to coordinates from the mental map.
+    if (isinstance(action, dict) and action.get("type") == "goto"
+            and action.get("name") and "tx" not in action):
+        nm = action["name"]
+        nearby_names = {n.get("name") for n in (state.get("nearby") or [])}
+        if nm not in nearby_names:
+            pos = kb.place_pos(nm) or kb.npc_last_pos(nm)
+            if pos and pos[0] is not None:
+                action = {"type": "goto", "tx": pos[0], "ty": pos[1]}
+                reason = f"{reason} [mapped '{nm}' -> ({pos[0]},{pos[1]})]"
 
     # "talk" is a top-level command, not an act() action.
     if isinstance(action, dict) and action.get("type") == "talk":
