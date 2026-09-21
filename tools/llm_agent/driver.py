@@ -78,6 +78,10 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   in_combat (bool)            - are you in combat mode
   conversation_in_progress (bool) - true while a conversation is open (faces shown)
   conversation_active (bool)  - true when NPC answer choices are on screen NOW
+  number_prompt (bool)        - true when the game is asking you to pick a NUMBER
+                                on a slider (e.g. "how many?"). When true you also
+                                get number_min, number_max, number_current. Use
+                                the "set_number" tool to answer it.
   npc_text (string|null)      - the last thing an NPC said to you
   answers (list[string])      - the reply choices you may pick (only when
                                 conversation_active is true)
@@ -150,6 +154,9 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   answer  - Choose a reply during a conversation. params: {"index": <int>} (0-based
             into the "answers" list) OR {"text": "<answer text>"}.
             Only valid when conversation_active is true.
+  set_number - Answer a numeric slider prompt. params: {"value": <int>}. Only
+            valid when number_prompt is true; value is clamped to
+            [number_min, number_max]. Use this to pick a quantity/amount.
   key     - Press a key. params: {"key": "space"|"escape"|"a".."z"|"0".."9"}.
             Use "space" to advance NPC text when there is npc_text but no answers.
   combat  - Toggle combat/attack mode on or off. params: none.
@@ -644,6 +651,24 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if answers:
             return {"type": "answer", "index": len(answers) - 1}
         return {"type": "key", "key": "escape"}
+
+    # 0a) A numeric slider prompt is up: answer it. Use the model's value if it
+    #     chose set_number, else default to a sensible amount (the max, i.e.
+    #     "all"). This prevents getting stuck on the slider/checkbox GUI.
+    if state.get("number_prompt"):
+        lo = state.get("number_min", 0)
+        hi = state.get("number_max", lo)
+        if isinstance(action, dict) and action.get("type") == "set_number" \
+                and isinstance(action.get("value"), int):
+            val = max(lo, min(hi, action["value"]))
+        else:
+            val = hi  # default: take the full/maximum amount
+        exult.act({"type": "set_number", "value": val})
+        if window.available:
+            window.set_action(f'{{"type":"set_number","value":{val}}}')
+        print(f"[{step:03d}] number_prompt -> set_number {val} (range {lo}-{hi})")
+        time.sleep(args.delay)
+        return
 
     # 0) Auto-end a conversation that has gone on too long or is repeating the
     #    same answer choices (the model won't pick 'bye' on its own).

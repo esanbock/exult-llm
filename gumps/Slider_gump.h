@@ -32,6 +32,9 @@ class Slider_gump : public Modal_gump, Slider_widget::ICallback {
 protected:
 	std::unique_ptr<Slider_widget> widget;
 	bool                           allow_escape = false;
+#ifdef USE_LLM_AGENT
+	static Slider_gump* active_instance;
+#endif
 
 public:
 	Slider_gump(int mival, int mxval, int step, int defval, bool allow_escape);
@@ -39,6 +42,17 @@ public:
 	int get_val() {    // Get last value set.
 		return widget->getselection();
 	}
+
+#ifdef USE_LLM_AGENT
+	// --- LLM agent bridge: control the active numeric-slider prompt. ---
+	~Slider_gump() override;
+	static Slider_gump* get_active() {
+		return active_instance;
+	}
+	int  get_min() const;
+	int  get_max() const;
+	void set_value_and_confirm(int v);    // set the value and close (accept)
+#endif
 
 	// Paint it and its contents.
 	void paint() override;

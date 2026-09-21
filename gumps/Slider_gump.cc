@@ -31,6 +31,31 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 using std::cout;
 using std::endl;
 
+#ifdef USE_LLM_AGENT
+Slider_gump* Slider_gump::active_instance = nullptr;
+
+int Slider_gump::get_min() const {
+	return widget->get_min_val();
+}
+
+int Slider_gump::get_max() const {
+	return widget->get_max_val();
+}
+
+void Slider_gump::set_value_and_confirm(int v) {
+	const int lo = widget->get_min_val();
+	const int hi = widget->get_max_val();
+	if (v < lo) {
+		v = lo;
+	}
+	if (v > hi) {
+		v = hi;
+	}
+	widget->set_val(v);
+	done = true;    // accept (same as pressing Enter)
+}
+#endif
+
 Slider_gump::Slider_gump(
 		int mival, int mxval,    // Value range.
 		int  step,               // Amt. to change by.
@@ -43,7 +68,18 @@ Slider_gump::Slider_gump(
 			ShapeID(game->get_shape("gumps/slider_diamond"), 0, SF_GUMPS_VGA), mival, mxval, step, defval, 64);
 
 	set_object_area(TileRect(0, 0, 0, 0), 22, 18);
+#ifdef USE_LLM_AGENT
+	active_instance = this;
+#endif
 }
+
+#ifdef USE_LLM_AGENT
+Slider_gump::~Slider_gump() {
+	if (active_instance == this) {
+		active_instance = nullptr;
+	}
+}
+#endif
 
 void Slider_gump::OnSliderValueChanged(Slider_widget* sender, int newvalue) {
 	ignore_unused_variable_warning(sender, newvalue);

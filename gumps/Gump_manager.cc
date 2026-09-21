@@ -38,6 +38,9 @@
 #include "ShortcutBar_gump.h"
 #include "Sign_gump.h"
 #include "Slider_gump.h"
+#ifdef USE_LLM_AGENT
+#	include "llm/agentserver.h"
+#endif
 #include "Spellbook_gump.h"
 #include "Stats_gump.h"
 #include "Yesno_gump.h"
@@ -1089,6 +1092,10 @@ bool Gump_manager::do_modal_gump(
 	}
 	do {
 		Delay();                   // Wait a fraction of a second.
+#ifdef USE_LLM_AGENT
+		LLM_agent::Agent_server_poll();    // Keep the agent bridge alive so it
+		// can drive modal prompts (e.g. numeric sliders) it opened.
+#endif
 		Mouse::mouse()->hide();    // Turn off mouse.
 		Mouse::mouse_update = false;
 		SDL_Event event;

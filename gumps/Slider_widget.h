@@ -77,6 +77,14 @@ public:
 		set_val(newval);
 	}
 
+	int get_min_val() const {
+		return min_val;
+	}
+
+	int get_max_val() const {
+		return max_val;
+	}
+
 	// An arrow was clicked on.
 	void clicked_left_arrow();
 	void clicked_right_arrow();

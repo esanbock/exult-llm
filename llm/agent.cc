@@ -38,6 +38,7 @@
 #include "exult_constants.h"
 #include "party.h"
 #include "Gump_manager.h"
+#include "Slider_gump.h"
 
 #include <SDL3/SDL.h>
 
@@ -574,6 +575,15 @@ namespace LLM_agent {
 		// The most recent line the NPC spoke, if any.
 		os << ',' << json_str("npc_text", conv ? conv->get_last_npc_text() : std::string());
 
+		// Active numeric-input prompt (slider + checkmark), e.g. "how many?".
+		Slider_gump* sg = Slider_gump::get_active();
+		os << ',' << json_bool("number_prompt", sg != nullptr);
+		if (sg) {
+			os << ',' << json_int("number_min", sg->get_min());
+			os << ',' << json_int("number_max", sg->get_max());
+			os << ',' << json_int("number_current", sg->get_val());
+		}
+
 		os << '}';
 		return os.str();
 	}
@@ -955,6 +965,19 @@ namespace LLM_agent {
 			}
 			best->activate();    // toggles open/closed
 			return "{\"ok\":true,\"did\":\"open\"}";
+		}
+
+		if (type == "set_number") {
+			Slider_gump* sg = Slider_gump::get_active();
+			if (!sg) {
+				return "{\"ok\":false,\"error\":\"no number prompt active\"}";
+			}
+			long v = 0;
+			if (!get_int(action_json, "value", v)) {
+				return "{\"ok\":false,\"error\":\"missing value\"}";
+			}
+			sg->set_value_and_confirm(static_cast<int>(v));
+			return "{\"ok\":true,\"did\":\"set_number\"," + json_int("value", v) + "}";
 		}
 
 		if (type == "move") {
