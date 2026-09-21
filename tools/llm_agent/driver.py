@@ -196,7 +196,10 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   4. Only if you have NO actionable quest and no new NPC to meet -> explore to a
      NEW area to find fresh people/places. To travel anywhere more than a step
      or two (an NPC, item, building, or new part of town) ALWAYS use "goto" - it
-     pathfinds around walls and through doors. Use single "move" steps only for
+     pathfinds around walls and through doors. If you have wandered far from
+     where your quests are (e.g. out in the wilderness with no one around),
+     "goto" a relevant known_place - especially "start area"/your town - to get
+     back to where the story and NPCs are. Use single "move" steps only for
      tiny local adjustments, and NEVER move onto a '#' wall: on the
      grid you (@) can only step onto '.', items '*', or an open door '/'. If you
      keep bumping the same spot, you are against a wall - use "goto" to route
@@ -533,6 +536,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # to later even after we walk away.
     _p = state.get("player") or {}
     _ptx, _pty = _p.get("tx", 0), _p.get("ty", 0)
+    # Record a persistent "home base" (starting area) the very first loaded turn
+    # so the agent can always navigate back even after wandering far.
+    if not kb.place_pos("start area"):
+        kb.record_place("start area", _ptx, _pty, kind="home",
+                        note="where you began; a safe town to return to")
     for _n in (state.get("nearby") or []):
         if _n.get("name") and not _n.get("dead"):
             kb.see_npc(_n["name"], _ptx + _n.get("dx", 0), _pty + _n.get("dy", 0))
