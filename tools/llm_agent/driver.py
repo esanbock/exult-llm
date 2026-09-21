@@ -395,20 +395,20 @@ def _apply_meta(action: dict, kb: "KnowledgeBase") -> str:
             notes=action.get("notes", ""),
             depends_on=action.get("depends_on"),
             status=action.get("status", "active"))
-        # New goal discovered = progress; NPCs may have new things to say.
-        kb.reset_talk_gate()
         return f"added quest '{qid}'"
     if t == "update_quest":
         qid = action.get("id") or action.get("title", "")
+        status = action.get("status")
         kb.update_quest(
             qid,
-            status=action.get("status"),
+            status=status,
             priority=action.get("priority"),
             notes=action.get("notes"),
             depends_on=action.get("depends_on"),
             title=action.get("title"))
-        # Progress on a quest = revisit NPCs (their dialogue is stateful).
-        kb.reset_talk_gate()
+        # Only COMPLETING a quest counts as progress worth revisiting NPCs for.
+        if status == "done":
+            kb.reset_talk_gate()
         return f"updated quest '{qid}'"
     if t == "note_npc":
         kb.note_npc(action.get("name", ""), action.get("note", ""))
@@ -518,6 +518,17 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         action = {"type": "key", "key": "space"}
         reason = "(guard) advancing NPC dialog"
     else:
+        # Helper: commit to exploring a distant tile so the agent leaves an
+        # exhausted area instead of oscillating between adjacent NPCs.
+        def _explore_far():
+            p = state.get("player") or {}
+            tx, ty = p.get("tx", 0), p.get("ty", 0)
+            # Rotate heading every ~8 turns so it sweeps the map over time.
+            headings = [(0, -18), (18, 0), (0, 18), (-18, 0),
+                        (14, -14), (-14, 14), (14, 14), (-14, -14)]
+            hx, hy = headings[(step // 8) % len(headings)]
+            return {"type": "goto", "tx": tx + hx, "ty": ty + hy}
+
         # 1b) A "space"/"key" press outside a conversation does nothing.
         if (isinstance(action, dict) and action.get("type") == "key"
                 and not state.get("conversation_in_progress")):
@@ -528,9 +539,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 action = {"type": "talk", "name": target["name"]}
                 reason = f"(guard) no conversation open; talking to {target['name']}"
             else:
-                d = ["n", "e", "s", "w", "ne", "sw"][step % 6]
-                action = {"type": "move", "dir": d}
-                reason = f"(guard) no conversation and NPCs exhausted; exploring {d}"
+                action = _explore_far()
+                reason = "(guard) NPCs exhausted; exploring a new area"
         # 2) Redirect re-talk to an exhausted NPC toward a fresh one.
         if isinstance(action, dict) and action.get("type") == "talk":
             nm = action.get("name", "")
@@ -542,8 +552,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = {"type": "talk", "name": target["name"]}
                     reason = f"(guard) already talked to {nm}; trying {target['name']}"
                 else:
-                    action = {"type": "move", "dir": "n"}
-                    reason = "(guard) all nearby NPCs exhausted; exploring"
+                    action = _explore_far()
+                    reason = "(guard) all nearby NPCs exhausted; exploring a new area"
         # 3) Anti-chase / auto-loot when stuck.
         elif (isinstance(action, dict) and action.get("type") == "move"
               and not state.get("conversation_in_progress")):
