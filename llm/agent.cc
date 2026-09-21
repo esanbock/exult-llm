@@ -317,8 +317,37 @@ namespace {
 				if (obj->get_name().empty()) {
 					continue;
 				}
-				// Bodies/remains show as 'x' (like dead actors); other items '*'.
-				plot(ot.tx, ot.ty, info.is_body_shape() ? 'x' : '*');
+				// Semantic glyph so the LLM can tell terrain/features apart.
+				const std::string nm  = obj->get_name();
+				std::string        low = nm;
+				std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+				char g = '*';    // default: a named item
+				if (info.is_body_shape()) {
+					g = 'x';    // body/remains
+				} else if (info.is_water()) {
+					g = '~';    // water
+				} else if (low.find("tree") != std::string::npos
+						   || info.get_shape_class() == Shape_info::unusable) {
+					g = 'T';    // tree / scenery you cannot use
+				} else if (low.find("fence") != std::string::npos
+						   || low.find("gate") != std::string::npos
+						   || low.find("rail") != std::string::npos) {
+					g = '=';    // fence / railing / gate frame
+				} else if (info.get_shape_class() == Shape_info::building) {
+					g = 'W';    // wall / roof / window / mountain (structure)
+				} else if (info.get_shape_class() == Shape_info::container) {
+					g = 'n';    // container (chest, barrel, etc.)
+				} else if (low.find("bed") != std::string::npos
+						   || low.find("table") != std::string::npos
+						   || low.find("chair") != std::string::npos
+						   || low.find("counter") != std::string::npos) {
+					g = 'H';    // furniture
+				} else if (low.find("sign") != std::string::npos) {
+					g = 's';    // readable sign
+				} else if (info.is_solid()) {
+					g = 'o';    // some other solid obstacle
+				}
+				plot(ot.tx, ot.ty, g);
 			}
 		}
 
@@ -516,7 +545,9 @@ namespace LLM_agent {
 			std::string grid   = build_grid(av, radius);
 			os << ',' << json_int("grid_radius", radius);
 			os << ',' << json_str("grid_legend",
-					"@=you C=companion &=npc x=body *=object +=closed_door /=open_door #=blocked .=open; north=up east=right");
+					"@=you C=companion &=npc x=body T=tree W=wall/building =~fence/gate "
+					"n=container H=furniture s=sign ~=water +=closed_door /=open_door "
+					"o=obstacle *=item .=open ground #=blocked; north=up east=right");
 			os << ',' << json_str("grid", grid);
 		}
 

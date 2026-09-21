@@ -93,11 +93,14 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   objects (list)              - items on the ground: {name, dx, dy}
   grid (string)               - top-down ASCII map centered on you (@):
                                   @ you   C companion   & other NPC   x body
-                                  * object   + closed door (PASSAGE - openable)
-                                  / open door   # wall/impassable   . open ground
+                                  T tree   W wall/building   = fence/gate
+                                  n container   H furniture   s sign   ~ water
+                                  + closed door (PASSAGE-openable)  / open door
+                                  o obstacle   * item   . open ground   # blocked
                                 north=up, south=down, east=right, west=left.
-                                To enter a building/room head for its door
-                                ('+' or '/'), NOT the '#' walls around it.
+                                Walk only on '.', items '*', or open door '/';
+                                everything else (T W = n H ~ o #) blocks you.
+                                To enter a building/room head for its door.
   doors (list)                - nearby doors: {name, dx, dy, closed}
 
 # YOUR JOURNAL (you maintain this - it persists across turns)
