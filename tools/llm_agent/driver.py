@@ -128,12 +128,12 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
             the way automatically), OR move adjacent to the '+' door, "open" it,
             then "move" through the '/' opening. Never treat '+' as impassable.
   search  - Open the nearest body or container to see/take what is inside.
-            params: none. Use this on a murder victim's body ('x' on the grid)
-            or a chest to reveal loot. After searching, use "pickup" to take items.
-  pickup  - Take a nearby item off the ground/scene into your inventory.
+            params: none. Works on any body ('x' on the grid) or container/chest
+            to reveal its contents. After searching, use "pickup" to take items.
+  pickup  - Take a nearby item off the ground into your inventory.
             params: {"name": "<item name>"} (optional; omit to grab the closest
-            takeable item). Use this to collect clues and loot like keys, jewelry,
-            gold, etc. that appear as '*' on the grid or in "objects".
+            takeable item). Use this to collect any useful item that appears as
+            '*' on the grid or in "objects" (keys, weapons, food, gold, etc.).
   answer  - Choose a reply during a conversation. params: {"index": <int>} (0-based
             into the "answers" list) OR {"text": "<answer text>"}.
             Only valid when conversation_active is true.
@@ -181,13 +181,11 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
      "goto" (it pathfinds around walls and through doors). Use single "move"
      steps only for small local adjustments. If a closed door '+' blocks you,
      you can also move next to it, "open" it, then move through the '/' opening.
-  4b. INVESTIGATING A SCENE: the "objects" list names what is on the ground
-     nearby (e.g. body, blood, candle, bucket, key, sword). Bodies also show as
-     'x' on the grid and carry "body":true. When you find a notable scene
-     (a body 'x', blood, ritual items, weapons, keys), do NOT just pace around.
-     "goto"/move adjacent, "search" bodies/containers, and "pickup" meaningful
-     items (keys, weapons, jewelry, notes) as evidence. Read object names to
-     understand what you are looking at.
+  4b. PAY ATTENTION TO OBJECTS: the "objects" list names what is on the ground
+     around you; bodies also show as 'x' on the grid. When something looks
+     relevant to your goals or curiosity, interact with it rather than pacing:
+     "goto"/move adjacent, "search" bodies and containers to see their contents,
+     and "pickup" useful items. Read object names to understand your surroundings.
   5. If your food is low, use "feed". If threatened, "combat".
 
 Reply with ONLY the single JSON object. No prose, no markdown.
