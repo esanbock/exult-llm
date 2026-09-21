@@ -116,9 +116,11 @@ class KnowledgeBase:
                 return True
         return False
 
-    def quest_view(self) -> dict:
+    def quest_view(self, max_actionable: int = 8, max_blocked: int = 6) -> dict:
         """Priority-sorted quests split into actionable vs blocked, plus the
-        single top recommended quest to work on now."""
+        single top recommended quest to work on now.  Caps the number shown so
+        the prompt stays bounded even after a long playthrough with many quests
+        (the full set is always kept on disk)."""
         active = [q for q in self.quests.values() if q.get("status") not in ("done",)]
         for q in active:
             q_blocked = self._is_blocked(q)
@@ -139,8 +141,9 @@ class KnowledgeBase:
 
         return {
             "focus": brief(actionable[0]) if actionable else None,
-            "actionable": [brief(q) for q in actionable],
-            "blocked": [brief(q) for q in blocked],
+            "actionable": [brief(q) for q in actionable[:max_actionable]],
+            "blocked": [brief(q) for q in blocked[:max_blocked]],
+            "total_open": len(active),
         }
 
     # ----- npcs ----------------------------------------------------------
