@@ -475,6 +475,12 @@ def _pursue_focus_quest(state: dict, kb: "KnowledgeBase"):
         if not seen:
             pos = kb.npc_last_pos(npc)
             if pos and pos[0] is not None:
+                p = state.get("player") or {}
+                # If we're already essentially at their last-known spot but they
+                # aren't here, that info is stale - don't goto our own tile in a
+                # loop; skip to the next quest / exploration instead.
+                if abs(pos[0] - p.get("tx", 0)) + abs(pos[1] - p.get("ty", 0)) <= 2:
+                    continue
                 return ({"type": "goto", "tx": pos[0], "ty": pos[1]},
                         f"(quest) pursuing '{focus.get('title')}': goto {npc}")
     return None, None
@@ -833,6 +839,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             if pos and pos[0] is not None:
                 action = {"type": "goto", "tx": pos[0], "ty": pos[1]}
                 reason = f"{reason} [mapped '{nm}' -> ({pos[0]},{pos[1]})]"
+
+    # A goto that targets (almost) our own tile is a no-op that loops forever.
+    # Redirect it to real exploration.
+    if isinstance(action, dict) and action.get("type") == "goto" and "tx" in action:
+        _pp = state.get("player") or {}
+        if abs(action["tx"] - _pp.get("tx", 0)) + abs(action["ty"] - _pp.get("ty", 0)) <= 2:
+            action = _explore_far(state, session, True)
+            reason = "(guard) goto target is here already; exploring instead"
 
     # "talk" is a top-level command, not an act() action.
     if isinstance(action, dict) and action.get("type") == "talk":
