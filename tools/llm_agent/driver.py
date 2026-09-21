@@ -536,9 +536,25 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if window.available:
         window.update_turn(step)
         window.set_map(state.get("grid") or "(no map)")
-        obs_compact = {k: v for k, v in state.items() if k != "grid"}
-        window.set_observation(json.dumps(obs_compact, indent=2))
         window.set_dialog(format_dialog(state))
+        # Inspector panels: quests, NPC knowledge, and stats.
+        try:
+            nearby_names = [n.get("name") for n in (state.get("nearby") or []) if n.get("name")]
+            window.set_quests(kb.quests_pretty())
+            window.set_npcs(kb.npcs_pretty(nearby_names))
+            p = state.get("player") or {}
+            stats = [
+                f"pos: ({p.get('tx')},{p.get('ty')})  hp:{p.get('hp')}  food:{p.get('food')}",
+                f"in_combat:{state.get('in_combat')}  conv:{state.get('conversation_in_progress')}",
+                f"NPCs met: {len(kb.npcs)}   places mapped: {len(kb.places)}",
+                f"quests: {len(kb.quests)}   journal: {len(kb.journal)}",
+                f"dialogue mem: {len(kb.dialogue_history)}   actions mem: {len(kb.action_history)}",
+            ]
+            if session.get("last_ctx"):
+                stats.append(session["last_ctx"])
+            window.set_stats("\n".join(stats))
+        except Exception:
+            pass
 
     # Safety net: keep the party fed so a long run can't starve.
     if args.auto_feed and step % args.auto_feed_every == 0:
@@ -606,7 +622,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if pt > 0.9 * ctx_max:
             print(f"[{step:03d}] WARNING: prompt {pt} tok near context limit {ctx_max}")
         if window.available:
-            window.set_thinking(session["last_ctx"] + "\n\n" + reply)
+            window.set_context(pct, f"{pt} prompt + {res.get('response_tokens',0)} resp / {ctx_max} tok ({pct}%)")
+            window.set_thinking(reason if reason else reply)
 
     if window.available and args.dry_run:
         window.set_thinking(reason)

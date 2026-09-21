@@ -176,6 +176,40 @@ class KnowledgeBase:
     def has_unresolved(self) -> bool:
         return any(q.get("status") != "done" for q in self.quests.values())
 
+    # ----- human-readable summaries (for the inspector GUI) --------------
+    def quests_pretty(self) -> str:
+        qv = self.quest_view(max_actionable=20, max_blocked=20)
+        lines = []
+        f = qv.get("focus")
+        lines.append("FOCUS: " + (f["title"] if f else "(none)"))
+        lines.append(f"resolved {qv.get('resolved',0)} / unresolved {qv.get('unresolved',0)}")
+        lines.append("")
+        lines.append("ACTIONABLE:")
+        for q in qv.get("actionable", []):
+            npc = f" [{q['npc']}]" if q.get("npc") else ""
+            lines.append(f"  P{q.get('priority',5)} {q['title']}{npc}")
+        if qv.get("blocked"):
+            lines.append("")
+            lines.append("BLOCKED (needs prereq):")
+            for q in qv["blocked"]:
+                dep = ",".join(q.get("depends_on", []))
+                lines.append(f"  P{q.get('priority',5)} {q['title']} <- {dep}")
+        return "\n".join(lines)
+
+    def npcs_pretty(self, nearby_names=None) -> str:
+        lines = []
+        near = set(n.lower() for n in (nearby_names or []))
+        # Show nearby NPCs first, then the rest, with talk status + a note.
+        items = list(self.npcs.items())
+        items.sort(key=lambda kv: (kv[0].lower() not in near, -kv[1].get("times_talked", 0)))
+        for name, r in items[:20]:
+            tag = "*here* " if name.lower() in near else ""
+            st = self.talk_status(name)
+            note = (r.get("notes") or [""])[-1]
+            note = (note[:60] + "...") if len(note) > 60 else note
+            lines.append(f"{tag}{name} ({st}, x{r.get('times_talked',0)}): {note}")
+        return "\n".join(lines) if lines else "(no NPCs met yet)"
+
     # ----- npcs ----------------------------------------------------------
     def note_npc(self, name: str, note: str = "") -> None:
         if not name:
