@@ -135,7 +135,10 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
       - Each quest: {id, title, priority, status(active|blocked|done),
         resolved(true/false), npc (who it involves), depends_on[]}
       - A quest with "npc" set can be pursued by going to/talking to that NPC.
-  npc_notes: what you have recorded about nearby/known NPCs (their leads, wants)
+  npc_notes: what you have recorded about nearby/known NPCs (their leads, wants),
+      including "last_seen":{tx,ty} - the tile where you most recently saw each
+      person. To return to someone (e.g. a companion to recruit after progress),
+      "goto" their name or their last_seen coordinates.
   known_places: your MENTAL MAP of discovered locations (landmarks, buildings,
       gates, shops, etc.), nearest first, each {name, kind, dx, dy}. You can
       "goto" any of these by name to travel back to them - useful for returning

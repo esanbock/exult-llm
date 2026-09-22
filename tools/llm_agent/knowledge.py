@@ -228,7 +228,9 @@ class KnowledgeBase:
             st = self.talk_status(name)
             note = (r.get("notes") or [""])[-1]
             note = (note[:60] + "...") if len(note) > 60 else note
-            lines.append(f"{tag}{name} ({st}, x{r.get('times_talked',0)}): {note}")
+            pos = r.get("last_pos")
+            loc = f" @({pos[0]},{pos[1]})" if pos and pos[0] is not None else ""
+            lines.append(f"{tag}{name} ({st}, x{r.get('times_talked',0)}){loc}: {note}")
         return "\n".join(lines) if lines else "(no NPCs met yet)"
 
     # ----- npcs ----------------------------------------------------------
@@ -304,14 +306,25 @@ class KnowledgeBase:
         return "talked"
 
     def npc_view(self, names: Optional[list] = None) -> dict:
-        """NPC notes; if names given, only those, else all known."""
+        """NPC notes for the prompt; if names given, only those, else all known.
+        Each entry now includes where we LAST SAW the character (tile coords),
+        so the agent can navigate back to a person it needs even after walking
+        away (use goto with their name, or these coordinates)."""
         src = self.npcs
         if names:
             lname = {n.lower() for n in names}
             src = {k: v for k, v in self.npcs.items() if k.lower() in lname}
-        return {n: {"times_talked": r.get("times_talked", 0),
-                    "notes": r.get("notes", [])[-6:]}
-                for n, r in src.items()}
+        out = {}
+        for n, r in src.items():
+            entry = {"times_talked": r.get("times_talked", 0),
+                     "status": self.talk_status(n),
+                     "notes": r.get("notes", [])[-6:]}
+            pos = r.get("last_pos")
+            if pos and pos[0] is not None:
+                # last_seen = tile where we most recently observed this NPC.
+                entry["last_seen"] = {"tx": pos[0], "ty": pos[1]}
+            out[n] = entry
+        return out
 
     # ----- journal -------------------------------------------------------
     def add_journal(self, text: str) -> None:
