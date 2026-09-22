@@ -150,6 +150,10 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   search  - Open the nearest body or container to see/take what is inside.
             params: none. Works on any body ('x' on the grid) or container/chest
             to reveal its contents. After searching, use "pickup" to take items.
+  look    - Get a DETAILED description of your surroundings (setting, every
+            nearby person with what you know about them, items on the ground,
+            doors/exits, terrain features). params: none. Use it when you enter
+            a new area or want to understand a scene before acting.
   pickup  - Take a nearby item off the ground into your inventory.
             params: {"name": "<item name>"} (optional; omit to grab the closest
             takeable item). Use this to collect any useful item that appears as
@@ -225,7 +229,7 @@ Reply with ONLY the single JSON object. No prose, no markdown.
 """
 
 
-def summarize_state(state: dict, kb: "KnowledgeBase | None" = None) -> str:
+def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: str = "") -> str:
     """Compact the observation to keep the prompt small and focused."""
     p = state.get("player") or {}
     nearby = state.get("nearby") or []
@@ -284,6 +288,8 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None) -> str:
         ah = kb.action_view(10)
         if ah:
             view["recent_actions"] = ah
+    if last_look:
+        view["look_description"] = last_look
     return json.dumps(view)
 
 
@@ -346,6 +352,74 @@ def parse_reply(text: str) -> tuple[str, dict]:
                 action.setdefault(k, v)
             action.pop(key, None)
     return (reason, action)
+
+
+def _compass(dx: int, dy: int) -> str:
+    ns = "north" if dy < 0 else ("south" if dy > 0 else "")
+    ew = "east" if dx > 0 else ("west" if dx < 0 else "")
+    d = (ns + ew) or "here"
+    dist = abs(dx) + abs(dy)
+    near = "adjacent" if dist <= 1 else ("close" if dist <= 4 else ("nearby" if dist <= 10 else "far"))
+    return f"{near} to the {d}" if d != "here" else "right here"
+
+
+def describe_scene(state: dict, kb=None) -> str:
+    """A detailed natural-language description of what the Avatar sees now,
+    built from the same observation data. General - narrates whatever is present
+    (setting, characters, items, doors/exits, map features)."""
+    from collections import Counter
+    p = state.get("player") or {}
+    lines = [f"You are at ({p.get('tx')},{p.get('ty')})."]
+    if state.get("in_dungeon"):
+        lines.append("You are inside a dungeon/enclosed space.")
+    if state.get("in_combat"):
+        lines.append("You are in COMBAT.")
+
+    nearby = state.get("nearby") or []
+    if nearby:
+        lines.append("\nPeople and creatures you can see:")
+        for n in nearby[:12]:
+            who = n.get("name", "someone")
+            tag = " (your companion)" if n.get("in_party") else ""
+            dead = " - dead" if n.get("dead") else ""
+            note = ""
+            if kb is not None:
+                note = f" [{kb.talk_status(who)}]"
+                last = (kb.npcs.get(who, {}).get("notes") or [""])[-1]
+                if last:
+                    note += f' - last said: "{last[:60]}"'
+            lines.append(f"  - {who}{tag}{dead}, {_compass(n.get('dx',0), n.get('dy',0))}{note}")
+
+    objects = state.get("objects") or []
+    if objects:
+        lines.append("\nObjects and items on the ground:")
+        names = Counter(o.get("name") for o in objects if o.get("name"))
+        for o in objects[:14]:
+            nm = o.get("name")
+            cnt = names.get(nm, 1)
+            multi = f" (you see {cnt} of these nearby)" if cnt > 1 else ""
+            body = " - a body you can search" if o.get("body") else ""
+            lines.append(f"  - {nm}, {_compass(o.get('dx',0), o.get('dy',0))}{body}{multi}")
+
+    doors = state.get("doors") or []
+    if doors:
+        lines.append("\nDoors/exits nearby:")
+        for d in doors[:8]:
+            stt = "closed" if d.get("closed") else "open"
+            lines.append(f"  - a {stt} door {_compass(d.get('dx',0), d.get('dy',0))}")
+
+    grid = state.get("grid") or ""
+    counts = {}
+    for ch in grid:
+        if ch not in "\n.@":
+            counts[ch] = counts.get(ch, 0) + 1
+    feat = {"T": "trees", "W": "walls/buildings", "=": "fences/gates",
+            "~": "water", "n": "containers", "H": "furniture", "#": "blocked areas"}
+    present = [feat[c] for c in counts if c in feat and counts[c] >= 2]
+    if present:
+        lines.append("\nThe surroundings include: " + ", ".join(present) + ".")
+
+    return "\n".join(lines)
 
 
 def scripted_reply(step: int, state: dict) -> tuple[str, dict]:
@@ -614,7 +688,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if args.dry_run:
         reason, action = scripted_reply(step, state)
     else:
-        res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb))
+        res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb, session.pop("last_look", "")))
         reply = res["content"]
         reason, action = parse_reply(reply)
         # Track context usage so we can see if the prompt is bloating/truncating.
@@ -630,6 +704,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
 
     if window.available and args.dry_run:
         window.set_thinking(reason)
+
+    # --- "look": produce a detailed description of the surroundings. It does
+    #     not advance the game; we record it so the model sees it next turn and
+    #     avoids looking repeatedly.
+    if isinstance(action, dict) and action.get("type") == "look":
+        desc = describe_scene(state, kb)
+        kb.record_action("looked around")
+        session["last_look"] = desc
+        if window.available:
+            window.set_action("[look]\n" + desc[:1500])
+        print(f"[{step:03d}] look:\n{desc}")
+        # Fall through to a light action so the turn still progresses.
+        action = {"type": "wait"}
+        reason = "(looked around; see description)"
 
     # --- Journal meta-tools: update the KB, then take a game action too. ---
     if isinstance(action, dict) and action.get("type") in META_TOOLS:
