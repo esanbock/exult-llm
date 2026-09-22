@@ -1443,8 +1443,25 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 if qa and not (qa.get("type") == "talk" and qa.get("name") in _party):
                     action, reason = qa, qr
                 else:
-                    action = _explore_far(state, session, wedged)
-                    reason = f"(guard) {nm} is a companion with nothing new; exploring for progress"
+                    # Commit to a STICKY exploration destination for several
+                    # turns instead of recomputing a new heading each turn (which
+                    # made the avatar oscillate between two tiles while the
+                    # companion kept following and re-triggering this guard).
+                    _pp = state.get("player") or {}
+                    _here = (_pp.get("tx"), _pp.get("ty"))
+                    goal = session.get("explore_goal")
+                    ttl = session.get("explore_goal_ttl", 0)
+                    reached = goal and abs(goal[0]-_here[0]) + abs(goal[1]-_here[1]) <= 3
+                    if not goal or ttl <= 0 or reached:
+                        far = _explore_far(state, session, wedged)
+                        goal = (far.get("tx"), far.get("ty")) if far.get("type") == "goto" else None
+                        session["explore_goal"] = goal
+                        session["explore_goal_ttl"] = 8
+                        action = far
+                    else:
+                        session["explore_goal_ttl"] = ttl - 1
+                        action = {"type": "goto", "tx": goal[0], "ty": goal[1]}
+                    reason = f"(guard) {nm} is a companion; travelling to explore (goal {goal})"
                 session["last_talk_target"] = nm
             else:
                 last_nm = session.get("last_talk_target")
