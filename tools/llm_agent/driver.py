@@ -190,6 +190,11 @@ you intend to do - keep your quest log current and prioritized.
       gates, shops, etc.), nearest first, each {name, kind, dx, dy}. You can
       "goto" any of these by name to travel back to them - useful for returning
       to a town, building, or quest location you found earlier.
+  known_topics: cross-cutting world SUBJECTS you have encountered (e.g. the
+      Fellowship, a person's name, a place, an event), each {topic, npcs (how
+      many people discussed it), learned (lines you have)}. Use "recall" on a
+      topic to read everything learned about it, and ask NPCs about topics that
+      seem important but you know little about.
   recent_dialogue: a running transcript of the last conversation exchanges
       ({"npc":name,"said":...} for NPC lines, {"me":...} for your replies).
       Use this to remember what you have learned and what was said earlier.
@@ -252,13 +257,14 @@ you intend to do - keep your quest log current and prioritized.
             nearby person with what you know about them, items on the ground,
             doors/exits, terrain features). params: none. Use it when you enter
             a new area or want to understand a scene before acting.
-  recall  - Retrieve your FULL saved conversation with a character - everything
-            they told you (transcript), the topics you already asked, and the
-            topics you have NOT asked yet. params: {"name":"<character>"} (fuzzy,
-            e.g. "Mayor" or "Finnigan"). Result appears next turn as "recalled".
-            Use this to remember instructions someone gave you (e.g. the Mayor
-            telling you to find or speak to someone) before deciding what to do,
-            and to see which questions you still have not asked them.
+  recall  - Retrieve your FULL saved knowledge about a character OR a TOPIC.
+            params: {"name":"<character or topic>"} (fuzzy). For a person you get
+            their transcript, topics you asked, and topics NOT yet asked. For a
+            world topic (e.g. "Fellowship", "Batlin", "gargoyles") you get every
+            line any NPC told you about it and who mentioned it. Result appears
+            next turn as "recalled". Use it to remember instructions (e.g. the
+            Mayor telling you to find someone) and to understand recurring themes
+            before deciding what to do.
   answer  - Choose a reply during a conversation. params: {"index": <int>} (0-based
             into the "answers" list) OR {"text": "<answer text>"}.
             Only valid when conversation_active is true.
@@ -420,6 +426,12 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         places = kb.places_view(p.get("tx", 0), p.get("ty", 0), limit=place_n)
         if places:
             view["known_places"] = places
+        # Known TOPICS (cross-cutting world subjects like the Fellowship). A
+        # compact menu so the agent can pursue themes and "recall" them for
+        # detail. Fewer under context pressure.
+        topics = kb.topics_view(8 if lvl >= 2 else 16)
+        if topics:
+            view["known_topics"] = topics
         # NPC notes: focus on those currently nearby. Fewer notes each under
         # context pressure to keep the prompt within budget.
         nearby_names = [n.get("name") for n in nearby[:near_n] if n.get("name")]
@@ -888,6 +900,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 kb.note_npc(cur_npc, npc_text[:200])
             else:
                 kb.auto_note_from_dialogue(cur_npc, npc_text)
+            # Cross-cutting TOPIC capture: file this line under the subject the
+            # agent last asked about (the chosen dialogue topic), so knowledge
+            # about themes like "the Fellowship" aggregates across every NPC.
+            _cur_topic = session.get("current_topic")
+            if _cur_topic:
+                kb.note_topic(_cur_topic, cur_npc, npc_text, step)
+        # Register the offered answer-choices as known topics (a menu of world
+        # subjects), even ones not yet asked.
+        if state.get("answers"):
+            kb.register_topics(state.get("answers"))
+    if not state.get("conversation_in_progress"):
+        session.pop("current_topic", None)
 
     if args.dry_run:
         reason, action = scripted_reply(step, state)
@@ -1031,17 +1055,22 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     #     in next turn's observation as "recalled" so the agent can remember,
     #     e.g., the Mayor's instructions from a past run.
     if isinstance(action, dict) and action.get("type") == "recall":
-        who = str(action.get("name") or action.get("npc") or "").strip()
+        who = str(action.get("name") or action.get("npc") or action.get("topic") or "").strip()
         rec = kb.recall_npc(who) if who else {"known": False, "name": who}
+        # If it's not a known person, try the shared topic KB (e.g. "Fellowship").
+        if who and not rec.get("known"):
+            trec = kb.recall_topic(who)
+            if trec.get("known"):
+                rec = {"topic": trec["name"], "known": True,
+                       "npcs_who_mentioned": trec.get("npcs_who_mentioned", []),
+                       "mentions": trec.get("mentions", [])}
         session["recalled"] = rec
-        kb.record_action(f"recalled dialogue with {who}")
+        kb.record_action(f"recalled {who}")
         if window.available:
-            window.set_action(f"[recall] {who}: {len(rec.get('transcript', []))} lines, "
-                              f"unasked={rec.get('topics_unasked')}")
-        print(f"[{step:03d}] recall {who}: known={rec.get('known')} "
-              f"lines={len(rec.get('transcript', []))}")
+            window.set_action(f"[recall] {who}: {rec}")
+        print(f"[{step:03d}] recall {who}: known={rec.get('known')}")
         action = {"type": "wait"}
-        reason = f"(recalled what {who} said)"
+        reason = f"(recalled {who})"
 
     # --- "annotate": mark a location on the mental map so the agent can find
     #     its way back later (via goto <label> or known_places). Records the
@@ -1698,6 +1727,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             _i = action["index"]
             if 0 <= _i < len(_ans):
                 kb.record_npc_choice_taken(session.get("current_npc", "?"), _ans[_i])
+                # Remember the subject we just asked about, so the NPC's reply
+                # next turn gets filed under this topic in the shared topic KB.
+                session["current_topic"] = _ans[_i]
         result = exult.act(action)
     # Tool-call stats: count the action type and its outcome (ok/err).
     _atype = action.get("type") if isinstance(action, dict) else "?"

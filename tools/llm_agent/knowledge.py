@@ -36,6 +36,12 @@ class KnowledgeBase:
         self.quests: dict[str, dict] = {}
         # name -> {name, times_talked, notes:[str]}
         self.npcs: dict[str, dict] = {}
+        # Shared TOPIC knowledge base: cross-cutting subjects the world talks
+        # about (e.g. "Fellowship", "Batlin", "the gargoyles", "murder"), keyed
+        # by a slug. Each aggregates what MULTIPLE npcs said about it, so the
+        # agent can understand a theme across everyone, not just per-person.
+        # slug -> {name, mentions:[{npc,said}], npcs:[names], first_step,last_step}
+        self.topics: dict[str, dict] = {}
         self.journal: list[str] = []
         # Persistent "mental map": discovered places (towns, buildings, caves,
         # landmarks) as name -> {name, tx, ty, kind, notes}. Grows over time so
@@ -78,7 +84,8 @@ class KnowledgeBase:
                 "hints": self.hints,
                 "observations": self.observations,
                 "episodic_summary": self.episodic_summary,
-                "tool_stats": self.tool_stats}
+                "tool_stats": self.tool_stats,
+                "topics": self.topics}
 
     @classmethod
     def load(cls, path: Optional[str]) -> "KnowledgeBase":
@@ -90,6 +97,7 @@ class KnowledgeBase:
                 data = json.load(f)
             kb.quests = dict(data.get("quests", {}))
             kb.npcs = dict(data.get("npcs", {}))
+            kb.topics = dict(data.get("topics", {}))
             kb.journal = list(data.get("journal", []))
             kb.dialogue_history = list(data.get("dialogue_history", []))
             kb.action_history = list(data.get("action_history", []))
@@ -412,6 +420,82 @@ class KnowledgeBase:
             asked.append(topic)
         rec["topics_asked"] = asked[-60:]
         self._npc_transcript_add(npc, {"me": topic})
+
+    # ----- shared topic knowledge base -----------------------------------
+    _GENERIC_TOPICS = {
+        "name", "job", "bye", "goodbye", "yes", "no", "leave", "farewell",
+        "hello", "thanks", "thank you", "nothing", "who", "what", "why", "how",
+    }
+
+    def note_topic(self, subject: str, npc: str, said: str = "", step: int = 0) -> None:
+        """File a line of dialogue under a cross-cutting TOPIC (e.g. 'Fellowship'),
+        aggregating what many NPCs say about it."""
+        subject = (subject or "").strip()
+        if not subject or subject.lower() in self._GENERIC_TOPICS or len(subject) < 3:
+            return
+        key = _slug(subject)
+        if not key:
+            return
+        rec = self.topics.setdefault(
+            key, {"name": subject, "mentions": [], "npcs": [], "first_step": step})
+        rec["last_step"] = step
+        if npc and npc not in rec["npcs"]:
+            rec["npcs"].append(npc)
+        clean = (said or "").replace("*", " ").strip()
+        if clean:
+            m = {"npc": npc or "?", "said": clean[:200]}
+            if m not in rec["mentions"]:
+                rec["mentions"].append(m)
+                rec["mentions"] = rec["mentions"][-24:]
+
+    def register_topics(self, choices: list) -> None:
+        """Register dialogue answer-choices as known topics (even before asking),
+        so the agent has a menu of world subjects it could explore."""
+        for c in (choices or []):
+            c = str(c).strip()
+            if not c or c.lower() in self._GENERIC_TOPICS or len(c) < 3:
+                continue
+            key = _slug(c)
+            if key and key not in self.topics:
+                self.topics[key] = {"name": c, "mentions": [], "npcs": [],
+                                    "first_step": 0, "last_step": 0}
+
+    def recall_topic(self, subject: str) -> dict:
+        """Everything learned about a cross-cutting topic across all NPCs."""
+        if not subject:
+            return {"name": subject, "known": False}
+        key = _slug(subject)
+        rec = self.topics.get(key)
+        if rec is None:
+            low = subject.lower()
+            for v in self.topics.values():
+                if low in v.get("name", "").lower():
+                    rec = v
+                    break
+        if rec is None:
+            return {"name": subject, "known": False}
+        return {"name": rec.get("name", subject), "known": True,
+                "npcs_who_mentioned": rec.get("npcs", []),
+                "mentions": rec.get("mentions", [])[-16:]}
+
+    def topics_view(self, limit: int = 16) -> list:
+        """Compact list of known topics for the prompt: name + npc count +
+        lines learned, so the agent sees what threads exist to pursue."""
+        out = []
+        for r in self.topics.values():
+            n_ment = len(r.get("mentions", []))
+            out.append((n_ment, {"topic": r.get("name"),
+                                 "npcs": len(r.get("npcs", [])),
+                                 "learned": n_ment}))
+        out.sort(key=lambda t: -t[0])
+        return [o for _, o in out[:limit]]
+
+    def topics_pretty(self, limit: int = 20) -> str:
+        tv = self.topics_view(limit)
+        if not tv:
+            return "(no topics yet)"
+        return "\n".join(f"  {t['topic']}  ({t['npcs']} npc, {t['learned']} lines)"
+                         for t in tv)
 
     def recall_npc(self, npc: str) -> dict:
         """Full retrievable record of a character: everything they said (their
