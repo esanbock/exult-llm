@@ -922,7 +922,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             if folded:
                 print(f"[{step:03d}] context {int(100*last_pt/ctx_max)}%: folded {folded} old "
                       f"dialogue lines into story_so_far (squeeze={squeeze})")
-        res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb, session.pop("last_look", ""), alert, squeeze))
+        _user = summarize_state(state, kb, session.pop("last_look", ""), alert, squeeze)
+        res = ollama.chat_ex(SYSTEM_PROMPT, _user)
         reply = res["content"]
         reason, action = parse_reply(reply)
         # Tool-call stats: count this turn and whether the model's reply parsed
@@ -930,6 +931,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # wait - visible now as parse-fail in the stats panel).
         parsed_ok = reason != "(could not parse reply)"
         kb.record_turn(parsed_ok)
+        # Raw comms log: append the exact prompt+reply for this turn so parse
+        # errors can be diagnosed from ground truth. Always logs parse failures;
+        # logs everything when --raw-log is set. Written next to the driver.
+        if (not parsed_ok) or getattr(args, "raw_log", False):
+            try:
+                _rl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "raw_comms.log")
+                with open(_rl, "a", encoding="utf-8") as _f:
+                    _f.write(f"\n===== step {step} | parsed_ok={parsed_ok} | "
+                             f"ptok={res.get('prompt_tokens')} rtok={res.get('response_tokens')} "
+                             f"retried={res.get('retried')} dropped_json={res.get('dropped_json')} =====\n")
+                    _f.write("----- USER PROMPT -----\n" + _user + "\n")
+                    _f.write("----- RAW REPLY -----\n" + repr(reply) + "\n")
+            except OSError:
+                pass
         if not parsed_ok:
             print(f"[{step:03d}] parse-fail: {reply[:120]!r}")
         # Inline quest capture: the model may include a "new_quest" (or "quests")
@@ -1712,6 +1727,9 @@ def main() -> int:
     ap.add_argument("--delay", type=float, default=1.5, help="seconds between turns")
     ap.add_argument("--dry-run", action="store_true", help="skip Ollama; scripted moves")
     ap.add_argument("--show-thoughts", action="store_true", help="open the LLM thinking window")
+    ap.add_argument("--raw-log", action="store_true",
+                    help="append the exact prompt+reply for EVERY turn to raw_comms.log "
+                         "(parse failures are always logged regardless)")
     ap.add_argument("--auto-feed", action="store_true",
                     help="periodically restore food so the party can't starve")
     ap.add_argument("--auto-feed-every", type=int, default=20,
