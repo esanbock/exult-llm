@@ -139,6 +139,12 @@ you intend to do - keep your quest log current and prioritized.
                                 these - they can be hints or reactions.
   answers (list[string])      - the reply choices you may pick (only when
                                 conversation_active is true)
+  already_asked_this_npc (list) - topics you have ALREADY asked this character in
+                                the past (don't waste turns re-asking these).
+  not_yet_asked_this_npc (list) - topics this character can discuss that you have
+                                NOT asked yet. Prefer these - ask the important
+                                unasked topics (e.g. "key", "password") before
+                                leaving the conversation.
   nearby (list)               - NPCs you can see: {name, dx, dy, in_party, status}
                                 dx>0 = east, dx<0 = west, dy>0 = south, dy<0 = north
                                 status = new (never talked) | talked (spoken to)
@@ -301,9 +307,11 @@ you intend to do - keep your quest log current and prioritized.
 
 # HOW TO DECIDE (policy)
   1. If conversation_active is true -> use "answer" (pick the index of the reply
-     you want). Explore genuinely NEW topics, but once you have asked the useful
-     ones (or you see the same choices again), END the conversation by choosing
-     the "bye"/"leave" reply. Do NOT keep re-picking the same topics in a loop.
+     you want). PRIORITISE topics in "not_yet_asked_this_npc" - especially
+     important ones like a key, password, name, or a person/place mentioned -
+     and avoid re-picking anything in "already_asked_this_npc". Once you have
+     asked the useful unasked topics (or you see the same choices again), END
+     the conversation by choosing the "bye"/"leave" reply. Do NOT loop.
   2. Else if conversation_in_progress is true (a conversation is open but no
      choices yet) -> use "key" with "space" to advance the NPC's text until the
      answer choices appear. Do NOT "talk" again or "move" during a conversation.
@@ -432,6 +440,17 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         topics = kb.topics_view(8 if lvl >= 2 else 16)
         if topics:
             view["known_topics"] = topics
+        # If we're in a conversation, proactively show what we've already asked
+        # THIS person and what we have NOT asked yet, so the agent doesn't
+        # re-ask covered topics or forget an important one (e.g. "key").
+        _cnpc = state.get("_convo_npc")
+        if in_convo and _cnpc:
+            _rec = kb.recall_npc(_cnpc)
+            if _rec.get("known"):
+                if _rec.get("topics_asked"):
+                    view["already_asked_this_npc"] = _rec["topics_asked"]
+                if _rec.get("topics_unasked"):
+                    view["not_yet_asked_this_npc"] = _rec["topics_unasked"]
         # NPC notes: focus on those currently nearby. Fewer notes each under
         # context pressure to keep the prompt within budget.
         nearby_names = [n.get("name") for n in nearby[:near_n] if n.get("name")]
@@ -986,6 +1005,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _recalled = session.pop("recalled", None)
         if _recalled is not None:
             state["recalled"] = _recalled
+        # Tell summarize_state who we're talking to, so it can proactively show
+        # which topics we've already asked this NPC and which we have NOT.
+        if state.get("conversation_in_progress"):
+            state["_convo_npc"] = session.get("current_npc")
         _user = summarize_state(state, kb, session.pop("last_look", ""), alert, squeeze)
         res = ollama.chat_ex(SYSTEM_PROMPT, _user)
         reply = res["content"]
