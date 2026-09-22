@@ -123,9 +123,43 @@ class KnowledgeBase:
             pass
 
     # ----- quests --------------------------------------------------------
+    @staticmethod
+    def _title_words(title: str) -> set:
+        stop = {"the","a","an","to","of","and","on","in","with","about","for",
+                "from","at","investigate","follow","up","gather","leads","find",
+                "speak","talk","ask","get","go"}
+        words = re.findall(r"[a-z0-9]+", (title or "").lower())
+        return {w for w in words if w not in stop and len(w) > 2}
+
+    def _find_similar_quest(self, title: str) -> Optional[str]:
+        """Return the id of an existing OPEN quest that is a near-duplicate of
+        `title` (shares most significant words), else None. Prevents the log
+        filling with 'Investigate X' / 'Find X' / 'X in Britain' variants."""
+        want = self._title_words(title)
+        if not want:
+            return None
+        for qid, q in self.quests.items():
+            if q.get("status") == "done":
+                continue
+            have = self._title_words(q.get("title", ""))
+            if not have:
+                continue
+            overlap = want & have
+            # Near-duplicate if the significant words substantially overlap.
+            if overlap and len(overlap) >= max(1, min(len(want), len(have)) - 0):
+                if len(overlap) / max(len(want), len(have)) >= 0.6:
+                    return qid
+        return None
+
     def add_quest(self, title: str, priority: int = 5, notes: str = "",
                   depends_on: Optional[list] = None, qid: Optional[str] = None,
                   status: str = "active", npc: Optional[str] = None) -> str:
+        # Merge into a near-duplicate open quest if one exists (unless an
+        # explicit qid was given), so we don't accumulate redundant variants.
+        if qid is None:
+            sim = self._find_similar_quest(title)
+            if sim is not None:
+                qid = sim
         qid = qid or _slug(title)
         # Merge if it already exists (update in place).
         q = self.quests.get(qid, {"id": qid, "notes": ""})
@@ -213,6 +247,29 @@ class KnowledgeBase:
     def resolve_quest(self, qid: str) -> bool:
         """Mark a quest resolved (done). Accepts id or fuzzy title."""
         return self.update_quest(qid, status="done")
+
+    def auto_resolve_talk_quests(self, npc: str) -> list:
+        """Conservatively resolve open quests that are simply 'speak to / talk to
+        / ask <npc>' once we've actually had a substantive conversation with that
+        npc. Returns titles resolved. The LLM still owns richer quests; this only
+        closes the trivial 'go talk to X' ones it reliably forgets to close."""
+        if not npc or npc == "?":
+            return []
+        low_npc = npc.lower()
+        verbs = ("speak to", "talk to", "ask ", "meet ", "find and speak",
+                 "consult ", "report to", "return to")
+        resolved = []
+        for q in self.quests.values():
+            if q.get("status") == "done":
+                continue
+            title = (q.get("title") or "").lower()
+            qnpc = (q.get("npc") or "").lower()
+            starts_verb = any(title.startswith(v) for v in verbs)
+            names_npc = low_npc in title or (qnpc and low_npc in qnpc)
+            if starts_verb and names_npc:
+                q["status"] = "done"
+                resolved.append(q.get("title"))
+        return resolved
 
     def has_unresolved(self) -> bool:
         return any(q.get("status") != "done" for q in self.quests.values())

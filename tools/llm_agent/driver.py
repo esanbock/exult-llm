@@ -157,7 +157,8 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
                                 NOT asked yet. Prefer these - ask the important
                                 unasked topics (e.g. "key", "password") before
                                 leaving the conversation.
-  nearby (list)               - NPCs you can see: {name, dx, dy, in_party, status}
+  nearby (list)               - NPCs you can TALK to: {name, dx, dy, status}
+                                (your own party is listed separately in "party")
                                 dx>0 = east, dx<0 = west, dy>0 = south, dy<0 = north
                                 status = new (never talked) | talked (spoken to)
                                 | exhausted (talked several times without new
@@ -168,6 +169,10 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
                                 lead, item, or quest progress) it is worth talking
                                 again; if their notes show you already covered
                                 everything, move on. Trust your own judgement.
+  party (list)                - names of your companions travelling WITH you.
+                                They follow you and have no new information - do
+                                NOT "talk" to them to investigate; just travel
+                                and act, and they come along.
   objects (list)              - items on the ground: {name, dx, dy}. May include
                                 "owned": true - that item is someone's property;
                                 taking it is STEALING (avoid it). Items without
@@ -416,10 +421,12 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "ambient_speech": state.get("ambient_speech") or [],
         "nearby": [
             {"name": n.get("name"), "dx": n.get("dx"), "dy": n.get("dy"),
-             "in_party": n.get("in_party"),
              "status": (kb.talk_status(n.get("name")) if kb and n.get("name") else "new")}
-            for n in nearby[:near_n]
+            for n in nearby[:near_n] if not n.get("in_party")
         ],
+        # Party companions are shown separately - they follow you and have no
+        # new information, so do NOT "talk" to them to investigate.
+        "party": [n.get("name") for n in nearby if n.get("in_party") and n.get("name")],
         "objects": [
             {"name": o.get("name"), "dx": o.get("dx"), "dy": o.get("dy"),
              **({"body": True} if o.get("body") else {})}
@@ -950,8 +957,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             # NOTE: topics are now authored solely by the LLM (via the add_topic
             # tool) so the topic list reflects its own evolving understanding -
             # we no longer auto-file verbatim dialogue into topics here.
-    if not state.get("conversation_in_progress"):
+    if state.get("conversation_in_progress"):
+        # Remember who we're conversing with, to auto-close trivial 'talk to X'
+        # quests when the conversation ends.
+        _cn = session.get("current_npc")
+        if _cn and _cn != "?":
+            session["was_conversing_with"] = _cn
+    else:
         session.pop("current_topic", None)
+        _wc = session.pop("was_conversing_with", None)
+        if _wc:
+            _done = kb.auto_resolve_talk_quests(_wc)
+            for _t in _done:
+                print(f"[{step:03d}] auto-resolved quest (talked to {_wc}): {_t}")
+            if _done:
+                kb.reset_talk_gate()
 
     if args.dry_run:
         reason, action = scripted_reply(step, state)
