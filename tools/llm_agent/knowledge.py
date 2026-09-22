@@ -270,14 +270,12 @@ class KnowledgeBase:
         return self.npcs.get(name, {}).get("talked_this_epoch", 0)
 
     def reset_talk_gate(self) -> None:
-        """Meaningful progress happened - allow revisiting NPCs (they may now
-        have new dialogue)."""
+        """Meaningful progress happened - allow revisiting ALL NPCs (they may
+        now have new dialogue). This fully clears the per-epoch counter so even
+        an NPC we spoke to many times becomes worth revisiting after the story
+        advances (e.g. a companion who only joins once a quest is underway)."""
         for rec in self.npcs.values():
-            # Preserve exhaustion for NPCs talked to very many times overall -
-            # a small progress step shouldn't send you back to someone you've
-            # already hammered. Only reset those still under the hard cap.
-            if rec.get("times_talked", 0) < 8:
-                rec["talked_this_epoch"] = 0
+            rec["talked_this_epoch"] = 0
 
     def talk_status(self, name: str, exhausted_at: int = 3,
                     hard_cap: int = 8) -> str:
@@ -295,8 +293,12 @@ class KnowledgeBase:
         rec = self.npcs.get(name)
         if not rec or rec.get("times_talked", 0) == 0:
             return "new"
-        if rec.get("times_talked", 0) >= hard_cap:
-            return "exhausted"
+        # Exhaustion is driven by talks SINCE the last meaningful progress
+        # (the epoch counter), which resets on progress so an NPC becomes
+        # worth revisiting after the story advances (e.g. a companion who only
+        # joins once a quest is underway). We do NOT permanently blacklist an
+        # NPC by lifetime talk count - that wrongly ignored recruits/quest NPCs
+        # forever. The epoch gate alone stops tight re-talk loops.
         if rec.get("talked_this_epoch", 0) >= exhausted_at:
             return "exhausted"
         return "talked"
