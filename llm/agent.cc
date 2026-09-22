@@ -460,6 +460,12 @@ namespace LLM_agent {
 		os << ',' << json_bool("in_combat", gwin->in_combat());
 		os << ',' << json_bool("moving", gwin->is_moving());
 		os << ',' << json_bool("in_dungeon", gwin->is_in_dungeon() != 0);
+		// A container/body gump (or menu) is open, which blocks movement until
+		// you take what you want and "close" it.
+		{
+			Gump_manager* gm = gwin->get_gump_man();
+			os << ',' << json_bool("gump_open", gm && gm->showing_gumps(true));
+		}
 
 		// Nearby NPCs.
 		os << ',' << "\"nearby\":[";

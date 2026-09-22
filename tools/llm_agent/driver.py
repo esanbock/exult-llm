@@ -78,6 +78,9 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
                                 your top priority this turn. Also warns you if
                                 your last move was blocked.
   world_loaded (bool)         - is a game world loaded
+  gump_open (bool)            - a container/body window is OPEN and blocks your
+                                movement. "take" the items you want (their names
+                                are in objects[].contents), then "close" it.
   player: {tx,ty (your tile), hp, dead, food}
   in_combat (bool)            - are you in combat mode
   conversation_in_progress (bool) - true while a conversation is open (faces shown)
@@ -840,6 +843,36 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         print(f"[{step:03d}] number_prompt -> set_number {val} (range {lo}-{hi})")
         time.sleep(args.delay)
         return
+
+    # 0b) A container/body gump is open (blocks movement). Let the model take
+    #     or close it, but if it dithers (or does anything else), auto-loot the
+    #     remaining contents then close so it never gets stuck at an open bag.
+    if state.get("gump_open") and not state.get("conversation_in_progress"):
+        act_type = action.get("type") if isinstance(action, dict) else None
+        if act_type in ("take", "close", "equip"):
+            pass  # let the model's own take/close/equip proceed
+        else:
+            session["gump_wait"] = session.get("gump_wait", 0) + 1
+            # Grab any remaining named contents, then close.
+            loot = []
+            for ob in (state.get("objects") or []):
+                for c in (ob.get("contents") or []):
+                    loot.append(c)
+            already = session.setdefault("gump_taken", set())
+            todo = [c for c in loot if c not in already]
+            if todo and session["gump_wait"] <= 6:
+                item = todo[0]
+                already.add(item)
+                action = {"type": "take", "name": item}
+                reason = f"(guard) container open; taking {item}"
+            else:
+                action = {"type": "close"}
+                reason = "(guard) done looting; closing container"
+                session["gump_wait"] = 0
+                session["gump_taken"] = set()
+    else:
+        session["gump_wait"] = 0
+        session["gump_taken"] = set()
 
     # 0) Auto-end a conversation that has gone on too long or is repeating the
     #    same answer choices (the model won't pick 'bye' on its own).
