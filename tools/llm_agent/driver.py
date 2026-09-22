@@ -1651,6 +1651,40 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = {"type": "goto", "tx": btx, "ty": bty}
                     reason = f"(guard) walking to '{bnm}' @({btx},{bty}) before searching"
                     print(f"[{step:03d}] search-guard: goto body '{bnm}' @({btx},{bty})")
+                else:
+                    # Nothing searchable anywhere (the agent tried to 'search the
+                    # garbage' etc). search only opens BODIES/CONTAINERS, so this
+                    # would waste the turn. Redirect to look (examine) so the
+                    # turn is useful, and tell the agent what search is for.
+                    action = {"type": "look"}
+                    reason = "(guard) nothing to search here; examining instead"
+                    session["last_bump"] = (
+                        "'search' only opens a nearby BODY or CONTAINER (chest, "
+                        "barrel, bag). There is none within reach, so it does "
+                        "nothing on scenery like garbage/tables. To inspect the "
+                        "area use 'look'; to grab a loose item use 'pickup'.")
+                    print(f"[{step:03d}] search-guard: no searchable target; look instead")
+
+    # --- Repeat-failed-pickup guard: if the agent keeps trying to pick up an
+    #     item that has already failed 2+ times (out of reach / owned / not
+    #     takeable), stop retrying and move on / walk toward it instead. -------
+    if (isinstance(action, dict) and action.get("type") == "pickup"
+            and not state.get("conversation_in_progress")):
+        _pn = (action.get("name") or "").lower()
+        if _pn and session.get("pickup_fails", {}).get(_pn, 0) >= 2:
+            # If the item is visible but far, walk to it once; else give up on it.
+            _pp = state.get("player") or {}
+            match = next((o for o in (state.get("objects") or [])
+                          if (o.get("name") or "").lower() == _pn), None)
+            if match and (abs(match.get("dx", 9)) > 1 or abs(match.get("dy", 9)) > 1):
+                action = {"type": "goto",
+                          "tx": _pp.get("tx", 0) + match.get("dx", 0),
+                          "ty": _pp.get("ty", 0) + match.get("dy", 0)}
+                reason = f"(guard) '{_pn}' pickup kept failing; walking to it first"
+            else:
+                action = _explore_far(state, session, wedged)
+                reason = f"(guard) '{_pn}' cannot be taken; moving on"
+            print(f"[{step:03d}] pickup-guard: stop retrying '{_pn}'")
 
     # --- Wall-aware move guard: never walk into a '#'. ------------------
     # The grid is centered on the avatar (radius 12 -> center [12][12]).
@@ -1828,6 +1862,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     _ok = result.get("ok") if isinstance(result, dict) else None
     kb.record_tool(_atype, _ok)
     session["last_action_type"] = _atype
+    # Track FAILED pickups so we don't retry the same un-takeable item over and
+    # over (tongs x4 etc). Key by item name; after a couple of failures, tell
+    # the agent to stop trying that item.
+    if _atype == "pickup" and isinstance(result, dict):
+        _pname = (action.get("name") or "").lower()
+        fails = session.setdefault("pickup_fails", {})
+        if result.get("ok") is False and _pname:
+            fails[_pname] = fails.get(_pname, 0) + 1
+            session["last_bump"] = (
+                f"You could not pick up '{action.get('name')}' ({result.get('error','no reason')}). "
+                f"It may be OUT OF REACH (walk adjacent first), OWNED (do not steal), "
+                f"or not takeable. Do NOT keep retrying it - move on or approach it first.")
+        elif result.get("ok") and _pname:
+            fails.pop(_pname, None)
     if window.available:
         window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
 
@@ -1858,10 +1906,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # if it never annotates on its own (e.g. returning to a crime scene).
     if atype in ("search", "pickup") and isinstance(result, dict) and result.get("ok"):
         pp = state.get("player") or {}
-        tgt = result.get("target") or action.get("name") or "spot"
+        tgt = result.get("target") or result.get("item") or action.get("name") or "spot"
         verb = "searched" if atype == "search" else "found items at"
         kb.record_place(f"where I {verb} {tgt}", pp.get("tx", 0), pp.get("ty", 0),
                         kind="marked")
+        # Auto-resolve 'investigate/search/find <subject>' quests now that we've
+        # actually examined/collected that subject.
+        for _t in kb.auto_resolve_examine_quests(str(tgt)):
+            print(f"[{step:03d}] auto-resolved quest (examined {tgt}): {_t}")
 
     p = state.get("player") or {}
     print(f"[{step:03d}] pos=({p.get('tx')},{p.get('ty')}) "

@@ -271,6 +271,32 @@ class KnowledgeBase:
                 resolved.append(q.get("title"))
         return resolved
 
+    def auto_resolve_examine_quests(self, subject: str) -> list:
+        """Resolve open 'investigate/search/examine/find <subject>' quests once
+        the agent has actually searched/looted/examined that subject. `subject`
+        is a name (a body's name, a container, an item, a place). Only closes
+        quests whose ACTION verb is investigate/search/find/examine and whose
+        subject words match - not open-ended quests."""
+        subject = (subject or "").lower().strip()
+        if not subject or len(subject) < 3:
+            return []
+        verbs = ("investigate", "search", "examine", "find", "look at",
+                 "look into", "check", "inspect", "collect")
+        subj_words = self._title_words(subject)
+        resolved = []
+        for q in self.quests.values():
+            if q.get("status") == "done":
+                continue
+            title = (q.get("title") or "").lower()
+            if not any(title.startswith(v) for v in verbs):
+                continue
+            tw = self._title_words(q.get("title", ""))
+            # Match if the examined subject's words overlap the quest's subject.
+            if subj_words and (subj_words & tw):
+                q["status"] = "done"
+                resolved.append(q.get("title"))
+        return resolved
+
     def has_unresolved(self) -> bool:
         return any(q.get("status") != "done" for q in self.quests.values())
 
