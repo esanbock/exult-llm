@@ -28,6 +28,7 @@
 
 #include "actors.h"
 #include "schedule.h"
+#include "gameclk.h"
 #include "gamewin.h"
 #include "ucmachine.h"
 #include "conversation.h"
@@ -463,6 +464,20 @@ namespace LLM_agent {
 			os << '}';
 		}
 
+		// Time of day - so the agent knows when NPCs sleep/are available and can
+		// choose to wait for morning.
+		if (Game_clock* clk = gwin->get_clock()) {
+			const int hr = clk->get_hour();
+			os << ',' << json_int("hour", hr);
+			os << ',' << json_int("minute", clk->get_minute());
+			os << ',' << json_int("day", clk->get_day());
+			const char* part = (hr < 6) ? "night" : (hr < 12) ? "morning"
+					: (hr < 18) ? "afternoon" : (hr < 21) ? "evening" : "night";
+			os << ',' << json_str("time_of_day", part);
+			// Most townsfolk sleep roughly 21:00-06:00.
+			os << ',' << json_bool("is_night", hr >= 21 || hr < 6);
+		}
+
 		os << ',' << json_bool("in_combat", gwin->in_combat());
 		os << ',' << json_bool("moving", gwin->is_moving());
 		os << ',' << json_bool("in_dungeon", gwin->is_in_dungeon() != 0);
@@ -845,6 +860,34 @@ namespace LLM_agent {
 
 		if (type == "wait") {
 			return "{\"ok\":true,\"did\":\"wait\"}";
+		}
+
+		if (type == "wait_until") {
+			// Advance the game clock to a target hour (0-23), e.g. wait for
+			// morning so sleeping NPCs wake. Only advances forward (to today or
+			// tomorrow at that hour). Default target = 7 (morning).
+			Game_clock* clk = gwin->get_clock();
+			if (!clk) {
+				return "{\"ok\":false,\"error\":\"no clock\"}";
+			}
+			long target = 7;
+			get_int(action_json, "hour", target);
+			target = (target % 24 + 24) % 24;
+			const int cur = clk->get_hour();
+			int advance = static_cast<int>(target) - cur;
+			if (advance <= 0) {
+				advance += 24;    // next day
+			}
+			clk->set_hour(static_cast<int>(target));
+			clk->set_minute(0);
+			clk->set_palette();    // refresh day/night lighting
+			// Re-evaluate NPC schedules for the new hour so sleepers wake and
+			// townsfolk move to their daytime activities (setting the clock
+			// alone does not transition schedules).
+			gwin->schedule_npcs(static_cast<int>(target));
+			return std::string("{\"ok\":true,\"did\":\"wait_until\",")
+				   + json_int("hour", static_cast<int>(target)) + ","
+				   + json_int("advanced_hours", advance) + "}";
 		}
 
 		if (type == "save") {

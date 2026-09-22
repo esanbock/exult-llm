@@ -137,6 +137,10 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
   gump_contents (list)        - item names inside the currently OPEN container/
                                 body window (empty if it holds nothing).
   player: {tx,ty (your tile), hp, dead, food}
+  time_of_day (string)        - morning/afternoon/evening/night, plus hour (0-23)
+                                and is_night. At night most townsfolk are asleep
+                                (see condition:"sleeping"); use "wait_until" to
+                                pass time to morning if you need someone awake.
   in_combat (bool)            - are you in combat mode
   conversation_in_progress (bool) - true while a conversation is open (faces shown)
   conversation_active (bool)  - true when NPC answer choices are on screen NOW
@@ -309,6 +313,9 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
   save    - Save the game so progress is not lost. params: none. (The driver
             also auto-saves periodically; you rarely need this.)
   wait    - Do nothing this turn. params: none.
+  wait_until - Pass time until a target hour (0-23), e.g. wait for morning so
+            sleeping NPCs wake. params: {"hour": 7} (default 7 = morning). Use
+            this when the people you need are "sleeping" and it is night.
 
 # JOURNAL TOOLS (manage your own quest log & notes - do NOT affect the game)
   add_quest    - Record a goal you discovered. params: {"title": "...",
@@ -417,6 +424,9 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             "tx": p.get("tx"), "ty": p.get("ty"),
             "hp": p.get("hp"), "dead": p.get("dead"),
         },
+        "time_of_day": state.get("time_of_day"),
+        "hour": state.get("hour"),
+        "is_night": state.get("is_night"),
         "in_combat": state.get("in_combat"),
         "conversation_in_progress": in_convo,
         "conversation_active": state.get("conversation_active"),
