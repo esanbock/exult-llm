@@ -996,7 +996,12 @@ namespace LLM_agent {
 				const Shape_info& info = obj->get_info();
 				const bool        is_container
 						= info.get_shape_class() == Shape_info::container;
-				if (!info.is_body_shape() && !is_container) {
+				// A murder victim is often a DEAD ACTOR (corpse), not a
+				// body-shape object. Include dead actors so the agent can loot
+				// a slain NPC just like a body/chest.
+				Actor* act = obj->as_actor();
+				const bool is_dead_actor = act && act->is_dead();
+				if (!info.is_body_shape() && !is_container && !is_dead_actor) {
 					continue;
 				}
 				const Tile_coord ot = obj->get_tile();
@@ -1004,6 +1009,23 @@ namespace LLM_agent {
 				if (d < best_d) {
 					best_d = d;
 					best   = obj;
+				}
+			}
+			// Also scan nearby NPCs for a dead one, since dead actors may be
+			// tracked in the actor list rather than the object list.
+			{
+				std::vector<Actor*> npcs;
+				gwin->get_nearby_npcs(npcs);
+				for (Actor* npc : npcs) {
+					if (!npc || npc == av || !npc->is_dead()) {
+						continue;
+					}
+					const Tile_coord ot = npc->get_tile();
+					const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+					if (d <= 4 && d < best_d) {
+						best_d = d;
+						best   = npc;
+					}
 				}
 			}
 			if (!best) {

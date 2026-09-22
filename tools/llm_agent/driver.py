@@ -788,13 +788,27 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     else:
         # Pull any user hint typed into the GUI; keep it active for a few turns
         # AND record it permanently so the agent can recall it later.
+        h = None
         if window.available:
             h = window.get_hint()
-            if h:
-                session["hint"] = h
-                session["hint_ttl"] = 3
-                kb.record_hint(h, step)
-                print(f"[{step:03d}] USER HINT: {h}")
+        # Also accept a hint dropped into a file (hint.txt next to the driver),
+        # so hints can be sent without the GUI (scriptable). The file is
+        # consumed (emptied) once read.
+        if not h:
+            try:
+                hf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hint.txt")
+                if os.path.isfile(hf):
+                    txt = open(hf, encoding="utf-8").read().strip()
+                    if txt:
+                        h = txt
+                        open(hf, "w", encoding="utf-8").close()  # consume it
+            except OSError:
+                pass
+        if h:
+            session["hint"] = h
+            session["hint_ttl"] = 3
+            kb.record_hint(h, step)
+            print(f"[{step:03d}] USER HINT: {h}")
         alert_parts = []
         if session.get("hint") and session.get("hint_ttl", 0) > 0:
             alert_parts.append("HINT from your operator (follow it): " + session["hint"])
@@ -1006,6 +1020,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 reason = "(guard) done looting; closing container"
                 session["gump_wait"] = 0
                 session["gump_taken"] = set()
+                # Remember we already looted the body/container we were at, so
+                # the agent doesn't re-search the same corpse in a loop. Key by
+                # the avatar's tile (we search what's adjacent).
+                _pp = state.get("player") or {}
+                looted = session.setdefault("looted_spots", set())
+                looted.add((_pp.get("tx"), _pp.get("ty")))
     else:
         session["gump_wait"] = 0
         session["gump_taken"] = set()
@@ -1057,27 +1077,49 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
                 return rows[y][x]
             return "#"
-        # There is a closed door '+' nearby? open it.
+        WALK = ".*&C/xno~+"  # walkable-ish glyphs (incl. open/closed door, items)
+        # Flood-fill from the avatar over walkable cells to find reachable open
+        # tiles, then pick the FARTHEST reachable one as a concrete goto target.
+        # This escapes tight enclosures (e.g. a fenced murder scene with one
+        # gate) far better than blind directional steps or fixed-offset gotos,
+        # because it only targets tiles that are actually connected to us.
+        from collections import deque as _deque
+        seen = {(0, 0)}
+        q = _deque([(0, 0)])
+        best = None
+        best_d = -1
+        R = 12
+        while q:
+            dx, dy = q.popleft()
+            d = abs(dx) + abs(dy)
+            if d > best_d and (dx, dy) != (0, 0):
+                best_d, best = d, (dx, dy)
+            for ndx, ndy in ((0,-1),(0,1),(1,0),(-1,0)):
+                nx, ny = dx+ndx, dy+ndy
+                if abs(nx) > R or abs(ny) > R or (nx, ny) in seen:
+                    continue
+                if _cell(nx, ny) in WALK:
+                    seen.add((nx, ny))
+                    q.append((nx, ny))
+        # If the flood found nothing reachable except through a closed door,
+        # open it first; otherwise goto the farthest reachable open tile.
         has_door = any(_cell(dx, dy) == "+"
                        for dx in range(-3, 4) for dy in range(-3, 4))
-        if (n % 3) == 0 and (has_door or (state.get("doors") or [])):
+        if best and best_d >= 2:
+            action = {"type": "goto", "tx": px + best[0], "ty": py + best[1]}
+            reason = f"(guard) wedged; flood-fill escape to open tile ({px+best[0]},{py+best[1]})"
+        elif has_door or (state.get("doors") or []):
             action = {"type": "open"}
             reason = "(guard) wedged; opening a nearby door to escape"
-        elif (n % 3) == 1:
-            # Try a ring of distant targets; goto the first (pathfinder will
-            # route through doors). Rotate the ring by attempt count.
-            ring = [(0,-20),(20,0),(0,20),(-20,0),(16,-16),(-16,16),(16,16),(-16,-16)]
-            k = (n // 3) % len(ring)
-            dx, dy = ring[k]
-            action = {"type": "goto", "tx": px+dx, "ty": py+dy}
-            reason = "(guard) wedged; goto far tile to path out"
         else:
+            # Truly boxed in on the visible grid - step toward any adjacent
+            # walkable cell, rotating by attempt to avoid oscillating.
             deltas = {"n": (0,-1),"s": (0,1),"e": (1,0),"w": (-1,0),
                       "ne": (1,-1),"nw": (-1,-1),"se": (1,1),"sw": (-1,1)}
             pref = list(deltas.keys())
             off = n % len(pref)
             pref = pref[off:] + pref[:off]
-            picked = next((d for d in pref if _cell(*deltas[d]) in ".*&C/x"), pref[0])
+            picked = next((d for d in pref if _cell(*deltas[d]) in WALK), pref[0])
             action = {"type": "move", "dir": picked, "speed": 120}
             reason = f"(guard) wedged; stepping {picked}"
     else:
@@ -1153,6 +1195,53 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = {"type": "move", "dir": d}
                     reason = f"(guard) stuck; exploring {d} for new areas"
                     recent_positions.clear()
+
+    # --- Search reachability guard: if the model wants to SEARCH but no body/
+    #     container is within reach (search scans ~4 tiles engine-side), yet a
+    #     dead body or a container is VISIBLE further away, walk to it first so
+    #     the search will actually hit something (fixes endless "no body nearby"
+    #     when the corpse is a few tiles off). ---------------------------------
+    if (isinstance(action, dict) and action.get("type") == "search"
+            and not state.get("conversation_in_progress")):
+        _pp = state.get("player") or {}
+        _here = (_pp.get("tx"), _pp.get("ty"))
+        # Already looted from this exact spot? Don't re-search - the body is
+        # empty. Move on to the next objective instead of looping.
+        if _here in session.get("looted_spots", set()):
+            session["last_bump"] = ("You already searched and emptied the body here - "
+                                    "there is nothing left to take. Move on: pursue your "
+                                    "other goals (e.g. find and talk to the person you need).")
+            qa, qr = _pursue_focus_quest(state, kb)
+            if qa and qa.get("type") != "search":
+                action, reason = qa, qr
+            else:
+                action = _explore_far(state, session, wedged)
+                reason = "(guard) body already looted; moving on to explore"
+            print(f"[{step:03d}] search-guard: body at {_here} already looted; moving on")
+        else:
+            _here_close = lambda dx, dy: abs(dx) <= 1 and abs(dy) <= 1
+            # Anything searchable right next to us? then let the search run.
+            adjacent = any(_here_close(n.get("dx", 9), n.get("dy", 9))
+                           for n in (state.get("nearby") or []) if n.get("dead"))
+            adjacent = adjacent or any(_here_close(o.get("dx", 9), o.get("dy", 9))
+                                       for o in (state.get("objects") or [])
+                                       if o.get("body"))
+            if not adjacent:
+                # Nearest dead body (from NPC list) or body-flagged object.
+                cands = [(abs(n.get("dx", 99)) + abs(n.get("dy", 99)),
+                          _pp.get("tx", 0) + n.get("dx", 0),
+                          _pp.get("ty", 0) + n.get("dy", 0), n.get("name", "body"))
+                         for n in (state.get("nearby") or []) if n.get("dead")]
+                cands += [(abs(o.get("dx", 99)) + abs(o.get("dy", 99)),
+                           _pp.get("tx", 0) + o.get("dx", 0),
+                           _pp.get("ty", 0) + o.get("dy", 0), o.get("name", "body"))
+                          for o in (state.get("objects") or []) if o.get("body")]
+                if cands:
+                    cands.sort(key=lambda c: c[0])
+                    _, btx, bty, bnm = cands[0]
+                    action = {"type": "goto", "tx": btx, "ty": bty}
+                    reason = f"(guard) walking to '{bnm}' @({btx},{bty}) before searching"
+                    print(f"[{step:03d}] search-guard: goto body '{bnm}' @({btx},{bty})")
 
     # --- Wall-aware move guard: never walk into a '#'. ------------------
     # The grid is centered on the avatar (radius 12 -> center [12][12]).
@@ -1232,10 +1321,26 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 session["last_bump"] = (
                     f"You tried to goto '{nm}', but that place is not on your map "
                     f"and you can't see it. Known places you CAN goto: {names}. "
-                    f"Explore to find '{nm}', or annotate it once you reach it.")
+                    f"To find a PERSON (like a mayor), enter buildings: go through "
+                    f"doors ('+' closed / '/' open) and look inside. Explore to find "
+                    f"'{nm}', or annotate it once you reach it.")
                 print(f"[{step:03d}] goto unresolved: '{nm}' (known: {names})")
-                action = _explore_far(state, session, wedged)
-                reason = f"(guard) '{nm}' unknown; exploring to find it"
+                # If we're hunting a person, prefer entering a nearby building
+                # via an unvisited door rather than wandering outdoors.
+                door = None
+                for d in (state.get("doors") or []):
+                    key = (_pp.get("tx", 0) + d.get("dx", 0), _pp.get("ty", 0) + d.get("dy", 0))
+                    if key not in session.setdefault("entered_doors", set()):
+                        door = (key, d)
+                        break
+                if door is not None:
+                    (dtx, dty), _d = door
+                    session["entered_doors"].add((dtx, dty))
+                    action = {"type": "goto", "tx": dtx, "ty": dty}
+                    reason = f"(guard) '{nm}' unknown; entering a building via door @({dtx},{dty})"
+                else:
+                    action = _explore_far(state, session, wedged)
+                    reason = f"(guard) '{nm}' unknown; exploring to find it"
 
     # A goto that targets (almost) our own tile is a no-op that loops forever.
     # Redirect it to real exploration.
