@@ -43,12 +43,14 @@
 #include "objiter.h"
 #include "ready.h"
 #include "effects.h"
+#include "utils.h"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -428,6 +430,8 @@ namespace {
 
 namespace LLM_agent {
 
+	string screenshot();    // fwd decl (defined after handle_request)
+
 	string observe() {
 		std::ostringstream os;
 		os << '{';
@@ -525,24 +529,35 @@ namespace LLM_agent {
 				const Shape_info& info = obj->get_info();
 				const Tile_coord ot = obj->get_tile();
 				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
-				// Rank 0 = interesting (loot/container/body), 1 = scenery.
-				int rank = 0;
 				const auto sclass = info.get_shape_class();
-				const bool scenery
-						= info.is_solid()  // walls, roofs, big structure
-						  || sclass == Shape_info::building
-						  || sclass == Shape_info::unusable;
 				std::string low = obj->get_name();
 				std::transform(low.begin(), low.end(), low.begin(), ::tolower);
-				const bool bulk = low.find("roof") != std::string::npos
-						  || low.find("wall") != std::string::npos
-						  || low.find("fence") != std::string::npos
-						  || low.find("tree") != std::string::npos
-						  || low.find("floor") != std::string::npos;
-				const bool takeable
-						= info.is_body_shape() || obj->as_container()
-						  || (!scenery && !bulk);
-				rank = takeable ? 0 : 1;
+				auto has = [&low](const char* w) {
+					return low.find(w) != std::string::npos;
+				};
+				// Bulk scenery: repeated structure/ground clutter. Kept but
+				// deduped by name (see emission) so it never floods the list.
+				const bool bulk = has("roof") || has("wall") || has("fence")
+						  || has("tree") || has("floor") || has("blood")
+						  || has("garbage") || has("rubble") || has("grass")
+						  || has("dirt") || has("water");
+				const bool scenery = info.is_solid()
+						  || sclass == Shape_info::building
+						  || sclass == Shape_info::unusable;
+				// Notable: things worth going to / picking up / investigating.
+				const bool notable
+						  = info.is_body_shape() || obj->as_container()
+						  || has("body") || has("victim") || has("corpse")
+						  || has("chest") || has("key") || has("scroll")
+						  || has("book") || has("note") || has("letter")
+						  || has("gold") || has("gem") || has("ring")
+						  || has("statue") || has("gargoyle") || has("jewel")
+						  || has("potion") || has("wand") || has("sword")
+						  || has("shield") || has("armor") || has("lever")
+						  || has("switch") || has("altar") || has("shrine")
+						  || has("pitchfork") || has("tongs");
+				// Rank 0 = notable, 1 = normal item, 2 = bulk scenery.
+				int rank = notable ? 0 : (bulk || scenery) ? 2 : 1;
 				items.emplace_back(rank, d, obj);
 			}
 			// Sort by rank first (interesting before scenery), then distance.
@@ -555,10 +570,23 @@ namespace LLM_agent {
 					  });
 			bool first = true;
 			int  count = 0;
+			// Count bulk-scenery occurrences by name so we can collapse repeats
+			// (e.g. 9x "blood", many "wood roof") into ONE entry with a count
+			// instead of flooding the list and hiding real items.
+			std::map<std::string, int> scenery_seen;
 			for (auto& [rank, d, obj] : items) {
-				if (count++ >= 24) {
+				if (count >= 24) {
 					break;
 				}
+				const std::string nm = obj->get_name();
+				if (rank == 2) {
+					int& n = scenery_seen[nm];
+					++n;
+					if (n > 1) {
+						continue;    // already emitted this scenery name once
+					}
+				}
+				++count;
 				const Tile_coord  ot   = obj->get_tile();
 				const Shape_info& info = obj->get_info();
 				const bool is_body = info.is_body_shape();
@@ -567,7 +595,7 @@ namespace LLM_agent {
 				}
 				first = false;
 				os << '{';
-				os << json_str("name", obj->get_name());
+				os << json_str("name", nm);
 				os << ',' << json_int("dx", ot.tx - at.tx);
 				os << ',' << json_int("dy", ot.ty - at.ty);
 				if (is_body) {
@@ -1487,7 +1515,33 @@ namespace LLM_agent {
 		if (cmd == "ping") {
 			return "{\"ok\":true,\"pong\":true}";
 		}
+		if (cmd == "screenshot") {
+			return screenshot();
+		}
 		return "{\"ok\":false,\"error\":\"unknown cmd\"}";
+	}
+
+	// Capture the current game screen to a fixed file and return its path, so
+	// an external (more capable) agent can visually inspect what the engine is
+	// actually rendering and compare it against the JSON observation. Overwrites
+	// the same file each call.
+	string screenshot() {
+		Game_window* gwin = Game_window::get_instance();
+		if (!gwin || !gwin->get_win()) {
+			return "{\"ok\":false,\"error\":\"no window\"}";
+		}
+		const string dir = get_system_path("<SAVEGAME>");
+		const string path = dir + "/agent_shot.png";
+		SDL_IOStream* dst = SDL_IOFromFile(path.c_str(), "wb");
+		if (!dst) {
+			return "{\"ok\":false,\"error\":\"cannot open output file\"}";
+		}
+		const bool ok = gwin->get_win()->screenshot(dst, false);
+		// screenshot() closes dst via SDL_SaveBMP/IMG path; guard anyway.
+		if (ok) {
+			return "{\"ok\":true,\"did\":\"screenshot\"," + json_str("path", path) + "}";
+		}
+		return "{\"ok\":false,\"error\":\"screenshot failed\"}";
 	}
 
 	bool begin_conversation(const string& name) {

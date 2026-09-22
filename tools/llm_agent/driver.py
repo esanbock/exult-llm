@@ -1117,6 +1117,44 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         session["gump_wait"] = 0
         session["gump_taken"] = set()
 
+    # 0-pre) LEAVING LATCH: once we decide to end a conversation, keep driving
+    #   toward closing it every turn until it is actually closed. Conversations
+    #   are unreliable to end (picking 'bye' shows a farewell line, needs a
+    #   space, and sometimes re-opens the choice list). Without a latch the
+    #   model re-engages a topic and we get stuck. While leaving: if choices are
+    #   up, pick the bye/exit answer; if a text page is up, space past it; when
+    #   in_progress goes false, clear the latch.
+    if session.get("leaving"):
+        if not state.get("conversation_in_progress"):
+            session["leaving"] = False
+        else:
+            if state.get("conversation_active") and answers:
+                action = _bye_action()
+                reason = "(guard) leaving: choosing exit reply"
+            else:
+                action = {"type": "key", "key": "space"}
+                reason = "(guard) leaving: clearing dialog text"
+            # Safety: if we've been "leaving" too many turns, force escape.
+            session["leaving_n"] = session.get("leaving_n", 0) + 1
+            if session["leaving_n"] > 8:
+                action = {"type": "key", "key": "escape"}
+                reason = "(guard) leaving: forcing escape"
+                session["leaving_n"] = 0
+            # Skip the rest of the conversation guards this turn.
+            _atype = action.get("type") if isinstance(action, dict) else "?"
+            if _atype == "talk":
+                tname = action.get("name", "")
+                if tname:
+                    kb.mark_talked(tname); session["current_npc"] = tname
+                result = exult.talk(tname)
+            else:
+                result = exult.act(action)
+            kb.record_tool(_atype, result.get("ok") if isinstance(result, dict) else None)
+            if window.available:
+                window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
+                window.set_thinking(reason)
+            return
+
     # 0) Auto-end a conversation that has gone on too long or is repeating the
     #    same answer choices (the model won't pick 'bye' on its own).
     if state.get("conversation_active") and answers:
@@ -1125,6 +1163,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         too_long = session.get("convo_turns", 0) >= MAX_CONVO_TURNS
         repeating = chosen_idx is not None and chosen_idx in picked and len(picked) >= max(1, len(answers) - 1)
         if too_long or repeating:
+            # Engage the leaving latch so we drive to a clean close, not just
+            # a single bye that may re-open choices.
+            session["leaving"] = True
+            session["leaving_n"] = 0
             action = _bye_action()
             reason = f"(guard) ending conversation ({'too long' if too_long else 'looping'})"
         elif chosen_idx is not None:
