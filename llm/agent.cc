@@ -544,10 +544,15 @@ namespace LLM_agent {
 			const int   radius = 12;
 			std::string grid   = build_grid(av, radius);
 			os << ',' << json_int("grid_radius", radius);
+			// Top-left tile of the grid, so grid cell [row][col] maps to the
+			// absolute tile (origin_tx+col, origin_ty+row). Avatar is at center.
+			os << ',' << json_int("grid_origin_tx", av->get_tile().tx - radius);
+			os << ',' << json_int("grid_origin_ty", av->get_tile().ty - radius);
 			os << ',' << json_str("grid_legend",
 					"@=you C=companion &=npc x=body T=tree W=wall/building =~fence/gate "
 					"n=container H=furniture s=sign ~=water +=closed_door /=open_door "
-					"o=obstacle *=item .=open ground #=blocked; north=up east=right");
+					"o=obstacle *=item .=open ground #=blocked; north=up east=right. "
+					"Cell [row][col] is tile (grid_origin_tx+col, grid_origin_ty+row).");
 			os << ',' << json_str("grid", grid);
 		}
 

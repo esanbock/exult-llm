@@ -100,7 +100,11 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
                                 north=up, south=down, east=right, west=left.
                                 Walk only on '.', items '*', or open door '/';
                                 everything else (T W = n H ~ o #) blocks you.
-                                To enter a building/room head for its door.
+                                COORDINATES: you are at player.tx/ty (grid center).
+                                A grid cell at row r, col c is tile
+                                (grid_origin_tx + c, grid_origin_ty + r). "look",
+                                nearby, objects, and doors also give coordinates,
+                                and you can "goto" any tx,ty.
   doors (list)                - nearby doors: {name, dx, dy, closed}
 
 # YOUR JOURNAL (you maintain this - it persists across turns)
@@ -355,13 +359,17 @@ def parse_reply(text: str) -> tuple[str, dict]:
     return (reason, action)
 
 
-def _compass(dx: int, dy: int) -> str:
+def _where(px: int, py: int, dx: int, dy: int) -> str:
+    """Describe a position both as a compass direction+distance AND its absolute
+    tile coordinate, so it matches the map grid and can be used with goto."""
     ns = "north" if dy < 0 else ("south" if dy > 0 else "")
     ew = "east" if dx > 0 else ("west" if dx < 0 else "")
     d = (ns + ew) or "here"
     dist = abs(dx) + abs(dy)
     near = "adjacent" if dist <= 1 else ("close" if dist <= 4 else ("nearby" if dist <= 10 else "far"))
-    return f"{near} to the {d}" if d != "here" else "right here"
+    tx, ty = px + dx, py + dy
+    where = "right here" if d == "here" else f"{near} to the {d}"
+    return f"{where} at ({tx},{ty})"
 
 
 def describe_scene(state: dict, kb=None) -> str:
@@ -370,7 +378,8 @@ def describe_scene(state: dict, kb=None) -> str:
     (setting, characters, items, doors/exits, map features)."""
     from collections import Counter
     p = state.get("player") or {}
-    lines = [f"You are at ({p.get('tx')},{p.get('ty')})."]
+    px, py = p.get("tx", 0), p.get("ty", 0)
+    lines = [f"You are at ({px},{py})."]
     if state.get("in_dungeon"):
         lines.append("You are inside a dungeon/enclosed space.")
     if state.get("in_combat"):
@@ -389,7 +398,7 @@ def describe_scene(state: dict, kb=None) -> str:
                 last = (kb.npcs.get(who, {}).get("notes") or [""])[-1]
                 if last:
                     note += f' - last said: "{last[:60]}"'
-            lines.append(f"  - {who}{tag}{dead}, {_compass(n.get('dx',0), n.get('dy',0))}{note}")
+            lines.append(f"  - {who}{tag}{dead}, {_where(px, py, n.get('dx',0), n.get('dy',0))}{note}")
 
     objects = state.get("objects") or []
     if objects:
@@ -400,14 +409,14 @@ def describe_scene(state: dict, kb=None) -> str:
             cnt = names.get(nm, 1)
             multi = f" (you see {cnt} of these nearby)" if cnt > 1 else ""
             body = " - a body you can search" if o.get("body") else ""
-            lines.append(f"  - {nm}, {_compass(o.get('dx',0), o.get('dy',0))}{body}{multi}")
+            lines.append(f"  - {nm}, {_where(px, py, o.get('dx',0), o.get('dy',0))}{body}{multi}")
 
     doors = state.get("doors") or []
     if doors:
         lines.append("\nDoors/exits nearby:")
         for d in doors[:8]:
             stt = "closed" if d.get("closed") else "open"
-            lines.append(f"  - a {stt} door {_compass(d.get('dx',0), d.get('dy',0))}")
+            lines.append(f"  - a {stt} door {_where(px, py, d.get('dx',0), d.get('dy',0))}")
 
     grid = state.get("grid") or ""
     counts = {}
