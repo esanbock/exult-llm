@@ -509,8 +509,12 @@ namespace LLM_agent {
 			Game_object_vector objs;
 			const Tile_coord   at = av->get_tile();
 			Game_object::find_nearby(objs, at, -1, 12, 128);
-			// Collect (distance, obj) for named, non-actor objects.
-			std::vector<std::pair<int, Game_object*>> items;
+			// Collect (rank, distance, obj). We rank likely-interactable items
+			// (takeable loot, containers, bodies) ahead of bulk scenery
+			// (walls, roofs, fences, trees) so a scene crowded with structure
+			// doesn't push the actual items (e.g. jewelry on a table) past the
+			// output cap and hide them from the agent.
+			std::vector<std::tuple<int, int, Game_object*>> items;
 			for (Game_object* obj : objs) {
 				if (!obj || obj->as_actor()) {
 					continue;
@@ -518,15 +522,40 @@ namespace LLM_agent {
 				if (obj->get_name().empty()) {
 					continue;
 				}
+				const Shape_info& info = obj->get_info();
 				const Tile_coord ot = obj->get_tile();
 				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
-				items.emplace_back(d, obj);
+				// Rank 0 = interesting (loot/container/body), 1 = scenery.
+				int rank = 0;
+				const auto sclass = info.get_shape_class();
+				const bool scenery
+						= info.is_solid()  // walls, roofs, big structure
+						  || sclass == Shape_info::building
+						  || sclass == Shape_info::unusable;
+				std::string low = obj->get_name();
+				std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+				const bool bulk = low.find("roof") != std::string::npos
+						  || low.find("wall") != std::string::npos
+						  || low.find("fence") != std::string::npos
+						  || low.find("tree") != std::string::npos
+						  || low.find("floor") != std::string::npos;
+				const bool takeable
+						= info.is_body_shape() || obj->as_container()
+						  || (!scenery && !bulk);
+				rank = takeable ? 0 : 1;
+				items.emplace_back(rank, d, obj);
 			}
+			// Sort by rank first (interesting before scenery), then distance.
 			std::sort(items.begin(), items.end(),
-					  [](const auto& a, const auto& b) { return a.first < b.first; });
+					  [](const auto& a, const auto& b) {
+						  if (std::get<0>(a) != std::get<0>(b)) {
+							  return std::get<0>(a) < std::get<0>(b);
+						  }
+						  return std::get<1>(a) < std::get<1>(b);
+					  });
 			bool first = true;
 			int  count = 0;
-			for (auto& [d, obj] : items) {
+			for (auto& [rank, d, obj] : items) {
 				if (count++ >= 24) {
 					break;
 				}
@@ -663,7 +692,23 @@ namespace LLM_agent {
 					if (txt.empty()) {
 						continue;
 					}
-					std::string who = speaker ? speaker->get_name() : std::string("");
+					// Only report text that a CHARACTER is saying (a bark).
+					// Exult also shows floating text for other reasons - most
+					// notably an item's NAME when you single-click it. Those
+					// have a non-actor item as their owner (or the text equals
+					// the item's own name), and are NOT speech. Skip them so
+					// clicking an item (e.g. "Gargoyle jewelry") is not
+					// misreported to the agent as something being said.
+					Actor* act = speaker ? speaker->as_actor() : nullptr;
+					if (!act) {
+						continue;    // not a character talking -> not speech
+					}
+					// Guard against an actor's own name label (rare) being
+					// treated as speech.
+					if (txt == speaker->get_name()) {
+						continue;
+					}
+					std::string who = act->get_name();
 					if (!afirst) {
 						os << ',';
 					}
