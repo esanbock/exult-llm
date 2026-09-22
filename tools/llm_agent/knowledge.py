@@ -244,15 +244,28 @@ class KnowledgeBase:
             lines.append(f"{tag}{name} ({st}, x{r.get('times_talked',0)}){loc}: {note}")
         return "\n".join(lines) if lines else "(no NPCs met yet)"
 
-    # ----- npcs ----------------------------------------------------------
+    # Low-value lines not worth storing as NPC knowledge (greetings/closers and
+    # generic look descriptions add noise and crowd out real clues).
+    _FILLER = ("goodbye", "good day", "farewell", "hello", "greetings",
+               "you see a", "you see an", "yes?", "what dost thou want")
+
     def note_npc(self, name: str, note: str = "") -> None:
         if not name:
             return
         rec = self.npcs.setdefault(name, {"name": name, "times_talked": 0, "notes": []})
-        if note:
-            if not rec["notes"] or rec["notes"][-1] != note:
-                rec["notes"].append(note)
-                rec["notes"] = rec["notes"][-12:]
+        note = (note or "").strip()
+        if not note:
+            return
+        low = note.lower().strip(' "*')
+        # Skip pure filler (greetings, closers, stock look descriptions).
+        if any(low.startswith(f) or low == f for f in self._FILLER):
+            return
+        # Dedup against ALL recent notes (not just the last one) so repeated
+        # lines from re-talking don't pile up.
+        if note in rec["notes"][-20:]:
+            return
+        rec["notes"].append(note)
+        rec["notes"] = rec["notes"][-20:]
 
     def mark_talked(self, name: str) -> None:
         if not name:
@@ -290,8 +303,7 @@ class KnowledgeBase:
         for rec in self.npcs.values():
             rec["talked_this_epoch"] = 0
 
-    def talk_status(self, name: str, exhausted_at: int = 3,
-                    hard_cap: int = 8) -> str:
+    def talk_status(self, name: str, exhausted_at: int = 5) -> str:
         """Classify how worthwhile talking to this NPC is right now:
         'new' (never talked), 'talked' (spoken to but may have more), or
         'exhausted' (asked enough - unlikely to offer new info).
@@ -329,7 +341,7 @@ class KnowledgeBase:
         for n, r in src.items():
             entry = {"times_talked": r.get("times_talked", 0),
                      "status": self.talk_status(n),
-                     "notes": r.get("notes", [])[-6:]}
+                     "notes": r.get("notes", [])[-12:]}
             pos = r.get("last_pos")
             if pos and pos[0] is not None:
                 # last_seen = tile where we most recently observed this NPC.

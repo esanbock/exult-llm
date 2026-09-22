@@ -104,9 +104,15 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
                                 conversation_active is true)
   nearby (list)               - NPCs you can see: {name, dx, dy, in_party, status}
                                 dx>0 = east, dx<0 = west, dy>0 = south, dy<0 = north
-                                status = new (never talked) | talked (may have more)
-                                | exhausted (you already asked all they know for now -
-                                talking again wastes turns until the situation changes)
+                                status = new (never talked) | talked (spoken to)
+                                | exhausted (talked several times without new
+                                progress) - this is ADVISORY, not a ban. Before
+                                re-talking someone, READ their entry in npc_notes
+                                (their recorded lines + talk count) and decide
+                                yourself: if you have a NEW reason (a new topic,
+                                lead, item, or quest progress) it is worth talking
+                                again; if their notes show you already covered
+                                everything, move on. Trust your own judgement.
   objects (list)              - items on the ground: {name, dx, dy}
   grid (string)               - top-down ASCII map centered on you (@):
                                   @ you   C companion   & other NPC   x body
@@ -251,9 +257,10 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
      "update_quest" (that resolves it). Record leads with "note_npc". Always
      prefer the highest-priority UNRESOLVED, non-blocked quest.
   3a. Talking to NEW people is how you discover quests. Prefer nearby NPCs with
-     status "new", then "talked". Do NOT "talk" to an "exhausted" NPC - you
-     already learned what they know for now (revisiting only helps after real
-     progress, which resets their status).
+     status "new", then "talked". For an "exhausted" NPC, check their npc_notes
+     first: re-talk them ONLY if you now have a new reason (new topic/lead/item
+     or quest progress). If their notes show you already learned what they know,
+     move on rather than repeating the same conversation.
   4. Only if you have NO actionable quest and no new NPC to meet -> explore to a
      NEW area to find fresh people/places. To travel anywhere more than a step
      or two (an NPC, item, building, or new part of town) ALWAYS use "goto" - it
@@ -1161,23 +1168,36 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 else:
                     action = _explore_far(state, session, wedged)
                     reason = "(guard) no active quest lead; exploring a new area"
-        # 2) Redirect re-talk to an exhausted NPC toward a fresh one.
+        # 2) Let the model talk to whoever it chose - it can see each NPC's
+        #    recorded notes + talk count and decides for itself whether there is
+        #    more to learn. We only break a genuine TIGHT LOOP: the same NPC
+        #    chosen many turns in a row with nothing else happening (a stuck
+        #    model), not merely "talked before".
         if isinstance(action, dict) and action.get("type") == "talk":
             nm = action.get("name", "")
-            if nm and exhausted(nm):
+            last_nm = session.get("last_talk_target")
+            if nm and nm == last_nm:
+                session["same_talk_streak"] = session.get("same_talk_streak", 0) + 1
+            else:
+                session["same_talk_streak"] = 0
+            session["last_talk_target"] = nm
+            # Only intervene after re-picking the SAME npc 4+ turns straight.
+            if nm and session.get("same_talk_streak", 0) >= 4:
+                session["same_talk_streak"] = 0
                 fresh = [n for n in (state.get("nearby") or [])
-                         if not n.get("dead") and not exhausted(n.get("name"))]
+                         if not n.get("dead") and n.get("name") != nm
+                         and kb.talk_status(n.get("name")) != "exhausted"]
                 if fresh:
                     target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
                     action = {"type": "talk", "name": target["name"]}
-                    reason = f"(guard) already talked to {nm}; trying {target['name']}"
+                    reason = f"(guard) stuck re-picking {nm}; trying {target['name']} instead"
                 else:
                     qa, qr = _pursue_focus_quest(state, kb)
                     if qa and not (qa.get("type") == "talk" and qa.get("name") == nm):
                         action, reason = qa, qr
                     else:
                         action = _explore_far(state, session, wedged)
-                        reason = "(guard) no active quest lead; exploring a new area"
+                        reason = f"(guard) stuck re-picking {nm}; exploring instead"
         # 3) Anti-chase / auto-loot when stuck.
         elif (isinstance(action, dict) and action.get("type") == "move"
               and not state.get("conversation_in_progress")):
