@@ -365,6 +365,89 @@ class KnowledgeBase:
             return
         self.dialogue_history.append(entry)
         self.dialogue_history = self.dialogue_history[-self.DIALOGUE_WINDOW:]
+        # Also append to the per-NPC full transcript (the dialogue TREE), which
+        # persists across runs so the agent can recall exactly what each
+        # character told it - including the Mayor's instructions.
+        self._npc_transcript_add(npc, {"said": said})
+
+    # ----- per-NPC dialogue tree (persistent, retrievable via recall) ----
+    def _npc_rec(self, npc: str) -> dict:
+        return self.npcs.setdefault(
+            npc or "?", {"name": npc or "?", "times_talked": 0, "notes": []})
+
+    def _npc_transcript_add(self, npc: str, entry: dict) -> None:
+        if not npc or npc == "?":
+            return
+        rec = self._npc_rec(npc)
+        tr = rec.setdefault("transcript", [])
+        # Dedup consecutive identical spoken lines (the game repeats the current
+        # line across turns until a choice is picked).
+        if entry.get("said") and tr and tr[-1].get("said") == entry["said"]:
+            return
+        tr.append(entry)
+        rec["transcript"] = tr[-80:]    # keep a generous per-NPC history
+
+    def record_npc_choices(self, npc: str, choices: list) -> None:
+        """Record the answer TOPICS the game offered with this NPC (the tree
+        branches), so the agent knows what it can still ask and what it has
+        covered. Accumulates the union of all topics ever seen for this NPC."""
+        if not npc or npc == "?" or not choices:
+            return
+        rec = self._npc_rec(npc)
+        seen = rec.setdefault("topics_offered", [])
+        for c in choices:
+            c = str(c).strip()
+            if c and c not in seen:
+                seen.append(c)
+        rec["topics_offered"] = seen[-60:]
+
+    def record_npc_choice_taken(self, npc: str, topic: str) -> None:
+        """Record that the agent asked this topic (a branch it explored)."""
+        if not npc or npc == "?" or not topic:
+            return
+        rec = self._npc_rec(npc)
+        asked = rec.setdefault("topics_asked", [])
+        topic = str(topic).strip()
+        if topic and topic not in asked:
+            asked.append(topic)
+        rec["topics_asked"] = asked[-60:]
+        self._npc_transcript_add(npc, {"me": topic})
+
+    def recall_npc(self, npc: str) -> dict:
+        """Full retrievable record of a character: everything they said (their
+        transcript), the topics offered, and which topics we already asked.
+        Fuzzy-matches the name so 'mayor' finds 'Finnigan' if noted, etc."""
+        rec = self.npcs.get(npc)
+        if rec is None:
+            low = (npc or "").lower()
+            # 1) name substring match
+            for k, v in self.npcs.items():
+                if low and low in k.lower():
+                    rec = v
+                    break
+            # 2) match against what they said / notes (e.g. "mayor" -> Finnigan
+            #    who said "I am the Mayor"), so titles/roles resolve too.
+            if rec is None and low:
+                for v in self.npcs.values():
+                    hay = " ".join(
+                        [t.get("said", "") for t in v.get("transcript", [])]
+                        + list(v.get("notes", []))).lower()
+                    if low in hay:
+                        rec = v
+                        break
+        if rec is None:
+            return {"name": npc, "known": False}
+        offered = rec.get("topics_offered", [])
+        asked = set(rec.get("topics_asked", []))
+        return {
+            "name": rec.get("name", npc),
+            "known": True,
+            "times_talked": rec.get("times_talked", 0),
+            "transcript": rec.get("transcript", [])[-60:],
+            "topics_asked": rec.get("topics_asked", []),
+            "topics_unasked": [t for t in offered if t not in asked],
+            "notes": rec.get("notes", [])[-20:],
+        }
 
     def record_my_reply(self, text: str) -> None:
         if not text:

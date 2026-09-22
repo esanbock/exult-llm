@@ -252,6 +252,13 @@ you intend to do - keep your quest log current and prioritized.
             nearby person with what you know about them, items on the ground,
             doors/exits, terrain features). params: none. Use it when you enter
             a new area or want to understand a scene before acting.
+  recall  - Retrieve your FULL saved conversation with a character - everything
+            they told you (transcript), the topics you already asked, and the
+            topics you have NOT asked yet. params: {"name":"<character>"} (fuzzy,
+            e.g. "Mayor" or "Finnigan"). Result appears next turn as "recalled".
+            Use this to remember instructions someone gave you (e.g. the Mayor
+            telling you to find or speak to someone) before deciding what to do,
+            and to see which questions you still have not asked them.
   answer  - Choose a reply during a conversation. params: {"index": <int>} (0-based
             into the "answers" list) OR {"text": "<answer text>"}.
             Only valid when conversation_active is true.
@@ -433,6 +440,9 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         view["look_description"] = last_look
     if alert:
         view["alert"] = alert
+    if state.get("recalled") is not None:
+        # The full saved dialogue tree the agent asked to recall this turn.
+        view["recalled"] = state["recalled"]
     return json.dumps(view)
 
 def format_dialog(state: dict) -> str:
@@ -862,6 +872,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         kb.add_journal(npc_text)
         cur_npc = session.get("current_npc", "?")
         kb.record_npc_line(cur_npc, npc_text)
+        # Capture the answer TOPICS offered now (the dialogue-tree branches) so
+        # the agent has a persistent record of what it can still ask this NPC.
+        if state.get("answers"):
+            kb.record_npc_choices(cur_npc, state.get("answers"))
         # Passively capture durable knowledge (NPC notes + task-like quests)
         # from each NEW line, so the structured memory builds up even though
         # the model rarely calls the journal tools itself.
@@ -942,6 +956,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             if folded:
                 print(f"[{step:03d}] context {int(100*last_pt/ctx_max)}%: folded {folded} old "
                       f"dialogue lines into story_so_far (squeeze={squeeze})")
+        # If the agent just used "recall", surface that character's saved
+        # dialogue tree in THIS turn's state (one-shot, then cleared).
+        _recalled = session.pop("recalled", None)
+        if _recalled is not None:
+            state["recalled"] = _recalled
         _user = summarize_state(state, kb, session.pop("last_look", ""), alert, squeeze)
         res = ollama.chat_ex(SYSTEM_PROMPT, _user)
         reply = res["content"]
@@ -1005,6 +1024,24 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
 
     if window.available and args.dry_run:
         window.set_thinking(reason)
+
+    # --- "recall": retrieve the FULL saved dialogue tree for a character -
+    #     everything they said (their transcript), topics already asked, and
+    #     topics still unasked. Does not advance the game; the result is shown
+    #     in next turn's observation as "recalled" so the agent can remember,
+    #     e.g., the Mayor's instructions from a past run.
+    if isinstance(action, dict) and action.get("type") == "recall":
+        who = str(action.get("name") or action.get("npc") or "").strip()
+        rec = kb.recall_npc(who) if who else {"known": False, "name": who}
+        session["recalled"] = rec
+        kb.record_action(f"recalled dialogue with {who}")
+        if window.available:
+            window.set_action(f"[recall] {who}: {len(rec.get('transcript', []))} lines, "
+                              f"unasked={rec.get('topics_unasked')}")
+        print(f"[{step:03d}] recall {who}: known={rec.get('known')} "
+              f"lines={len(rec.get('transcript', []))}")
+        action = {"type": "wait"}
+        reason = f"(recalled what {who} said)"
 
     # --- "annotate": mark a location on the mental map so the agent can find
     #     its way back later (via goto <label> or known_places). Records the
@@ -1653,6 +1690,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             session["current_npc"] = tname
         result = exult.talk(tname)
     else:
+        # If answering a dialogue choice, record which TOPIC branch we took for
+        # the current NPC (builds the per-NPC dialogue tree of asked topics).
+        if (isinstance(action, dict) and action.get("type") == "answer"
+                and isinstance(action.get("index"), int)):
+            _ans = state.get("answers") or []
+            _i = action["index"]
+            if 0 <= _i < len(_ans):
+                kb.record_npc_choice_taken(session.get("current_npc", "?"), _ans[_i])
         result = exult.act(action)
     # Tool-call stats: count the action type and its outcome (ok/err).
     _atype = action.get("type") if isinstance(action, dict) else "?"
