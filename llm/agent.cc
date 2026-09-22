@@ -1315,6 +1315,32 @@ namespace LLM_agent {
 					}
 				}
 			}
+			// Pathfinder gave up (destination too far / complex for its search
+			// budget). Rather than report total failure and leave the agent
+			// spinning, take ONE concrete step toward the destination using the
+			// walk engine (start_actor). This guarantees progress each turn and
+			// lets the agent iteratively approach far targets a few tiles at a
+			// time. We only do this if the immediate step tile is not blocked.
+			{
+				Game_map* gmap = gwin->get_map();
+				const int ddx  = (dest.tx > at.tx) - (dest.tx < at.tx);
+				const int ddy  = (dest.ty > at.ty) - (dest.ty < at.ty);
+				if ((ddx || ddy) && gmap) {
+					const Tile_coord step(
+							(at.tx + ddx + c_num_tiles) % c_num_tiles,
+							(at.ty + ddy + c_num_tiles) % c_num_tiles, at.tz);
+					if (!gmap->is_tile_occupied(step)) {
+						// Convert the step into a screen target for start_actor.
+						const int w   = gwin->get_width();
+						const int h   = gwin->get_height();
+						const int sx  = w / 2 + ddx * 40;
+						const int sy  = h / 2 + ddy * 40;
+						gwin->start_actor(sx, sy, static_cast<int>(speed));
+						return "{\"ok\":true,\"did\":\"goto\",\"stepped\":true,"
+							   + json_int("tx", dest.tx) + "," + json_int("ty", dest.ty) + "}";
+					}
+				}
+			}
 			return "{\"ok\":false,\"error\":\"no path to destination\"}";
 		}
 

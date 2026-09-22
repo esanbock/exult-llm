@@ -686,7 +686,10 @@ def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
             tried.clear()
     else:
         tried.clear()
-    return {"type": "goto", "tx": tx + dx * 12, "ty": ty + dy * 12}
+    # Shorter hop (6 tiles): the engine A* has a bounded search budget, so far
+    # targets often fail; a nearer target in the most-open direction routes
+    # reliably, and the engine now single-steps toward it if A* still gives up.
+    return {"type": "goto", "tx": tx + dx * 6, "ty": ty + dy * 6}
 
 
 def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -> None:
