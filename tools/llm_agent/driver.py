@@ -54,6 +54,12 @@ General principles (apply to ANY situation, not one specific puzzle):
   * INVESTIGATE by talking: NPCs are your main source of information and quests.
     Ask them their name, job, and about any topic they or others mention. New
     dialog topics often appear as answer choices - explore the useful ones.
+  * GREET NEW PEOPLE: whenever you encounter someone you have NOT talked to yet
+    (status "new" in nearby), talk to them before moving on - even while you are
+    pursuing another goal. Every new person may give you a quest, a clue, an
+    item, or offer to JOIN YOUR PARTY (companions are extremely valuable). Do
+    not walk past unmet people to chase a single objective; a hint to find a
+    specific person is NOT a reason to ignore everyone else you pass.
   * FOLLOW LEADS: when someone mentions a person, place, item, or event, treat
     it as a lead worth pursuing. Use your journal to remember what you learned.
   * EXAMINE THE WORLD: investigate notable objects, bodies, and containers you
@@ -892,7 +898,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _pp = state.get("player") or {}
         _here = (_pp.get("tx"), _pp.get("ty"))
         if _recent and _recent[-1] == "looked around" and session.get("last_look_pos") == _here:
-            action = _explore_far(state, session, wedged)
+            action = _explore_far(state, session, session.get("stuck_count", 0) >= 3)
             reason = "(guard) already looked here; exploring instead of looking again"
         else:
             desc = describe_scene(state, kb)
@@ -1198,6 +1204,31 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = {"type": "move", "dir": d}
                     reason = f"(guard) stuck; exploring {d} for new areas"
                     recent_positions.clear()
+
+    # --- Greet-new-people guard: don't walk/goto/explore PAST someone we have
+    #     never talked to. If the model's action is movement (move/goto) or a
+    #     wait while a NEW (never-talked) NPC is within a few tiles, redirect to
+    #     talking to them first. New people can give quests, clues, items, or
+    #     JOIN THE PARTY - too valuable to skip while tunnel-visioning a hinted
+    #     goal. General behavior, not tied to any specific puzzle. -------------
+    if (isinstance(action, dict)
+            and action.get("type") in ("move", "goto", "wait", "look")
+            and not state.get("conversation_in_progress")
+            and not state.get("gump_open")):
+        new_npcs = [n for n in (state.get("nearby") or [])
+                    if n.get("name") and not n.get("dead")
+                    and not n.get("in_party")
+                    and abs(n.get("dx", 99)) <= 5 and abs(n.get("dy", 99)) <= 5
+                    and kb.talk_status(n.get("name")) == "new"]
+        # Don't re-trigger forever on someone we just tried to greet.
+        greeted = session.setdefault("greeted", set())
+        new_npcs = [n for n in new_npcs if n["name"] not in greeted]
+        if new_npcs:
+            target = min(new_npcs, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
+            greeted.add(target["name"])
+            action = {"type": "talk", "name": target["name"]}
+            reason = f"(guard) greeting new person '{target['name']}' before moving on"
+            print(f"[{step:03d}] greet-guard: talk to new NPC {target['name']}")
 
     # --- Search reachability guard: if the model wants to SEARCH but no body/
     #     container is within reach (search scans ~4 tiles engine-side), yet a
