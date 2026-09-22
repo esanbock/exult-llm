@@ -1119,12 +1119,22 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 reason = "(guard) done looting; closing container"
                 session["gump_wait"] = 0
                 session["gump_taken"] = set()
-                # Remember we already looted the body/container we were at, so
-                # the agent doesn't re-search the same corpse in a loop. Key by
-                # the avatar's tile (we search what's adjacent).
                 _pp = state.get("player") or {}
                 looted = session.setdefault("looted_spots", set())
                 looted.add((_pp.get("tx"), _pp.get("ty")))
+        # CRITICAL: a gump BLOCKS movement - the avatar cannot walk until it is
+        # closed. Execute the take/close/equip NOW and end the turn so the later
+        # wedge/goto/move guards can't clobber it with a movement action that
+        # would silently no-op (this was the 'tried to move before closing the
+        # body' + stuck-in-place bug).
+        _atype = action.get("type") if isinstance(action, dict) else "?"
+        result = exult.act(action)
+        kb.record_tool(_atype, result.get("ok") if isinstance(result, dict) else None)
+        session["last_action_type"] = _atype
+        if window.available:
+            window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
+            window.set_thinking(reason)
+        return
     else:
         session["gump_wait"] = 0
         session["gump_taken"] = set()
