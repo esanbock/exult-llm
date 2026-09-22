@@ -93,7 +93,8 @@ class OllamaClient:
                 {"role": "user", "content": user},
             ],
             "stream": False,
-            "options": {"temperature": temperature, "num_ctx": self.num_ctx},
+            "options": {"temperature": temperature, "num_ctx": self.num_ctx,
+                        "num_predict": 300},
         }
         if force_json:
             payload["format"] = "json"
