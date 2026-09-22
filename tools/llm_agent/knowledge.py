@@ -200,13 +200,18 @@ class KnowledgeBase:
                 b["notes"] = q["notes"][-240:]
             return b
 
+        done = [q for q in self.quests.values() if q.get("status") == "done"]
         return {
-            "focus": brief(actionable[0]) if actionable else None,
+            # No code-chosen "focus": the agent maintains its own prioritized
+            # list and decides what to work on. We just provide the prioritized
+            # actionable set (priority 1 = highest) for it to choose from.
             "actionable": [brief(q) for q in actionable[:max_actionable]],
             "blocked": [brief(q) for q in blocked[:max_blocked]],
+            # So the agent can refer back to what it finished and not redo it.
+            "recently_resolved": [q.get("title") for q in done[-6:]],
             "total_open": len(active),
             "unresolved": len(active),
-            "resolved": sum(1 for q in self.quests.values() if q.get("status") == "done"),
+            "resolved": len(done),
         }
 
     def resolve_quest(self, qid: str) -> bool:
@@ -220,8 +225,8 @@ class KnowledgeBase:
     def quests_pretty(self) -> str:
         qv = self.quest_view(max_actionable=20, max_blocked=20)
         lines = []
-        f = qv.get("focus")
-        lines.append("FOCUS: " + (f["title"] if f else "(none)"))
+        top = (qv.get("actionable") or [{}])[0]
+        lines.append("TOP PRIORITY: " + (top.get("title") or "(none)"))
         lines.append(f"resolved {qv.get('resolved',0)} / unresolved {qv.get('unresolved',0)}")
         lines.append("")
         lines.append("ACTIONABLE:")

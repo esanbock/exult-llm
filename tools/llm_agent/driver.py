@@ -191,12 +191,15 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
 
 # YOUR JOURNAL (you maintain this - it persists across turns)
   quests: {focus, actionable[], blocked[], resolved, unresolved}
-      - Your MAIN DRIVE is to work through quests: pursue the highest-priority
-        UNRESOLVED quest you can act on, gather new quests as you discover them,
-        and mark quests resolved when done. Respect prerequisites.
-      - focus: the single highest-priority quest to work on now (or null)
-      - actionable: unresolved quests you can act on now (priority 1=highest)
+      - Your quest log is YOUR plan: you choose which quest to work on and its
+        priority. Pursue an unresolved, non-blocked quest; add new ones as you
+        discover goals; and RESOLVE quests the moment you complete them so the
+        log stays accurate. Respect prerequisites.
+      - actionable: unresolved quests you can act on now, PRIORITY-SORTED
+        (priority 1=highest). Pick the one you judge best - normally the top,
+        but you may choose another if the situation calls for it.
       - blocked: unresolved quests waiting on a prerequisite (see depends_on)
+      - recently_resolved: quests you already finished - do NOT redo these.
       - Each quest: {id, title, priority, status(active|blocked|done),
         resolved(true/false), npc (who it involves), depends_on[]}
       - A quest with "npc" set can be pursued by going to/talking to that NPC.
@@ -327,15 +330,22 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
   2. Else if conversation_in_progress is true (a conversation is open but no
      choices yet) -> use "key" with "space" to advance the NPC's text until the
      answer choices appear. Do NOT "talk" again or "move" during a conversation.
-  3. YOUR MAIN DRIVE - WORK THE QUESTS: look at "quests.focus" (the highest
-     priority unresolved quest you can act on). Pursue it:
-       - if it has an "npc" who is in "nearby" -> "talk" to them;
-       - if it has an "npc" who is NOT nearby -> "goto" that npc (by name);
-       - otherwise act on what its notes describe.
-     When you learn a new goal, "add_quest" (set priority; set depends_on if it
-     requires another quest first). When you finish one, mark it "done" with
-     "update_quest" (that resolves it). Record leads with "note_npc". Always
-     prefer the highest-priority UNRESOLVED, non-blocked quest.
+  3. YOUR QUEST LOG IS YOUR PLAN - own it. You decide which quests matter and
+     their priority (1=highest). Each turn, CONSULT "quests": pick whichever
+     unresolved, non-blocked quest you judge most important right now and act on
+     it (talk to its npc if nearby, "goto" them if not, else act on its notes).
+     You are free to reprioritise as you learn more (update_quest priority).
+     - ADD a quest (or inline "new_quest") whenever you decide on a goal.
+     - RESOLVE quests you complete: the moment a goal is achieved (you got the
+       password, spoke to the person, found the item, solved the puzzle), add
+       "resolve_quest":"<quest id or title>" (or update_quest status:"done").
+       An unresolved log you never close becomes useless - keep it accurate so
+       "focus" always shows what truly remains.
+     - REFER BACK: before acting, check whether your intended action matches an
+       open quest; if a quest is already done, resolve it instead of repeating.
+     - Your "topic" notebook is your long-term memory: record insights there so
+       that even after a quest is closed, what you learned about people, groups,
+       and mysteries persists.
   3a. Talking to NEW people is how you discover quests. Prefer nearby NPCs with
      status "new", then "talked". For an "exhausted" NPC, check their npc_notes
      first: re-talk them ONLY if you now have a new reason (new topic/lead/item
@@ -754,7 +764,7 @@ def _pursue_focus_quest(state: dict, kb: "KnowledgeBase"):
     qv = kb.quest_view()
     # Consider the focus quest, then other actionable quests, skipping any whose
     # NPC is a party companion (they follow you, so "go to them" is pointless).
-    for focus in ([qv.get("focus")] + qv.get("actionable", [])):
+    for focus in qv.get("actionable", []):
         if not focus:
             continue
         npc = focus.get("npc")
