@@ -39,6 +39,9 @@
 #include "party.h"
 #include "Gump_manager.h"
 #include "Slider_gump.h"
+#include "contain.h"
+#include "objiter.h"
+#include "ready.h"
 
 #include <SDL3/SDL.h>
 
@@ -534,6 +537,37 @@ namespace LLM_agent {
 				if (is_body) {
 					os << ',' << json_bool("body", true);
 				}
+				// If this is a container (body, bag, chest...), list what is
+				// inside (recursively, so loot inside a bag inside a body shows).
+				Container_game_object* cont = obj->as_container();
+				if (cont) {
+					os << ',' << "\"contents\":[";
+					bool cfirst = true;
+					int  ccount = 0;
+					// Simple recursive walk (bounded) of the container tree.
+					std::vector<Container_game_object*> stack{cont};
+					while (!stack.empty() && ccount < 20) {
+						Container_game_object* c = stack.back();
+						stack.pop_back();
+						Object_iterator it(c->get_objects());
+						Game_object* inner;
+						while ((inner = it.get_next()) != nullptr && ccount < 20) {
+							const std::string inm = inner->get_name();
+							if (!inm.empty()) {
+								if (!cfirst) {
+									os << ',';
+								}
+								cfirst = false;
+								os << '"' << json_escape(inm) << '"';
+								++ccount;
+							}
+							if (Container_game_object* ic = inner->as_container()) {
+								stack.push_back(ic);
+							}
+						}
+					}
+					os << ']';
+				}
 				os << '}';
 			}
 		}
@@ -705,11 +739,157 @@ namespace LLM_agent {
 		}
 
 		if (type == "inventory") {
-			long member = -1;
-			get_int(action_json, "member", member);
-			int p[1] = {static_cast<int>(member)};
-			ActionInventory(p);
-			return "{\"ok\":true,\"did\":\"inventory\"}";
+			// Report what the avatar is wearing (per slot) and carrying,
+			// rather than just opening the (headless-useless) gump.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			static const struct {
+				int         slot;
+				const char* name;
+			} slots[] = {
+					{head, "head"},     {torso, "torso"},   {legs, "legs"},
+					{feet, "feet"},     {rhand, "weapon"},  {lhand, "shield/hand"},
+					{belt, "belt"},     {amulet, "amulet"}, {cloak, "cloak"},
+					{gloves, "gloves"}, {lfinger, "ring"},  {backpack, "backpack"}};
+			std::ostringstream inv;
+			inv << "{\"ok\":true,\"did\":\"inventory\",\"worn\":{";
+			bool wfirst = true;
+			for (const auto& s : slots) {
+				Game_object* it = av->get_readied(s.slot);
+				if (it && !it->get_name().empty()) {
+					if (!wfirst) {
+						inv << ',';
+					}
+					wfirst = false;
+					inv << '"' << s.name << "\":\"" << json_escape(it->get_name()) << '"';
+				}
+			}
+			inv << "},\"carried\":[";
+			// Everything in the backpack/held containers.
+			bool  cfirst = true;
+			int   ccount = 0;
+			Container_game_object* pack = av->get_readied(backpack)
+					? av->get_readied(backpack)->as_container()
+					: nullptr;
+			std::vector<Container_game_object*> stack;
+			if (pack) {
+				stack.push_back(pack);
+			}
+			while (!stack.empty() && ccount < 40) {
+				Container_game_object* c = stack.back();
+				stack.pop_back();
+				Object_iterator it(c->get_objects());
+				Game_object* inner;
+				while ((inner = it.get_next()) != nullptr && ccount < 40) {
+					if (!inner->get_name().empty()) {
+						if (!cfirst) {
+							inv << ',';
+						}
+						cfirst = false;
+						inv << '"' << json_escape(inner->get_name()) << '"';
+						++ccount;
+					}
+					if (Container_game_object* ic = inner->as_container()) {
+						stack.push_back(ic);
+					}
+				}
+			}
+			inv << "]}";
+			return inv.str();
+		}
+
+		if (type == "close") {
+			// Close any open gump (e.g. a searched body/container) - equivalent
+			// to pressing the checkmark/close on the gump.
+			Gump_manager* gm = gwin->get_gump_man();
+			if (gm && gm->showing_gumps(true)) {
+				gm->close_all_gumps();
+				return "{\"ok\":true,\"did\":\"close\"}";
+			}
+			return "{\"ok\":true,\"did\":\"close\",\"note\":\"nothing open\"}";
+		}
+
+		if (type == "equip") {
+			// Ready (wear/wield) a named item. Looks in the avatar's inventory
+			// and nearby containers; add_readied() auto-places it in the correct
+			// slot based on the item's ready-type.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			string want;
+			if (!get_string(action_json, "name", want)) {
+				return "{\"ok\":false,\"error\":\"missing name\"}";
+			}
+			std::string wlow = want;
+			std::transform(wlow.begin(), wlow.end(), wlow.begin(), ::tolower);
+			auto matches = [&](Game_object* o) {
+				std::string l = o->get_name();
+				std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+				return !l.empty() && l.find(wlow) != std::string::npos;
+			};
+			// Search: avatar's own inventory first, then nearby containers.
+			std::vector<Container_game_object*> roots;
+			roots.push_back(av);    // Actor is-a container
+			const Tile_coord   at = av->get_tile();
+			Game_object_vector nearobjs;
+			Game_object::find_nearby(nearobjs, at, -1, 3, 128);
+			for (Game_object* o : nearobjs) {
+				if (o && o != av) {
+					if (Container_game_object* c = o->as_container()) {
+						roots.push_back(c);
+					}
+				}
+			}
+			Game_object* found = nullptr;
+			for (Container_game_object* root : roots) {
+				std::vector<Container_game_object*> stk{root};
+				while (!stk.empty() && !found) {
+					Container_game_object* c = stk.back();
+					stk.pop_back();
+					Object_iterator it(c->get_objects());
+					Game_object* inner;
+					while ((inner = it.get_next()) != nullptr) {
+						if (matches(inner)) {
+							found = inner;
+							break;
+						}
+						if (Container_game_object* ic = inner->as_container()) {
+							stk.push_back(ic);
+						}
+					}
+				}
+				if (found) {
+					break;
+				}
+			}
+			if (!found) {
+				return "{\"ok\":false,\"error\":\"item not found to equip\"}";
+			}
+			const std::string nm = found->get_name();
+			// Detach and ready it. Try each real equip slot; add_readied()
+			// validates that the item fits, so the first accepted slot is the
+			// correct one. Fall back to carrying it if none accept.
+			Game_object_shared keep;
+			found->remove_this(&keep);
+			static const int try_slots[] = {rhand, lhand, head, torso, legs, feet,
+											belt, amulet, cloak, gloves, lfinger,
+											rfinger, quiver, backpack};
+			for (int s : try_slots) {
+				if (!av->get_readied(s) && av->add_readied(found, s, false, false)) {
+					return "{\"ok\":true,\"did\":\"equip\",\"item\":\"" + json_escape(nm)
+						   + "\",\"slot\":" + std::to_string(s) + "}";
+				}
+			}
+			if (av->add(found, false, true)) {
+				return "{\"ok\":false,\"error\":\"could not wear '" + json_escape(nm)
+					   + "'; kept in pack\"}";
+			}
+			found->set_invalid();
+			found->move(at.tx, at.ty, at.tz);
+			return "{\"ok\":false,\"error\":\"could not equip '" + json_escape(nm) + "'\"}";
 		}
 
 		if (type == "stats") {
@@ -863,6 +1043,75 @@ namespace LLM_agent {
 			// Couldn't carry it - drop it back where the avatar stands.
 			best->set_invalid();
 			best->move(at.tx, at.ty, at.tz);
+			return "{\"ok\":false,\"error\":\"could not carry '" + json_escape(nm) + "'\"}";
+		}
+
+		if (type == "take") {
+			// Take an item from a nearby container/body (searching recursively
+			// through bags) into the avatar's inventory. Optional {name} picks
+			// a specific item; otherwise takes the first item found.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			string want;
+			get_string(action_json, "name", want);
+			std::string wlow = want;
+			std::transform(wlow.begin(), wlow.end(), wlow.begin(), ::tolower);
+			const Tile_coord   at = av->get_tile();
+			Game_object_vector objs;
+			Game_object::find_nearby(objs, at, -1, 3, 128);
+			// Gather all containers nearby (bodies, bags, chests).
+			std::vector<Container_game_object*> conts;
+			for (Game_object* obj : objs) {
+				if (obj) {
+					if (Container_game_object* c = obj->as_container()) {
+						conts.push_back(c);
+					}
+				}
+			}
+			// Walk the container tree to find a matching item.
+			Game_object* found = nullptr;
+			for (Container_game_object* root : conts) {
+				std::vector<Container_game_object*> stack{root};
+				while (!stack.empty() && !found) {
+					Container_game_object* c = stack.back();
+					stack.pop_back();
+					Object_iterator it(c->get_objects());
+					Game_object* inner;
+					while ((inner = it.get_next()) != nullptr) {
+						const std::string inm = inner->get_name();
+						bool match = !inm.empty();
+						if (match && !wlow.empty()) {
+							std::string l = inm;
+							std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+							match = l.find(wlow) != std::string::npos;
+						}
+						if (match) {
+							found = inner;
+							break;
+						}
+						if (Container_game_object* ic = inner->as_container()) {
+							stack.push_back(ic);
+						}
+					}
+				}
+				if (found) {
+					break;
+				}
+			}
+			if (!found) {
+				return "{\"ok\":false,\"error\":\"no such item in a nearby container\"}";
+			}
+			const std::string nm = found->get_name();
+			Game_object_shared keep;
+			found->remove_this(&keep);
+			if (av->add(found, false, true)) {
+				return "{\"ok\":true,\"did\":\"take\",\"item\":\"" + json_escape(nm) + "\"}";
+			}
+			// Couldn't carry it - drop at feet so it isn't lost.
+			found->set_invalid();
+			found->move(at.tx, at.ty, at.tz);
 			return "{\"ok\":false,\"error\":\"could not carry '" + json_escape(nm) + "'\"}";
 		}
 

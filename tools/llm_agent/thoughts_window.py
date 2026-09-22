@@ -29,6 +29,8 @@ class ThoughtsWindow:
         self._root: Optional["tk.Tk"] = None
         self._title = title
         self._panes = {}
+        # Hints the user types are queued here for the driver to consume.
+        self._hints: "queue.Queue[str]" = queue.Queue()
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -83,7 +85,34 @@ class ThoughtsWindow:
         _pane(right, "npcs", "NPC knowledge (who, notes)", 10)
         _pane(right, "stats", "Stats & memory", 6, mono=True)
 
+        # Hint bar: type a hint and Send it to the agent for the next turn(s).
+        hintrow = tk.Frame(self._root)
+        hintrow.pack(fill="x", padx=8, pady=(2, 8))
+        tk.Label(hintrow, text="Hint:", font=("Segoe UI", 10, "bold")).pack(side="left")
+        self._hint_entry = tk.Entry(hintrow, font=("Segoe UI", 10))
+        self._hint_entry.pack(side="left", fill="x", expand=True, padx=6)
+        self._hint_entry.bind("<Return>", lambda e: self._send_hint())
+        tk.Button(hintrow, text="Send hint", command=self._send_hint).pack(side="left")
+        self._hint_status = tk.Label(hintrow, text="", font=("Segoe UI", 8), fg="green")
+        self._hint_status.pack(side="left", padx=6)
+
         self._root.after(100, self._drain)
+
+    def _send_hint(self) -> None:
+        txt = self._hint_entry.get().strip()
+        if txt:
+            self._hints.put(txt)
+            self._hint_entry.delete(0, "end")
+            self._hint_status.config(text="sent")
+            if self._root is not None:
+                self._root.after(1500, lambda: self._hint_status.config(text=""))
+
+    def get_hint(self) -> Optional[str]:
+        """Return the next queued user hint (or None). Called by the driver."""
+        try:
+            return self._hints.get_nowait()
+        except queue.Empty:
+            return None
 
     def _drain(self) -> None:
         try:

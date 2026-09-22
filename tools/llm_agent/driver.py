@@ -73,6 +73,10 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   {"reason": "pick first reply", "action": {"type": "answer", "index": 0}}
 
 # STATE SCHEMA (what you receive each turn)
+  alert (string, optional)    - urgent guidance for THIS turn. If it contains a
+                                "HINT from your operator", follow that hint as
+                                your top priority this turn. Also warns you if
+                                your last move was blocked.
   world_loaded (bool)         - is a game world loaded
   player: {tx,ty (your tile), hp, dead, food}
   in_combat (bool)            - are you in combat mode
@@ -151,17 +155,25 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
             through: either use "goto" a tile/room beyond it (goto opens doors on
             the way automatically), OR move adjacent to the '+' door, "open" it,
             then "move" through the '/' opening. Never treat '+' as impassable.
-  search  - Open the nearest body or container to see/take what is inside.
-            params: none. Works on any body ('x' on the grid) or container/chest
-            to reveal its contents. After searching, use "pickup" to take items.
+  search  - Open the nearest body or container to see what is inside. params:
+            none. Its "contents" also appear in the "objects" list. After
+            searching, use "take" to grab items, then "close" it.
+  close   - Close an open container/body gump (like pressing the checkmark).
+            params: none. Do this when done looting so you can move again.
+  take    - Take an item OUT of a nearby body/container (searches inside bags
+            too) into your pack. params: {"name":"<item>"} for a specific item,
+            or omit to take the first. Use this to loot bodies/chests.
+  pickup  - Take an item off the GROUND (a loose world tile) into your pack.
+            params: {"name":"<item name>"} (optional). For items inside a
+            body/container use "take" instead.
+  inventory - Report what you are WEARING (per slot) and CARRYING. params: none.
+  equip   - Wear/wield an item you have (or one in a nearby container): it goes
+            into its correct slot (weapon, head, torso, legs, feet, shield,
+            belt, amulet, cloak, gloves, ring). params: {"name":"<item>"}.
   look    - Get a DETAILED description of your surroundings (setting, every
             nearby person with what you know about them, items on the ground,
             doors/exits, terrain features). params: none. Use it when you enter
             a new area or want to understand a scene before acting.
-  pickup  - Take a nearby item off the ground into your inventory.
-            params: {"name": "<item name>"} (optional; omit to grab the closest
-            takeable item). Use this to collect any useful item that appears as
-            '*' on the grid or in "objects" (keys, weapons, food, gold, etc.).
   answer  - Choose a reply during a conversation. params: {"index": <int>} (0-based
             into the "answers" list) OR {"text": "<answer text>"}.
             Only valid when conversation_active is true.
@@ -698,7 +710,23 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if args.dry_run:
         reason, action = scripted_reply(step, state)
     else:
-        res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb, session.pop("last_look", ""), session.get("last_bump", "")))
+        # Pull any user hint typed into the GUI; keep it active for a few turns.
+        if window.available:
+            h = window.get_hint()
+            if h:
+                session["hint"] = h
+                session["hint_ttl"] = 3
+                print(f"[{step:03d}] USER HINT: {h}")
+        alert_parts = []
+        if session.get("hint") and session.get("hint_ttl", 0) > 0:
+            alert_parts.append("HINT from your operator (follow it): " + session["hint"])
+            session["hint_ttl"] -= 1
+            if session["hint_ttl"] <= 0:
+                session.pop("hint", None)
+        if session.get("last_bump"):
+            alert_parts.append(session["last_bump"])
+        alert = "  ".join(alert_parts)
+        res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb, session.pop("last_look", ""), alert))
         reply = res["content"]
         reason, action = parse_reply(reply)
         # Track context usage so we can see if the prompt is bloating/truncating.
