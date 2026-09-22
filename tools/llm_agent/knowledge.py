@@ -328,11 +328,10 @@ class KnowledgeBase:
             return "exhausted"
         return "talked"
 
-    def npc_view(self, names: Optional[list] = None) -> dict:
+    def npc_view(self, names: Optional[list] = None, note_limit: int = 12) -> dict:
         """NPC notes for the prompt; if names given, only those, else all known.
-        Each entry now includes where we LAST SAW the character (tile coords),
-        so the agent can navigate back to a person it needs even after walking
-        away (use goto with their name, or these coordinates)."""
+        Each entry includes last_seen coords. note_limit caps how many recorded
+        lines per NPC are included (lowered under context pressure)."""
         src = self.npcs
         if names:
             lname = {n.lower() for n in names}
@@ -341,7 +340,7 @@ class KnowledgeBase:
         for n, r in src.items():
             entry = {"times_talked": r.get("times_talked", 0),
                      "status": self.talk_status(n),
-                     "notes": r.get("notes", [])[-12:]}
+                     "notes": r.get("notes", [])[-note_limit:]}
             pos = r.get("last_pos")
             if pos and pos[0] is not None:
                 # last_seen = tile where we most recently observed this NPC.

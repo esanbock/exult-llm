@@ -362,7 +362,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         ]
     if kb is not None:
         view["quests"] = kb.quest_view()
-        view["already_talked_to"] = sorted(kb.npcs.keys())
+        # Names of NPCs already met (helps avoid re-greeting). Cap it under
+        # context pressure - a long playthrough meets many NPCs and this list
+        # can bloat the prompt.
+        _met = sorted(kb.npcs.keys())
+        view["already_talked_to"] = _met if lvl < 2 else _met[:12]
         # Durable memory that is always kept regardless of context pressure:
         # a rolling episodic summary of older events (clues/story compressed),
         # and the operator's hint history so earlier steering isn't forgotten.
@@ -379,9 +383,10 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         places = kb.places_view(p.get("tx", 0), p.get("ty", 0), limit=place_n)
         if places:
             view["known_places"] = places
-        # NPC notes: focus on those currently nearby, plus recently noted.
+        # NPC notes: focus on those currently nearby. Fewer notes each under
+        # context pressure to keep the prompt within budget.
         nearby_names = [n.get("name") for n in nearby[:near_n] if n.get("name")]
-        notes = kb.npc_view(nearby_names)
+        notes = kb.npc_view(nearby_names, note_limit=(4 if lvl >= 2 else 12))
         if notes:
             view["npc_notes"] = notes
         # Growing window of recent CONVERSATION (story/clues live here) and a
@@ -883,23 +888,29 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # so clues survive compression instead of being dropped.
         ctx_max = session.get("ctx_max") or ollama.num_ctx or 8192
         last_pt = session.get("last_prompt_tokens", 0)
-        frac = (last_pt / ctx_max) if ctx_max else 0.0
-        if frac >= 0.85:
+        # Reserve headroom for the RESPONSE: if prompt+response would exceed
+        # num_ctx, Ollama returns an EMPTY reply (the observed 90-96% -> ''
+        # parse failures). Budget the prompt against a usable ceiling that
+        # leaves room to generate, and squeeze hard well before the real limit.
+        reserve = 500  # tokens kept free for the model's answer
+        usable = max(1, ctx_max - reserve)
+        frac = last_pt / usable
+        if frac >= 0.80:
             squeeze = 3
-        elif frac >= 0.70:
+        elif frac >= 0.60:
             squeeze = 2
-        elif frac >= 0.55:
+        elif frac >= 0.45:
             squeeze = 1
         else:
             squeeze = 0
         session["squeeze"] = squeeze
-        # When under real pressure, compress old dialogue into story_so_far and
-        # drop it from the raw window (keep the most recent exchanges intact).
+        # When under pressure, compress old dialogue into story_so_far and drop
+        # it from the raw window (keep the most recent exchanges intact).
         if squeeze >= 2:
-            keep = 10 if squeeze == 2 else 6
+            keep = 8 if squeeze == 2 else 4
             folded = kb.fold_dialogue_into_summary(keep_recent=keep)
             if folded:
-                print(f"[{step:03d}] context {int(frac*100)}%: folded {folded} old "
+                print(f"[{step:03d}] context {int(100*last_pt/ctx_max)}%: folded {folded} old "
                       f"dialogue lines into story_so_far (squeeze={squeeze})")
         res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb, session.pop("last_look", ""), alert, squeeze))
         reply = res["content"]
