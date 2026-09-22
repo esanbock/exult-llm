@@ -934,6 +934,17 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if state.get("conversation_in_progress") and npc_text:
         kb.add_journal(npc_text)
         cur_npc = session.get("current_npc", "?")
+        # If we don't have a reliable partner (conversation started via goto or
+        # some path that didn't set current_npc), infer it as the NEAREST
+        # non-party NPC. Without this, dialogue trees for such NPCs (e.g.
+        # Finnigan reached via goto) stay empty. Only infer when unset.
+        if cur_npc in ("?", "", None):
+            _cands = [n for n in (state.get("nearby") or [])
+                      if n.get("name") and not n.get("in_party") and not n.get("dead")]
+            if _cands:
+                _near = min(_cands, key=lambda n: abs(n.get("dx", 99)) + abs(n.get("dy", 99)))
+                cur_npc = _near["name"]
+                session["current_npc"] = cur_npc
         kb.record_npc_line(cur_npc, npc_text)
         # Capture the answer TOPICS offered now (the dialogue-tree branches) so
         # the agent has a persistent record of what it can still ask this NPC.
