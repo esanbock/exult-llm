@@ -174,42 +174,38 @@ class KnowledgeBase:
                 return True
         return False
 
-    def quest_view(self, max_actionable: int = 8, max_blocked: int = 6) -> dict:
-        """Priority-sorted quests split into actionable vs blocked, plus the
-        single top recommended quest to work on now.  Caps the number shown so
-        the prompt stays bounded even after a long playthrough with many quests
-        (the full set is always kept on disk)."""
+    def quest_view(self, max_open: int = 12) -> dict:
+        """One priority-sorted list of open quests (priority 1 = highest). We do
+        NOT partition into actionable/blocked - the agent decides what it can
+        work on. Prerequisites are surfaced as info (depends_on + which are
+        unmet) so the agent can reason about ordering itself. The full set is
+        always kept on disk; only the display is capped."""
         active = [q for q in self.quests.values() if q.get("status") not in ("done",)]
-        for q in active:
-            q_blocked = self._is_blocked(q)
-            q["_actionable"] = (q.get("status") == "active" and not q_blocked)
-        actionable = sorted([q for q in active if q["_actionable"]],
-                            key=lambda q: q.get("priority", 5))
-        blocked = sorted([q for q in active if not q["_actionable"]],
-                        key=lambda q: q.get("priority", 5))
+        active.sort(key=lambda q: q.get("priority", 5))
 
         def brief(q: dict) -> dict:
             b = {"id": q["id"], "title": q.get("title"), "priority": q.get("priority", 5),
-                "status": q.get("status", "active"),
-                "resolved": q.get("status") == "done"}
+                 "status": q.get("status", "active")}
             if q.get("npc"):
                 b["npc"] = q["npc"]
-            if q.get("depends_on"):
-                b["depends_on"] = q["depends_on"]
+            dep = q.get("depends_on") or []
+            if dep:
+                b["depends_on"] = dep
+                # Which prerequisites are not yet done (info only, not a gate).
+                unmet = [d for d in dep
+                         if (self.quests.get(d) or {}).get("status") != "done"]
+                if unmet:
+                    b["prereqs_unmet"] = unmet
             if q.get("notes"):
                 b["notes"] = q["notes"][-240:]
             return b
 
         done = [q for q in self.quests.values() if q.get("status") == "done"]
         return {
-            # No code-chosen "focus": the agent maintains its own prioritized
-            # list and decides what to work on. We just provide the prioritized
-            # actionable set (priority 1 = highest) for it to choose from.
-            "actionable": [brief(q) for q in actionable[:max_actionable]],
-            "blocked": [brief(q) for q in blocked[:max_blocked]],
+            # Single prioritized list; the agent chooses what to pursue.
+            "open": [brief(q) for q in active[:max_open]],
             # So the agent can refer back to what it finished and not redo it.
             "recently_resolved": [q.get("title") for q in done[-6:]],
-            "total_open": len(active),
             "unresolved": len(active),
             "resolved": len(done),
         }
@@ -223,22 +219,18 @@ class KnowledgeBase:
 
     # ----- human-readable summaries (for the inspector GUI) --------------
     def quests_pretty(self) -> str:
-        qv = self.quest_view(max_actionable=20, max_blocked=20)
-        lines = []
-        top = (qv.get("actionable") or [{}])[0]
-        lines.append("TOP PRIORITY: " + (top.get("title") or "(none)"))
-        lines.append(f"resolved {qv.get('resolved',0)} / unresolved {qv.get('unresolved',0)}")
-        lines.append("")
-        lines.append("ACTIONABLE:")
-        for q in qv.get("actionable", []):
+        qv = self.quest_view(max_open=30)
+        lines = [f"resolved {qv.get('resolved',0)} / unresolved {qv.get('unresolved',0)}", ""]
+        for q in qv.get("open", []):
             npc = f" [{q['npc']}]" if q.get("npc") else ""
-            lines.append(f"  P{q.get('priority',5)} {q['title']}{npc}")
-        if qv.get("blocked"):
+            prereq = ""
+            if q.get("prereqs_unmet"):
+                prereq = "  (needs: " + ",".join(q["prereqs_unmet"]) + ")"
+            lines.append(f"  P{q.get('priority',5)} {q['title']}{npc}{prereq}")
+        rr = qv.get("recently_resolved") or []
+        if rr:
             lines.append("")
-            lines.append("BLOCKED (needs prereq):")
-            for q in qv["blocked"]:
-                dep = ",".join(q.get("depends_on", []))
-                lines.append(f"  P{q.get('priority',5)} {q['title']} <- {dep}")
+            lines.append("DONE: " + "; ".join(rr))
         return "\n".join(lines)
 
     def npcs_pretty(self, nearby_names=None) -> str:

@@ -190,18 +190,19 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
   doors (list)                - nearby doors: {name, dx, dy, closed}
 
 # YOUR JOURNAL (you maintain this - it persists across turns)
-  quests: {focus, actionable[], blocked[], resolved, unresolved}
+  quests: {open[] (priority-sorted), recently_resolved[], resolved, unresolved}
       - Your quest log is YOUR plan: you choose which quest to work on and its
-        priority. Pursue an unresolved, non-blocked quest; add new ones as you
-        discover goals; and RESOLVE quests the moment you complete them so the
-        log stays accurate. Respect prerequisites.
-      - actionable: unresolved quests you can act on now, PRIORITY-SORTED
-        (priority 1=highest). Pick the one you judge best - normally the top,
-        but you may choose another if the situation calls for it.
-      - blocked: unresolved quests waiting on a prerequisite (see depends_on)
+        priority. Add new ones as you discover goals; RESOLVE quests the moment
+        you complete them so the log stays accurate.
+      - open: your unresolved quests, PRIORITY-SORTED (priority 1=highest). Pick
+        whichever you judge best to work on now.
+      - A quest may list "depends_on" (prerequisite quest ids) and
+        "prereqs_unmet" (those not yet done). This is INFORMATION for you to
+        reason about ordering - it does NOT stop you acting; you decide whether
+        a prerequisite really must come first.
       - recently_resolved: quests you already finished - do NOT redo these.
-      - Each quest: {id, title, priority, status(active|blocked|done),
-        resolved(true/false), npc (who it involves), depends_on[]}
+      - Each quest: {id, title, priority, status, npc (who it involves),
+        depends_on[], prereqs_unmet[]}
       - A quest with "npc" set can be pursued by going to/talking to that NPC.
   npc_notes: what you have recorded about nearby/known NPCs (their leads, wants),
       including "last_seen":{tx,ty} - the tile where you most recently saw each
@@ -332,8 +333,9 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
      answer choices appear. Do NOT "talk" again or "move" during a conversation.
   3. YOUR QUEST LOG IS YOUR PLAN - own it. You decide which quests matter and
      their priority (1=highest). Each turn, CONSULT "quests": pick whichever
-     unresolved, non-blocked quest you judge most important right now and act on
+     open quest you judge most important right now and act on
      it (talk to its npc if nearby, "goto" them if not, else act on its notes).
+     Consider each quest's prereqs_unmet when ordering, but you decide.
      You are free to reprioritise as you learn more (update_quest priority).
      - ADD a quest (or inline "new_quest") whenever you decide on a goal.
      - RESOLVE quests you complete: the moment a goal is achieved (you got the
@@ -764,7 +766,7 @@ def _pursue_focus_quest(state: dict, kb: "KnowledgeBase"):
     qv = kb.quest_view()
     # Consider the focus quest, then other actionable quests, skipping any whose
     # NPC is a party companion (they follow you, so "go to them" is pointless).
-    for focus in qv.get("actionable", []):
+    for focus in qv.get("open", []):
         if not focus:
             continue
         npc = focus.get("npc")

@@ -81,7 +81,7 @@ class ThoughtsWindow:
         _pane(left, "dialog", "Dialog / characters / objects on screen", 8)
 
         # RIGHT: inspector
-        _pane(right, "quests", "Quest log (focus / actionable / blocked)", 12, mono=True)
+        _pane(right, "quests", "Quest log (priority-sorted; prereqs shown)", 12, mono=True)
 
         # Knowledge notebook: expandable trees for Topics and Characters.
         nb = ttk.Notebook(right)
