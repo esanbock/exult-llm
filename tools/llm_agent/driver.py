@@ -1472,17 +1472,41 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if isinstance(action, dict) and action.get("type") == "goto" and "tx" in action:
         _pp = state.get("player") or {}
         tgt = (action["tx"], action["ty"])
-        # If the previous goto to (about) this same target didn't move us, or the
-        # target is basically our current tile, abandon it and explore instead.
         last_goto = session.get("last_goto_target")
         no_progress = (session.get("last_goto_pos") == (_pp.get("tx"), _pp.get("ty"))
                        and last_goto is not None
                        and abs(last_goto[0]-tgt[0]) + abs(last_goto[1]-tgt[1]) <= 3)
         near_here = abs(tgt[0]-_pp.get("tx",0)) + abs(tgt[1]-_pp.get("ty",0)) <= 2
         if near_here or no_progress:
-            action = _explore_far(state, session, True)
-            reason = "(guard) goto not making progress; exploring instead"
+            # Count consecutive no-progress gotos. Re-issuing gotos that don't
+            # move us just loops forever (goto returns ok but the avatar never
+            # advances), so ESCALATE: after a couple of failures, take a direct
+            # single-tile step in the most-open grid direction instead of yet
+            # another goto. If stepping also fails repeatedly, cycle directions.
+            n = session.get("goto_stall", 0) + 1
+            session["goto_stall"] = n
+            rows = (state.get("grid") or "").split("\n")
+            cx = cy = 12
+            def _cell(dx, dy):
+                x, y = cx + dx, cy + dy
+                if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
+                    return rows[y][x]
+                return "#"
+            WALK = ".*&C/xno~"
+            deltas = [("n",0,-1),("e",1,0),("s",0,1),("w",-1,0),
+                      ("ne",1,-1),("se",1,1),("sw",-1,1),("nw",-1,-1)]
+            # Rank directions by how open they are, rotating start by stall count
+            # so we don't keep re-picking a blocked heading.
+            open_dirs = [(d,dx,dy) for (d,dx,dy) in deltas if _cell(dx,dy) in WALK]
+            if open_dirs:
+                pick = open_dirs[n % len(open_dirs)]
+                action = {"type": "move", "dir": pick[0], "speed": 150}
+                reason = f"(guard) goto stalled; stepping {pick[0]} directly"
+            else:
+                action = _explore_far(state, session, True)
+                reason = "(guard) goto stalled; no open step, exploring"
         else:
+            session["goto_stall"] = 0
             session["last_goto_target"] = tgt
             session["last_goto_pos"] = (_pp.get("tx"), _pp.get("ty"))
 
