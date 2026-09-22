@@ -582,26 +582,15 @@ class KnowledgeBase:
     )
 
     def auto_note_from_dialogue(self, npc: str, said: str) -> Optional[str]:
-        """Passively capture durable knowledge from an NPC line without relying
-        on the model to call meta-tools: always save it as an NPC note, and if
-        it looks like a task/lead, record a lightweight quest.  Returns a quest
-        id if one was created/updated, else None."""
+        """Passively capture what an NPC said as an NPC NOTE (deduped/filtered).
+        We deliberately do NOT auto-create quests here anymore: the generic
+        'Follow up on what X said' stubs flooded the quest log with noise and
+        weren't strategic. Real quests should come from the LLM's own reasoning
+        via the add_quest meta-tool. Returns None (kept for call compatibility)."""
         if not npc or npc == "?" or not said:
             return None
-        # Trim game markup and whitespace.
         clean = said.replace("*", " ").strip()
         if not clean:
             return None
-        # 1) Always remember what this NPC said (bounded, deduped in note_npc).
         self.note_npc(npc, clean[:200])
-        # 2) Heuristic quest capture from task-like lines.
-        low = clean.lower()
-        if any(h in low for h in self._QUEST_HINTS) and len(clean) > 25:
-            qid = "lead_" + _slug(npc)
-            title = f"Follow up on what {npc} said"
-            # Keep the most recent task-like line as the quest's notes.
-            self.add_quest(title=title, priority=4,
-                          notes=f"{npc}: {clean[:180]}", qid=qid, status="active",
-                          npc=npc)
-            return qid
         return None

@@ -229,15 +229,21 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   add_quest    - Record a goal you discovered. params: {"title": "...",
                  "priority": 1-9 (1=highest), "notes": "...",
                  "depends_on": ["<quest id>", ...] (optional prerequisites)}.
-                 Use when an NPC gives you a task or you infer a goal. If quest B
-                 requires finishing quest A first, set B.depends_on=["<A id>"].
+                 Use whenever you form an intention or infer a goal from what
+                 you observe or are told - e.g. "investigate the docks", "find
+                 the man who fled", "ask the Mayor about the murder". If your
+                 REASONING this turn identifies something you want to do next,
+                 capture it as a quest so you remember and can prioritise it. If
+                 quest B requires finishing quest A first, set B.depends_on=["<A id>"].
   update_quest - Change a quest. params: {"id": "<quest id>", "status":
                  "active|blocked|done", "priority": n, "notes": "...",
-                 "depends_on": [...]}. Mark a quest "done" when you complete it.
+                 "depends_on": [...]}. Mark a quest "done" when you complete it,
+                 and add notes as you learn more about it.
   note_npc     - Save a note about an NPC. params: {"name": "...", "note": "..."}.
                  Record leads, what they want, or what they told you.
-  (These journal tools do not advance the game, so after using one, keep taking
-   game actions. Use them sparingly - only to capture genuinely new information.)
+  (These journal tools do not advance the game. Prefer capturing a quest the
+   moment you decide on a goal - a well-kept quest log is how you stay strategic
+   across many turns. After using one, take a game action the same or next turn.)
 
 # HOW TO DECIDE (policy)
   1. If conversation_active is true -> use "answer" (pick the index of the reply
