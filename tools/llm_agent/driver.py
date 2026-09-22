@@ -90,6 +90,10 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
                                 get number_min, number_max, number_current. Use
                                 the "set_number" tool to answer it.
   npc_text (string|null)      - the last thing an NPC said to you
+  ambient_speech (list)       - things characters/creatures say OUT LOUD near you
+                                without a formal conversation ({who, said}), e.g.
+                                a cat's "Meeow" or a townsperson's remark. Notice
+                                these - they can be hints or reactions.
   answers (list[string])      - the reply choices you may pick (only when
                                 conversation_active is true)
   nearby (list)               - NPCs you can see: {name, dx, dy, in_party, status}
@@ -170,6 +174,12 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
             params: {"name":"<item name>"} (optional). For items inside a
             body/container use "take" instead.
   inventory - Report what you are WEARING (per slot) and CARRYING. params: none.
+  annotate - Mark the current location (or a given tile) on your map with a
+            label so you can return later. params: {"label":"<name>"} (uses your
+            current position) or add {"tx","ty"} for a specific tile, and an
+            optional {"note"}. The label then appears in known_places and you can
+            "goto" it by name. Mark important spots (e.g. a crime scene, a shop,
+            a quest location) so you never lose them.
   equip   - Wear/wield an item you have (or one in a nearby container): it goes
             into its correct slot (weapon, head, torso, legs, feet, shield,
             belt, amulet, cloak, gloves, ring). params: {"name":"<item>"}.
@@ -266,6 +276,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "conversation_active": state.get("conversation_active"),
         "npc_text": state.get("npc_text") if in_convo else None,
         "answers": state.get("answers") if in_convo else [],
+        "ambient_speech": state.get("ambient_speech") or [],
         "nearby": [
             {"name": n.get("name"), "dx": n.get("dx"), "dy": n.get("dy"),
              "in_party": n.get("in_party"),
@@ -316,6 +327,13 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
 def format_dialog(state: dict) -> str:
     """Human-readable dialog/characters/objects panel for the thoughts window."""
     lines = []
+    amb = state.get("ambient_speech") or []
+    if amb:
+        lines.append("Overheard:")
+        for a in amb[:6]:
+            who = a.get("who") or "someone"
+            lines.append(f'  {who}: "{a.get("said")}"')
+        lines.append("")
     if state.get("conversation_active"):
         lines.append("== CONVERSATION ACTIVE ==")
     npc_text = state.get("npc_text")
@@ -746,6 +764,23 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if window.available and args.dry_run:
         window.set_thinking(reason)
 
+    # --- "annotate": mark a location on the mental map so the agent can find
+    #     its way back later (via goto <label> or known_places). Records the
+    #     given tile, or the avatar's current position if none given.
+    if isinstance(action, dict) and action.get("type") == "annotate":
+        label = str(action.get("label") or action.get("name") or "").strip()
+        pp = state.get("player") or {}
+        tx = action.get("tx", pp.get("tx", 0))
+        ty = action.get("ty", pp.get("ty", 0))
+        if label:
+            kb.record_place(label, tx, ty, kind="marked", note=str(action.get("note", "")))
+            kb.record_action(f"annotated '{label}' @({tx},{ty})")
+            if window.available:
+                window.set_action(f"[annotate] {label} @ ({tx},{ty})")
+            print(f"[{step:03d}] annotate: {label} @ ({tx},{ty})")
+        action = {"type": "wait"}
+        reason = f"(marked '{label}' on the map)"
+
     # --- "look": produce a detailed description of the surroundings. It does
     #     not advance the game; we record it so the model sees it next turn and
     #     avoids looking repeatedly.
@@ -1139,6 +1174,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # dialogue, so allow revisiting them.
     if atype in ("pickup", "search") and isinstance(result, dict) and result.get("ok"):
         kb.reset_talk_gate()
+    # A searched body/container is a notable spot -> auto-mark it so the agent
+    # can find its way back even if it never annotates on its own.
+    if atype == "search" and isinstance(result, dict) and result.get("ok"):
+        pp = state.get("player") or {}
+        tgt = result.get("target", "searched spot")
+        kb.record_place(f"where I searched {tgt}", pp.get("tx", 0), pp.get("ty", 0),
+                        kind="marked")
 
     p = state.get("player") or {}
     print(f"[{step:03d}] pos=({p.get('tx')},{p.get('ty')}) "

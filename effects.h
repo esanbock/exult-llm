@@ -30,6 +30,8 @@
 #include <list>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 class Xform_palette;
 class PathFinder;
@@ -66,6 +68,10 @@ public:
 	void                            remove_all_effects(bool repaint = false);
 	void                            remove_text_effects();
 	void                            update_dirty_text();
+
+	// Snapshot of on-screen floating text (ambient speech/barks) for the LLM
+	// agent bridge: pairs of (message, speaker-object-or-null).
+	std::vector<std::pair<std::string, Game_object*>> get_active_texts() const;
 	// Remove just the weather.
 	void remove_weather_effects(int dist = 0);
 	void remove_usecode_lightning();
@@ -257,6 +263,15 @@ public:
 	// Check for matching item.
 	bool is_text(Game_object* it) {
 		return it == item.lock().get();
+	}
+
+	// Read the message and the speaker (for the LLM agent bridge).
+	const std::string& get_msg() const {
+		return msg;
+	}
+
+	Game_object* get_speaker() const {
+		return item.lock().get();
 	}
 
 	virtual void update_dirty();

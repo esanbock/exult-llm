@@ -201,6 +201,18 @@ void Effects_manager::remove_text_effects() {
 	gwin->set_all_dirty();
 }
 
+// Snapshot of on-screen floating text (ambient speech/barks) for the LLM agent.
+std::vector<std::pair<std::string, Game_object*>>
+Effects_manager::get_active_texts() const {
+	std::vector<std::pair<std::string, Game_object*>> out;
+	for (const auto& t : texts) {
+		if (t) {
+			out.emplace_back(t->get_msg(), t->get_speaker());
+		}
+	}
+	return out;
+}
+
 /**
  *  Remove weather effects.
  *  @param  dist    Only remove those from eggs at least this far away.

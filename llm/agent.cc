@@ -42,6 +42,7 @@
 #include "contain.h"
 #include "objiter.h"
 #include "ready.h"
+#include "effects.h"
 
 #include <SDL3/SDL.h>
 
@@ -650,6 +651,28 @@ namespace LLM_agent {
 		os << ']';
 		// The most recent line the NPC spoke, if any.
 		os << ',' << json_str("npc_text", conv ? conv->get_last_npc_text() : std::string());
+
+		// Ambient speech: floating text shown over characters/objects outside a
+		// formal conversation (e.g. a cat's "Meeow", townsfolk barks, warnings).
+		os << ',' << "\"ambient_speech\":[";
+		{
+			Effects_manager* eff = gwin->get_effects();
+			bool             afirst = true;
+			if (eff) {
+				for (auto& [txt, speaker] : eff->get_active_texts()) {
+					if (txt.empty()) {
+						continue;
+					}
+					std::string who = speaker ? speaker->get_name() : std::string("");
+					if (!afirst) {
+						os << ',';
+					}
+					afirst = false;
+					os << '{' << json_str("who", who) << ',' << json_str("said", txt) << '}';
+				}
+			}
+		}
+		os << ']';
 
 		// Active numeric-input prompt (slider + checkmark), e.g. "how many?".
 		Slider_gump* sg = Slider_gump::get_active();
