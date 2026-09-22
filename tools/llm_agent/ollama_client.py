@@ -71,7 +71,21 @@ class OllamaClient:
     ) -> dict:
         """Like chat() but returns {content, prompt_tokens, response_tokens,
         total_tokens} using Ollama's own token counts. If the model was given a
-        num_ctx, we also include it so callers can compute % of context used."""
+        num_ctx, we also include it so callers can compute % of context used.
+
+        Retries ONCE if the model returns an empty completion (Ollama sometimes
+        yields a blank message, especially with format=json); the retry nudges
+        temperature up slightly to break the degenerate generation."""
+        result = self._chat_once(system, user, force_json, temperature)
+        if not (result.get("content") or "").strip():
+            # One retry with a small temperature bump.
+            result = self._chat_once(system, user, force_json,
+                                     min(1.0, temperature + 0.3))
+            result["retried"] = True
+        return result
+
+    def _chat_once(self, system: str, user: str, force_json: bool,
+                   temperature: float) -> dict:
         payload = {
             "model": self.model,
             "messages": [

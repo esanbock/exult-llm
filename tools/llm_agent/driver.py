@@ -78,6 +78,16 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
   {"reason": "greet the nearby NPC", "action": {"type": "talk", "name": "Iolo"}}
   {"reason": "pick first reply", "action": {"type": "answer", "index": 0}}
 
+You MAY also add an optional "new_quest" field in the SAME reply to record a
+goal without spending your action - it does not use up your turn:
+  {"reason": "Iolo says a man fled to the docks - I should investigate",
+   "action": {"type": "answer", "index": 3},
+   "new_quest": {"title": "Investigate the docks for the fleeing man",
+                 "priority": 2, "notes": "Iolo saw a man run toward the dock"}}
+"new_quest" can be one quest object or a list of them. To mark a goal finished,
+add "resolve_quest": "<quest id or title>". Capture a quest whenever your
+reasoning identifies something you intend to do - keep your quest log current.
+
 # STATE SCHEMA (what you receive each turn)
   alert (string, optional)    - urgent guidance for THIS turn. If it contains a
                                 "HINT from your operator", follow that hint as
@@ -882,6 +892,30 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         kb.record_turn(parsed_ok)
         if not parsed_ok:
             print(f"[{step:03d}] parse-fail: {reply[:120]!r}")
+        # Inline quest capture: the model may include a "new_quest" (or "quests")
+        # field ALONGSIDE its action, so it can record a goal WITHOUT spending
+        # its one game action on a journal tool. Accept a dict or list of dicts
+        # with at least a title; also accept "resolve_quest" to mark one done.
+        try:
+            _obj = json.loads(reply)
+        except Exception:
+            _obj = None
+        if isinstance(_obj, dict):
+            _nq = _obj.get("new_quest") or _obj.get("quests")
+            _items = _nq if isinstance(_nq, list) else ([_nq] if isinstance(_nq, dict) else [])
+            for q in _items:
+                if isinstance(q, dict) and q.get("title"):
+                    qid = kb.add_quest(title=str(q["title"]),
+                                       priority=q.get("priority", 5),
+                                       notes=str(q.get("notes", "")),
+                                       depends_on=q.get("depends_on"),
+                                       status=q.get("status", "active"))
+                    print(f"[{step:03d}] inline add_quest: {q['title']!r} -> {qid}")
+            _rq = _obj.get("resolve_quest")
+            if isinstance(_rq, str) and _rq:
+                kb.resolve_quest(_rq)
+                kb.reset_talk_gate()
+                print(f"[{step:03d}] inline resolve_quest: {_rq}")
         # Track context usage so we can see if the prompt is bloating/truncating.
         pt = res.get("prompt_tokens", 0)
         session["last_prompt_tokens"] = pt
