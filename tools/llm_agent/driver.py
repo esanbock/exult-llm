@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -73,20 +74,24 @@ told, as a curious, capable adventurer would.
 # PROTOCOL
 Each turn you receive a STATE object (schema below) and must reply with EXACTLY
 one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
-"action" (do NOT nest them under a "params" key):
+"action" (do NOT nest them under a "params" key). Keep "reason" to ONE short
+sentence (~20 words max) - long reasons can get cut off and waste the turn:
   {"reason": "<one short sentence>", "action": {"type": "move", "dir": "n"}}
   {"reason": "greet the nearby NPC", "action": {"type": "talk", "name": "Iolo"}}
   {"reason": "pick first reply", "action": {"type": "answer", "index": 0}}
 
 You MAY also add an optional "new_quest" field in the SAME reply to record a
 goal without spending your action - it does not use up your turn:
-  {"reason": "Iolo says a man fled to the docks - I should investigate",
+  {"reason": "Iolo says his friend Finnigan the Mayor may know more",
    "action": {"type": "answer", "index": 3},
-   "new_quest": {"title": "Investigate the docks for the fleeing man",
-                 "priority": 2, "notes": "Iolo saw a man run toward the dock"}}
-"new_quest" can be one quest object or a list of them. To mark a goal finished,
-add "resolve_quest": "<quest id or title>". Capture a quest whenever your
-reasoning identifies something you intend to do - keep your quest log current.
+   "new_quest": {"title": "Ask Mayor Finnigan about the murder",
+                 "priority": 2, "notes": "Iolo suggested talking to Finnigan",
+                 "depends_on": ["investigate_the_trinsic_murder"]}}
+"new_quest" can be one quest object or a list. Break a big goal into smaller
+sub-quests (use depends_on with the parent quest's id, which is its title
+lower-cased with underscores). To mark a goal finished, add "resolve_quest":
+"<quest id or title>". Capture a quest whenever your reasoning names something
+you intend to do - keep your quest log current and prioritized.
 
 # STATE SCHEMA (what you receive each turn)
   alert (string, optional)    - urgent guidance for THIS turn. If it contains a
@@ -443,6 +448,19 @@ def parse_reply(text: str) -> tuple[str, dict]:
                 obj = json.loads(text[start : end + 1])
             except json.JSONDecodeError:
                 obj = None
+        # Repair a TRUNCATED reply (model hit the response token limit mid-JSON,
+        # e.g. an over-long "reason" that never closes). Try to salvage the
+        # action by extracting a complete "action":{...} object even if the
+        # outer object is unterminated.
+        if obj is None and start != -1:
+            m = re.search(r'"action"\s*:\s*(\{[^{}]*\})', text)
+            if m:
+                try:
+                    act = json.loads(m.group(1))
+                    rm = re.search(r'"reason"\s*:\s*"([^"]*)', text)
+                    return (rm.group(1) if rm else "(recovered)", act)
+                except json.JSONDecodeError:
+                    pass
     if not isinstance(obj, dict):
         return ("(could not parse reply)", {"type": "wait"})
     reason = str(obj.get("reason", ""))
