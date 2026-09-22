@@ -1123,7 +1123,12 @@ namespace LLM_agent {
 
 			const Tile_coord   at = av->get_tile();
 			Game_object_vector objs;
-			Game_object::find_nearby(objs, at, -1, 3, 128);
+			// Reach a bit further than before (was 3): items shown in the
+			// observation (radius up to 12) were often just out of pickup
+			// range, causing "no takeable object nearby" even though the agent
+			// could see them. 6 tiles is a reasonable arm's reach for a tile
+			// game and matches how the pathfinder gets you adjacent.
+			Game_object::find_nearby(objs, at, -1, 6, 128);
 			Game_object* best   = nullptr;
 			int          best_d = 1 << 30;
 			for (Game_object* obj : objs) {

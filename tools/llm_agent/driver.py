@@ -1521,48 +1521,57 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = _explore_far(state, session, wedged)
                     reason = f"(guard) '{nm}' unknown; exploring to find it"
 
-    # A goto that targets (almost) our own tile is a no-op that loops forever.
-    # Redirect it to real exploration.
+    # A goto that isn't actually moving the avatar loops forever (the engine
+    # sometimes reports ok/stepped for a goto but the avatar never advances,
+    # while a plain "move" reliably walks several tiles). So: if we didn't move
+    # since last turn, convert this goto into a direct MOVE toward the target -
+    # move is the dependable primitive. Also handle a goto to ~our own tile.
     if isinstance(action, dict) and action.get("type") == "goto" and "tx" in action:
         _pp = state.get("player") or {}
+        here = (_pp.get("tx"), _pp.get("ty"))
         tgt = (action["tx"], action["ty"])
-        last_goto = session.get("last_goto_target")
-        no_progress = (session.get("last_goto_pos") == (_pp.get("tx"), _pp.get("ty"))
-                       and last_goto is not None
-                       and abs(last_goto[0]-tgt[0]) + abs(last_goto[1]-tgt[1]) <= 3)
-        near_here = abs(tgt[0]-_pp.get("tx",0)) + abs(tgt[1]-_pp.get("ty",0)) <= 2
-        if near_here or no_progress:
-            # Count consecutive no-progress gotos. Re-issuing gotos that don't
-            # move us just loops forever (goto returns ok but the avatar never
-            # advances), so ESCALATE: after a couple of failures, take a direct
-            # single-tile step in the most-open grid direction instead of yet
-            # another goto. If stepping also fails repeatedly, cycle directions.
-            n = session.get("goto_stall", 0) + 1
-            session["goto_stall"] = n
+        # Did we move at all since the previous turn?
+        moved = here != session.get("prev_pos_for_goto")
+        session["prev_pos_for_goto"] = here
+        near_here = abs(tgt[0]-here[0]) + abs(tgt[1]-here[1]) <= 1
+        last_was_goto = session.get("last_action_type") == "goto"
+        if near_here:
+            # Target is basically where we stand - explore instead of no-op.
+            action = _explore_far(state, session, wedged)
+            reason = "(guard) goto target is here; exploring instead"
+        elif last_was_goto and not moved:
+            # The previous goto didn't move us. Drive a reliable MOVE toward the
+            # target's compass direction, preferring an open grid cell.
+            dx = (1 if tgt[0] > here[0] else -1 if tgt[0] < here[0] else 0)
+            dy = (1 if tgt[1] > here[1] else -1 if tgt[1] < here[1] else 0)
             rows = (state.get("grid") or "").split("\n")
             cx = cy = 12
-            def _cell(dx, dy):
-                x, y = cx + dx, cy + dy
+            def _cell(ddx, ddy):
+                x, y = cx + ddx, cy + ddy
                 if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
                     return rows[y][x]
                 return "#"
             WALK = ".*&C/xno~"
-            deltas = [("n",0,-1),("e",1,0),("s",0,1),("w",-1,0),
-                      ("ne",1,-1),("se",1,1),("sw",-1,1),("nw",-1,-1)]
-            # Rank directions by how open they are, rotating start by stall count
-            # so we don't keep re-picking a blocked heading.
-            open_dirs = [(d,dx,dy) for (d,dx,dy) in deltas if _cell(dx,dy) in WALK]
-            if open_dirs:
-                pick = open_dirs[n % len(open_dirs)]
-                action = {"type": "move", "dir": pick[0], "speed": 150}
-                reason = f"(guard) goto stalled; stepping {pick[0]} directly"
+            name_of = {(0,-1):"n",(0,1):"s",(1,0):"e",(-1,0):"w",
+                       (1,-1):"ne",(1,1):"se",(-1,1):"sw",(-1,-1):"nw"}
+            # Try the intended diagonal/cardinal toward target, then fall back
+            # to any open neighbor rotating by a stall counter.
+            n = session.get("goto_stall", 0) + 1
+            session["goto_stall"] = n
+            cand = [(dx,dy),(dx,0),(0,dy)]
+            pick = next((c for c in cand if c != (0,0) and _cell(*c) in WALK), None)
+            if pick is None:
+                alld = [(0,-1),(1,0),(0,1),(-1,0),(1,-1),(1,1),(-1,1),(-1,-1)]
+                opens = [c for c in alld if _cell(*c) in WALK]
+                pick = opens[n % len(opens)] if opens else None
+            if pick:
+                action = {"type": "move", "dir": name_of[pick], "speed": 180}
+                reason = f"(guard) goto not moving; stepping {name_of[pick]} toward target"
             else:
                 action = _explore_far(state, session, True)
-                reason = "(guard) goto stalled; no open step, exploring"
+                reason = "(guard) goto stuck; no open step, exploring"
         else:
             session["goto_stall"] = 0
-            session["last_goto_target"] = tgt
-            session["last_goto_pos"] = (_pp.get("tx"), _pp.get("ty"))
 
     # "talk" is a top-level command, not an act() action.
     if isinstance(action, dict) and action.get("type") == "talk":
@@ -1577,6 +1586,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     _atype = action.get("type") if isinstance(action, dict) else "?"
     _ok = result.get("ok") if isinstance(result, dict) else None
     kb.record_tool(_atype, _ok)
+    session["last_action_type"] = _atype
     if window.available:
         window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
 
