@@ -90,8 +90,8 @@ class ThoughtsWindow:
         # Topics tree: topic -> mentions (npc: line)
         topic_frame = tk.Frame(nb)
         self._topic_tree = ttk.Treeview(topic_frame, columns=("meta",), show="tree headings")
-        self._topic_tree.heading("#0", text="Topic / mention")
-        self._topic_tree.heading("meta", text="npcs / lines")
+        self._topic_tree.heading("#0", text="Topic / note (LLM's own)")
+        self._topic_tree.heading("meta", text="notes")
         self._topic_tree.column("meta", width=90, anchor="e")
         _tsb = ttk.Scrollbar(topic_frame, orient="vertical", command=self._topic_tree.yview)
         self._topic_tree.configure(yscrollcommand=_tsb.set)
@@ -183,21 +183,21 @@ class ThoughtsWindow:
         return out
 
     def _rebuild_topics(self, topics: list) -> None:
-        """topics: list of {name, npcs, mentions:[{npc,said}]} sorted by the
-        driver (most-discussed first)."""
+        """topics: list of {name, notes:[{step,note}]} - LLM-authored, most
+        recently updated first (the agent's evolving understanding)."""
         tree = self._topic_tree
         keep_open = self._expanded_ids(tree)
         tree.delete(*tree.get_children(""))
         for t in topics or []:
             name = t.get("name", "?")
-            ments = t.get("mentions", [])
-            meta = f"{t.get('npcs', 0)}n / {len(ments)}l"
+            notes = t.get("notes", [])
+            meta = f"{len(notes)} notes"
             parent = tree.insert("", "end", text=name, values=(meta,),
                                  open=(name in keep_open))
-            for m in ments:
-                who = m.get("npc", "?")
-                said = (m.get("said", "") or "")[:120]
-                tree.insert(parent, "end", text=f"{who}: {said}", values=("",))
+            for n in notes:
+                step = n.get("step", "")
+                note = (n.get("note", "") or "")[:140]
+                tree.insert(parent, "end", text=f"@{step}: {note}", values=("",))
 
     def _rebuild_chars(self, chars: list) -> None:
         """chars: list of {name, times_talked, transcript:[{said|me}],

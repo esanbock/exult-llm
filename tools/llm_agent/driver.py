@@ -110,6 +110,18 @@ lower-cased with underscores). To mark a goal finished, add "resolve_quest":
 "<quest id or title>". Capture a quest whenever your reasoning names something
 you intend to do - keep your quest log current and prioritized.
 
+You may ALSO add an optional "topic" field in the same reply to build your own
+understanding of recurring subjects (people, groups, places, mysteries) as you
+reason - this is YOUR notebook of insights, and it does not use your turn:
+  {"action": {"type": "answer", "index": 2},
+   "topic": {"name": "The Fellowship",
+             "note": "A popular group; several murder victims had joined it - suspicious"},
+   "reason": "ask about the Fellowship"}
+"topic" can be one object or a list, each {name, note}. Add or update a topic
+whenever you form a theory or learn something meaningful about a subject; add a
+NEW note to the same topic name as your understanding evolves, so your thinking
+accumulates over time. Use "recall" with a topic name to review all your notes.
+
 # STATE SCHEMA (what you receive each turn)
   alert (string, optional)    - urgent guidance for THIS turn. If it contains a
                                 "HINT from your operator", follow that hint as
@@ -196,11 +208,11 @@ you intend to do - keep your quest log current and prioritized.
       gates, shops, etc.), nearest first, each {name, kind, dx, dy}. You can
       "goto" any of these by name to travel back to them - useful for returning
       to a town, building, or quest location you found earlier.
-  known_topics: cross-cutting world SUBJECTS you have encountered (e.g. the
-      Fellowship, a person's name, a place, an event), each {topic, npcs (how
-      many people discussed it), learned (lines you have)}. Use "recall" on a
-      topic to read everything learned about it, and ask NPCs about topics that
-      seem important but you know little about.
+  known_topics: YOUR OWN notebook of subjects you have been thinking about
+      (people, groups, places, mysteries), each {topic, notes (how many notes
+      you've written)}. These are authored by you via the "topic" field. Use
+      "recall" on a topic to re-read all your notes on it, and keep adding notes
+      as your understanding grows.
   recent_dialogue: a running transcript of the last conversation exchanges
       ({"npc":name,"said":...} for NPC lines, {"me":...} for your replies).
       Use this to remember what you have learned and what was said earlier.
@@ -923,13 +935,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             # Cross-cutting TOPIC capture: file this line under the subject the
             # agent last asked about (the chosen dialogue topic), so knowledge
             # about themes like "the Fellowship" aggregates across every NPC.
-            _cur_topic = session.get("current_topic")
-            if _cur_topic:
-                kb.note_topic(_cur_topic, cur_npc, npc_text, step)
-        # Register the offered answer-choices as known topics (a menu of world
-        # subjects), even ones not yet asked.
-        if state.get("answers"):
-            kb.register_topics(state.get("answers"))
+            # NOTE: topics are now authored solely by the LLM (via the add_topic
+            # tool) so the topic list reflects its own evolving understanding -
+            # we no longer auto-file verbatim dialogue into topics here.
     if not state.get("conversation_in_progress"):
         session.pop("current_topic", None)
 
@@ -1058,6 +1066,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 kb.resolve_quest(_rq)
                 kb.reset_talk_gate()
                 print(f"[{step:03d}] inline resolve_quest: {_rq}")
+            # Inline LLM-authored TOPICS: {"topic":"Fellowship","note":"..."} or a
+            # list. Topics now come ONLY from the LLM, so the topic list shows
+            # its own thinking accumulating over time.
+            _tp = _obj.get("topic") or _obj.get("topics") or _obj.get("add_topic")
+            _tp_items = _tp if isinstance(_tp, list) else ([_tp] if _tp else [])
+            for t in _tp_items:
+                if isinstance(t, dict) and (t.get("name") or t.get("topic")):
+                    tname = str(t.get("name") or t.get("topic"))
+                    tkey = kb.add_topic(tname, str(t.get("note", "")), step)
+                    print(f"[{step:03d}] inline add_topic: {tname!r} -> {tkey}")
+                elif isinstance(t, str) and t.strip():
+                    kb.add_topic(t.strip(), "", step)
         # Track context usage so we can see if the prompt is bloating/truncating.
         pt = res.get("prompt_tokens", 0)
         session["last_prompt_tokens"] = pt
@@ -1086,8 +1106,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             trec = kb.recall_topic(who)
             if trec.get("known"):
                 rec = {"topic": trec["name"], "known": True,
-                       "npcs_who_mentioned": trec.get("npcs_who_mentioned", []),
-                       "mentions": trec.get("mentions", [])}
+                       "notes": trec.get("notes", [])}
         session["recalled"] = rec
         kb.record_action(f"recalled {who}")
         if window.available:

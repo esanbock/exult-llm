@@ -427,41 +427,33 @@ class KnowledgeBase:
         "hello", "thanks", "thank you", "nothing", "who", "what", "why", "how",
     }
 
-    def note_topic(self, subject: str, npc: str, said: str = "", step: int = 0) -> None:
-        """File a line of dialogue under a cross-cutting TOPIC (e.g. 'Fellowship'),
-        aggregating what many NPCs say about it."""
-        subject = (subject or "").strip()
-        if not subject or subject.lower() in self._GENERIC_TOPICS or len(subject) < 3:
-            return
-        key = _slug(subject)
+    def add_topic(self, name: str, note: str = "", step: int = 0) -> str:
+        """LLM-AUTHORED topic. The model creates topics and attaches its own
+        notes/insights, so the topic list reflects the agent's evolving
+        understanding over time (not a mechanical copy of game dialogue). Each
+        note is timestamped by step so you can watch its thinking develop.
+        Returns the topic key."""
+        name = (name or "").strip()
+        if not name:
+            return ""
+        key = _slug(name)
         if not key:
-            return
+            return ""
         rec = self.topics.setdefault(
-            key, {"name": subject, "mentions": [], "npcs": [], "first_step": step})
+            key, {"name": name, "notes": [], "first_step": step})
         rec["last_step"] = step
-        if npc and npc not in rec["npcs"]:
-            rec["npcs"].append(npc)
-        clean = (said or "").replace("*", " ").strip()
-        if clean:
-            m = {"npc": npc or "?", "said": clean[:200]}
-            if m not in rec["mentions"]:
-                rec["mentions"].append(m)
-                rec["mentions"] = rec["mentions"][-24:]
-
-    def register_topics(self, choices: list) -> None:
-        """Register dialogue answer-choices as known topics (even before asking),
-        so the agent has a menu of world subjects it could explore."""
-        for c in (choices or []):
-            c = str(c).strip()
-            if not c or c.lower() in self._GENERIC_TOPICS or len(c) < 3:
-                continue
-            key = _slug(c)
-            if key and key not in self.topics:
-                self.topics[key] = {"name": c, "mentions": [], "npcs": [],
-                                    "first_step": 0, "last_step": 0}
+        note = (note or "").strip()
+        if note:
+            entry = {"step": int(step), "note": note[:400]}
+            # Dedup against the most recent note.
+            if not rec["notes"] or rec["notes"][-1].get("note") != entry["note"]:
+                rec["notes"].append(entry)
+                rec["notes"] = rec["notes"][-40:]
+        return key
 
     def recall_topic(self, subject: str) -> dict:
-        """Everything learned about a cross-cutting topic across all NPCs."""
+        """Everything the LLM has recorded about a topic - all its notes over
+        time (its evolving understanding)."""
         if not subject:
             return {"name": subject, "known": False}
         key = _slug(subject)
@@ -475,38 +467,38 @@ class KnowledgeBase:
         if rec is None:
             return {"name": subject, "known": False}
         return {"name": rec.get("name", subject), "known": True,
-                "npcs_who_mentioned": rec.get("npcs", []),
-                "mentions": rec.get("mentions", [])[-16:]}
+                "notes": rec.get("notes", [])[-20:]}
 
     def topics_view(self, limit: int = 16) -> list:
-        """Compact list of known topics for the prompt: name + npc count +
-        lines learned, so the agent sees what threads exist to pursue."""
+        """Compact list of LLM-authored topics for the prompt: name + how many
+        notes it has recorded, most-recently-updated first."""
+        recs = sorted(self.topics.values(),
+                      key=lambda r: -r.get("last_step", 0))
         out = []
-        for r in self.topics.values():
-            n_ment = len(r.get("mentions", []))
-            out.append((n_ment, {"topic": r.get("name"),
-                                 "npcs": len(r.get("npcs", [])),
-                                 "learned": n_ment}))
-        out.sort(key=lambda t: -t[0])
-        return [o for _, o in out[:limit]]
+        for r in recs[:limit]:
+            out.append({"topic": r.get("name"), "notes": len(r.get("notes", []))})
+        return out
 
     def topics_pretty(self, limit: int = 20) -> str:
-        tv = self.topics_view(limit)
-        if not tv:
+        recs = sorted(self.topics.values(), key=lambda r: -r.get("last_step", 0))
+        if not recs:
             return "(no topics yet)"
-        return "\n".join(f"  {t['topic']}  ({t['npcs']} npc, {t['learned']} lines)"
-                         for t in tv)
+        lines = []
+        for r in recs[:limit]:
+            last = (r.get("notes") or [{}])[-1].get("note", "")
+            last = (last[:60] + "...") if len(last) > 60 else last
+            lines.append(f"  {r.get('name')} ({len(r.get('notes', []))}): {last}")
+        return "\n".join(lines)
 
     def topics_tree_data(self, limit: int = 40) -> list:
-        """Structured topic data for the GUI tree: most-discussed first, each
-        with its mentions."""
+        """Structured topic data for the GUI tree: each topic with its
+        timestamped LLM notes (most-recently-updated topics first)."""
         recs = sorted(self.topics.values(),
-                      key=lambda r: -len(r.get("mentions", [])))
+                      key=lambda r: -r.get("last_step", 0))
         out = []
         for r in recs[:limit]:
             out.append({"name": r.get("name", "?"),
-                        "npcs": len(r.get("npcs", [])),
-                        "mentions": r.get("mentions", [])[-24:]})
+                        "notes": r.get("notes", [])[-40:]})
         return out
 
     def npcs_tree_data(self, limit: int = 40) -> list:
