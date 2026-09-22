@@ -301,7 +301,12 @@ you intend to do - keep your quest log current and prioritized.
      and "pickup" useful items. Read object names to understand your surroundings.
   5. If your food is low, use "feed". If threatened, "combat".
 
-Reply with ONLY the single JSON object. No prose, no markdown.
+OUTPUT RULES (critical - follow exactly):
+- Output ONLY one JSON object. Start your reply with '{' as the very first
+  character. No preamble, no thinking, no explanation, no markdown, no code
+  fences before or after.
+- Keep it short: the object is just {"action":{...},"reason":"..."} (plus an
+  optional "new_quest"). Do NOT write anything outside the JSON.
 """
 
 

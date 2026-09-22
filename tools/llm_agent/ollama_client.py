@@ -67,21 +67,31 @@ class OllamaClient:
         user: str,
         *,
         force_json: bool = True,
-        temperature: float = 0.2,
+        temperature: float = 0.35,
     ) -> dict:
         """Like chat() but returns {content, prompt_tokens, response_tokens,
         total_tokens} using Ollama's own token counts. If the model was given a
         num_ctx, we also include it so callers can compute % of context used.
 
-        Retries ONCE if the model returns an empty completion (Ollama sometimes
-        yields a blank message, especially with format=json); the retry nudges
-        temperature up slightly to break the degenerate generation."""
+        Retries if the model returns an empty completion. Ollama's format=json
+        grammar can occasionally yield a blank message for a given prompt state;
+        the retries bump temperature AND drop the JSON grammar (plain text, from
+        which the caller extracts the JSON object), which reliably breaks the
+        empty-output state."""
         result = self._chat_once(system, user, force_json, temperature)
         if not (result.get("content") or "").strip():
-            # One retry with a small temperature bump.
+            # Retry 1: higher temperature, still JSON-constrained.
             result = self._chat_once(system, user, force_json,
                                      min(1.0, temperature + 0.3))
             result["retried"] = True
+        if not (result.get("content") or "").strip() and force_json:
+            # Retry 2: drop the JSON grammar entirely (plain text). The caller's
+            # parse_reply extracts the {...} from free text, so this still works
+            # and escapes the degenerate empty-under-json-grammar state.
+            result = self._chat_once(system, user, False,
+                                     min(1.0, temperature + 0.5))
+            result["retried"] = True
+            result["dropped_json"] = True
         return result
 
     def _chat_once(self, system: str, user: str, force_json: bool,
@@ -94,7 +104,7 @@ class OllamaClient:
             ],
             "stream": False,
             "options": {"temperature": temperature, "num_ctx": self.num_ctx,
-                        "num_predict": 300},
+                        "num_predict": 768},
         }
         if force_json:
             payload["format"] = "json"
