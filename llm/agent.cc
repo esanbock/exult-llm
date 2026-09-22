@@ -641,6 +641,14 @@ namespace LLM_agent {
 				if (is_body) {
 					os << ',' << json_bool("body", true);
 				}
+				// Ownership: an item flagged okay_to_take is free to take;
+				// otherwise it may be someone's property (taking it is theft).
+				// Report owned=true for not-okay-to-take, non-body items so the
+				// agent can avoid stealing. Bodies/containers you loot are fine.
+				if (!is_body && !obj->get_flag(Obj_flags::okay_to_take)
+						&& !obj->as_container()) {
+					os << ',' << json_bool("owned", true);
+				}
 				// If this is a container (body, bag, chest...), list what is
 				// inside (recursively, so loot inside a bag inside a body shows).
 				Container_game_object* cont = obj->as_container();

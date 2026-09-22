@@ -64,7 +64,18 @@ General principles (apply to ANY situation, not one specific puzzle):
   * FOLLOW LEADS: when someone mentions a person, place, item, or event, treat
     it as a lead worth pursuing. Use your journal to remember what you learned.
   * EXAMINE THE WORLD: investigate notable objects, bodies, and containers you
-    come across; collect items that look important (keys, notes, valuables).
+    come across. OPEN containers (chests, barrels, bags, crates) and search
+    bodies to see what is inside. Try interesting-looking devices - levers,
+    switches, buttons, mechanisms - as they often reveal secrets or open the way.
+  * GATHER USEFUL THINGS: pick up items that could help later - gold and gems
+    (money), food (you must eat), weapons and armour, keys, potions, scrolls,
+    tools, and anything quest-related or unusual. When unsure, taking a small
+    item is usually worth it; your pack holds a lot.
+  * DO NOT STEAL: only take items that are unowned, abandoned, or given to you.
+    Items inside shops, homes, and other people's property are OWNED - taking
+    them is theft that angers people and can make guards attack you. If a
+    shopkeeper or owner is present, ask/buy rather than grab. Loot from enemies
+    you defeat and from the dead/abandoned is fair game.
   * MAKE PROGRESS: prefer purposeful action over aimless wandering or repeating
     yourself. If you have exhausted a person or place, move on to somewhere new.
   * DON'T LINGER: do not re-interview people you've already learned from
@@ -139,7 +150,11 @@ you intend to do - keep your quest log current and prioritized.
                                 lead, item, or quest progress) it is worth talking
                                 again; if their notes show you already covered
                                 everything, move on. Trust your own judgement.
-  objects (list)              - items on the ground: {name, dx, dy}
+  objects (list)              - items on the ground: {name, dx, dy}. May include
+                                "owned": true - that item is someone's property;
+                                taking it is STEALING (avoid it). Items without
+                                "owned" are free to take. "body":true means a
+                                searchable corpse.
   grid (string)               - top-down ASCII map centered on you (@):
                                   @ you   C companion   & other NPC   x body
                                   T tree   W wall/building   = fence/gate
@@ -1385,6 +1400,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             elif stuck:
                 objs = [o for o in (state.get("objects") or [])
                         if abs(o.get("dx", 99)) <= 3 and abs(o.get("dy", 99)) <= 3
+                        and not o.get("owned")  # never auto-grab owned property
                         and o.get("name") not in session["picked"]]
                 dead_bodies = [n for n in (state.get("nearby") or [])
                                if n.get("dead") and abs(n.get("dx", 99)) <= 2
