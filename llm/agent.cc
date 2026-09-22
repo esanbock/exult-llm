@@ -1048,8 +1048,38 @@ namespace LLM_agent {
 			} else {
 				return "{\"ok\":false,\"error\":\"bad direction\"}";
 			}
+			// Detect whether the adjacent tile in this direction is blocked
+			// (wall/water/obstacle), so the agent gets an explicit "bumped"
+			// signal instead of silently walking into a wall.
+			bool blocked = false;
+			{
+				Game_map* gmap = gwin->get_map();
+				Actor*    av   = gwin->get_main_actor();
+				if (gmap && av) {
+					const Tile_coord me = av->get_tile();
+					int ddx = 0;
+					int ddy = 0;
+					if (dir.find('n') != string::npos) {
+						ddy = -1;
+					}
+					if (dir.find('s') != string::npos) {
+						ddy = 1;
+					}
+					if (dir.find('e') != string::npos) {
+						ddx = 1;
+					}
+					if (dir.find('w') != string::npos) {
+						ddx = -1;
+					}
+					const Tile_coord adj(
+							(me.tx + ddx + c_num_tiles) % c_num_tiles,
+							(me.ty + ddy + c_num_tiles) % c_num_tiles, me.tz);
+					blocked = gmap->is_tile_occupied(adj);
+				}
+			}
 			gwin->start_actor(tx, ty, static_cast<int>(speed));
-			return "{\"ok\":true,\"did\":\"move\",\"dir\":\"" + json_escape(dir) + "\"}";
+			return string("{\"ok\":true,\"did\":\"move\",\"dir\":\"") + json_escape(dir)
+				   + "\"," + json_bool("blocked", blocked) + "}";
 		}
 
 		return "{\"ok\":false,\"error\":\"unknown action type\"}";

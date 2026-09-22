@@ -229,7 +229,7 @@ Reply with ONLY the single JSON object. No prose, no markdown.
 """
 
 
-def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: str = "") -> str:
+def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: str = "", alert: str = "") -> str:
     """Compact the observation to keep the prompt small and focused."""
     p = state.get("player") or {}
     nearby = state.get("nearby") or []
@@ -290,8 +290,9 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             view["recent_actions"] = ah
     if last_look:
         view["look_description"] = last_look
+    if alert:
+        view["alert"] = alert
     return json.dumps(view)
-
 
 def format_dialog(state: dict) -> str:
     """Human-readable dialog/characters/objects panel for the thoughts window."""
@@ -688,7 +689,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if args.dry_run:
         reason, action = scripted_reply(step, state)
     else:
-        res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb, session.pop("last_look", "")))
+        res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb, session.pop("last_look", ""), session.get("last_bump", "")))
         reply = res["content"]
         reason, action = parse_reply(reply)
         # Track context usage so we can see if the prompt is bloating/truncating.
@@ -1045,6 +1046,16 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         result = exult.act(action)
     if window.available:
         window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
+
+    # Explicit "you bumped into something" feedback: if a move reported it was
+    # blocked, tell the model next turn and note it (so it tries another way).
+    if (isinstance(action, dict) and action.get("type") == "move"
+            and isinstance(result, dict) and result.get("blocked")):
+        d = action.get("dir", "")
+        session["last_bump"] = f"Your last move {d} was BLOCKED - something (a wall/obstacle) is that way. Try a different direction or use goto to route around it."
+        kb.record_action(f"bumped a wall moving {d}")
+    else:
+        session.pop("last_bump", None)
 
     # Log meaningful actions (not routine moves/waits) to the short action
     # history so the agent can avoid repeating itself.
