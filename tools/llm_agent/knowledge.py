@@ -62,6 +62,12 @@ class KnowledgeBase:
         # keep clues/story alive within a bounded token budget - old detail is
         # compressed into this text instead of being dropped outright.
         self.episodic_summary: str = ""
+        # TOOL-CALL STATS: how the agent is spending its turns, so we can see
+        # health at a glance (e.g. many parse failures = model output problem,
+        # many errors on a tool = a stuck pattern). Structure:
+        #   {"turns":int, "parse_fail":int,
+        #    "tools": {name: {"calls":int, "ok":int, "err":int}}}
+        self.tool_stats: dict = {"turns": 0, "parse_fail": 0, "tools": {}}
 
     # ----- persistence ---------------------------------------------------
     def to_dict(self) -> dict:
@@ -71,7 +77,8 @@ class KnowledgeBase:
                 "places": self.places,
                 "hints": self.hints,
                 "observations": self.observations,
-                "episodic_summary": self.episodic_summary}
+                "episodic_summary": self.episodic_summary,
+                "tool_stats": self.tool_stats}
 
     @classmethod
     def load(cls, path: Optional[str]) -> "KnowledgeBase":
@@ -90,6 +97,10 @@ class KnowledgeBase:
             kb.hints = list(data.get("hints", []))
             kb.observations = list(data.get("observations", []))
             kb.episodic_summary = str(data.get("episodic_summary", "") or "")
+            ts = data.get("tool_stats") or {}
+            kb.tool_stats = {"turns": int(ts.get("turns", 0)),
+                             "parse_fail": int(ts.get("parse_fail", 0)),
+                             "tools": dict(ts.get("tools", {}))}
         except (OSError, ValueError):
             pass
         return kb
@@ -430,6 +441,37 @@ class KnowledgeBase:
                          for o in self.observations[-limit:])
 
     # ----- episodic summary + context budget -----------------------------
+    # ----- tool-call stats (turn accounting / health) --------------------
+    def record_turn(self, parse_ok: bool) -> None:
+        """Count one agent turn; note whether the model's reply parsed."""
+        self.tool_stats["turns"] = self.tool_stats.get("turns", 0) + 1
+        if not parse_ok:
+            self.tool_stats["parse_fail"] = self.tool_stats.get("parse_fail", 0) + 1
+
+    def record_tool(self, name: str, ok: Optional[bool]) -> None:
+        """Count a tool/action invocation and its outcome (ok/err/unknown)."""
+        if not name:
+            name = "?"
+        t = self.tool_stats.setdefault("tools", {})
+        rec = t.setdefault(name, {"calls": 0, "ok": 0, "err": 0})
+        rec["calls"] += 1
+        if ok is True:
+            rec["ok"] += 1
+        elif ok is False:
+            rec["err"] += 1
+
+    def tool_stats_pretty(self, top: int = 12) -> str:
+        ts = self.tool_stats
+        turns = ts.get("turns", 0)
+        pf = ts.get("parse_fail", 0)
+        pf_pct = (100 * pf / turns) if turns else 0
+        lines = [f"turns: {turns}   parse-fail: {pf} ({pf_pct:.0f}%)"]
+        tools = ts.get("tools", {})
+        for name, r in sorted(tools.items(), key=lambda kv: -kv[1].get("calls", 0))[:top]:
+            c, ok, err = r.get("calls", 0), r.get("ok", 0), r.get("err", 0)
+            lines.append(f"  {name}: {c}  (ok {ok} / err {err})")
+        return "\n".join(lines)
+
     def append_summary(self, text: str) -> None:
         """Fold a gist line into the rolling episodic summary (bounded)."""
         text = (text or "").strip()

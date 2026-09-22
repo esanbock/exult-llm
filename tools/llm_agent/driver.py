@@ -724,6 +724,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             ]
             if session.get("last_ctx"):
                 stats.append(session["last_ctx"])
+            # Tool-call stats: turns, parse failures, and per-tool ok/err.
+            stats.append("--- tool calls ---")
+            stats.append(kb.tool_stats_pretty(top=10))
             window.set_stats("\n".join(stats))
         except Exception:
             pass
@@ -859,6 +862,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb, session.pop("last_look", ""), alert, squeeze))
         reply = res["content"]
         reason, action = parse_reply(reply)
+        # Tool-call stats: count this turn and whether the model's reply parsed
+        # (a parse failure means we could not read an action and fell back to
+        # wait - visible now as parse-fail in the stats panel).
+        parsed_ok = reason != "(could not parse reply)"
+        kb.record_turn(parsed_ok)
+        if not parsed_ok:
+            print(f"[{step:03d}] parse-fail: {reply[:120]!r}")
         # Track context usage so we can see if the prompt is bloating/truncating.
         pt = res.get("prompt_tokens", 0)
         session["last_prompt_tokens"] = pt
@@ -1407,6 +1417,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         result = exult.talk(tname)
     else:
         result = exult.act(action)
+    # Tool-call stats: count the action type and its outcome (ok/err).
+    _atype = action.get("type") if isinstance(action, dict) else "?"
+    _ok = result.get("ok") if isinstance(result, dict) else None
+    kb.record_tool(_atype, _ok)
     if window.available:
         window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
 
