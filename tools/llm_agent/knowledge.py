@@ -273,16 +273,30 @@ class KnowledgeBase:
         """Meaningful progress happened - allow revisiting NPCs (they may now
         have new dialogue)."""
         for rec in self.npcs.values():
-            rec["talked_this_epoch"] = 0
+            # Preserve exhaustion for NPCs talked to very many times overall -
+            # a small progress step shouldn't send you back to someone you've
+            # already hammered. Only reset those still under the hard cap.
+            if rec.get("times_talked", 0) < 8:
+                rec["talked_this_epoch"] = 0
 
-    def talk_status(self, name: str, exhausted_at: int = 3) -> str:
+    def talk_status(self, name: str, exhausted_at: int = 3,
+                    hard_cap: int = 8) -> str:
         """Classify how worthwhile talking to this NPC is right now:
         'new' (never talked), 'talked' (spoken to but may have more), or
-        'exhausted' (asked enough since last progress - unlikely to offer new
-        info until the situation changes)."""
+        'exhausted' (asked enough - unlikely to offer new info).
+
+        Two exhaustion signals:
+          * epoch: asked `exhausted_at` times since the last meaningful progress
+            (resets on progress, so NPCs become worth revisiting after you
+            accomplish something).
+          * hard cap: asked `hard_cap`+ times TOTAL. This does NOT reset - if
+            you've hammered an NPC many times overall, they really are tapped
+            out and progress resets shouldn't keep sending you back to them."""
         rec = self.npcs.get(name)
         if not rec or rec.get("times_talked", 0) == 0:
             return "new"
+        if rec.get("times_talked", 0) >= hard_cap:
+            return "exhausted"
         if rec.get("talked_this_epoch", 0) >= exhausted_at:
             return "exhausted"
         return "talked"

@@ -869,15 +869,25 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     #     not advance the game; we record it so the model sees it next turn and
     #     avoids looking repeatedly.
     if isinstance(action, dict) and action.get("type") == "look":
-        desc = describe_scene(state, kb)
-        kb.record_action("looked around")
-        session["last_look"] = desc
-        if window.available:
-            window.set_action("[look]\n" + desc[:1500])
-        print(f"[{step:03d}] look:\n{desc}")
-        # Fall through to a light action so the turn still progresses.
-        action = {"type": "wait"}
-        reason = "(looked around; see description)"
+        # If we just looked and haven't moved, looking again is wasted - the
+        # scene is unchanged. Redirect a repeat look into real progress.
+        _recent = kb.action_view(3)
+        _pp = state.get("player") or {}
+        _here = (_pp.get("tx"), _pp.get("ty"))
+        if _recent and _recent[-1] == "looked around" and session.get("last_look_pos") == _here:
+            action = _explore_far(state, session, wedged)
+            reason = "(guard) already looked here; exploring instead of looking again"
+        else:
+            desc = describe_scene(state, kb)
+            kb.record_action("looked around")
+            session["last_look"] = desc
+            session["last_look_pos"] = _here
+            if window.available:
+                window.set_action("[look]\n" + desc[:1500])
+            print(f"[{step:03d}] look:\n{desc}")
+            # Fall through to a light action so the turn still progresses.
+            action = {"type": "wait"}
+            reason = "(looked around; see description)"
 
     # --- Journal meta-tools: update the KB, then take a game action too. ---
     if isinstance(action, dict) and action.get("type") in META_TOOLS:
@@ -896,6 +906,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     MAX_CONVO_TURNS = 12       # force-end a conversation that drags on
     def talked(nm):
         return kb.talked_recently(nm)
+
+    def exhausted(nm):
+        # True if this NPC is tapped out either since last progress OR by total
+        # talk count (the hard cap). Used by the anti-re-talk guards so a heavily
+        # talked NPC (e.g. Johnson x44) is not re-approached after progress
+        # resets the per-epoch counter.
+        return bool(nm) and kb.talk_status(nm) == "exhausted"
 
     in_convo = bool(state.get("conversation_in_progress"))
     answers = state.get("answers") or []
@@ -1068,7 +1085,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if (isinstance(action, dict) and action.get("type") == "key"
                 and not state.get("conversation_in_progress")):
             fresh = [n for n in (state.get("nearby") or [])
-                     if not n.get("dead") and talked(n.get("name")) < MAX_TALKS]
+                     if not n.get("dead") and not exhausted(n.get("name"))]
             if fresh:
                 target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
                 action = {"type": "talk", "name": target["name"]}
@@ -1083,9 +1100,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # 2) Redirect re-talk to an exhausted NPC toward a fresh one.
         if isinstance(action, dict) and action.get("type") == "talk":
             nm = action.get("name", "")
-            if nm and talked(nm) >= MAX_TALKS:
+            if nm and exhausted(nm):
                 fresh = [n for n in (state.get("nearby") or [])
-                         if not n.get("dead") and talked(n.get("name")) < MAX_TALKS]
+                         if not n.get("dead") and not exhausted(n.get("name"))]
                 if fresh:
                     target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
                     action = {"type": "talk", "name": target["name"]}
@@ -1107,7 +1124,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             stuck = len(recent_positions) >= 4 and len(set(recent_positions)) <= 2
             fresh = [n for n in (state.get("nearby") or [])
                      if not n.get("dead") and abs(n.get("dx", 99)) <= 4
-                     and abs(n.get("dy", 99)) <= 4 and talked(n.get("name")) < MAX_TALKS]
+                     and abs(n.get("dy", 99)) <= 4 and not exhausted(n.get("name"))]
             if stuck and fresh:
                 target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
                 action = {"type": "talk", "name": target["name"]}
@@ -1204,6 +1221,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             if pos and pos[0] is not None:
                 action = {"type": "goto", "tx": pos[0], "ty": pos[1]}
                 reason = f"{reason} [mapped '{nm}' -> ({pos[0]},{pos[1]})]"
+            else:
+                # Unresolvable target: it's not visible and not in our mental map
+                # or NPC memory. Don't hand the engine a goto it can't route
+                # (that makes the agent flail). Tell the model it's unknown and
+                # list what IS known so it can pick a real destination or explore.
+                _pp = state.get("player") or {}
+                known = kb.places_view(_pp.get("tx", 0), _pp.get("ty", 0), limit=8)
+                names = ", ".join(k["name"] for k in known) or "(none yet)"
+                session["last_bump"] = (
+                    f"You tried to goto '{nm}', but that place is not on your map "
+                    f"and you can't see it. Known places you CAN goto: {names}. "
+                    f"Explore to find '{nm}', or annotate it once you reach it.")
+                print(f"[{step:03d}] goto unresolved: '{nm}' (known: {names})")
+                action = _explore_far(state, session, wedged)
+                reason = f"(guard) '{nm}' unknown; exploring to find it"
 
     # A goto that targets (almost) our own tile is a no-op that loops forever.
     # Redirect it to real exploration.
@@ -1258,12 +1290,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # dialogue, so allow revisiting them.
     if atype in ("pickup", "search") and isinstance(result, dict) and result.get("ok"):
         kb.reset_talk_gate()
-    # A searched body/container is a notable spot -> auto-mark it so the agent
-    # can find its way back even if it never annotates on its own.
-    if atype == "search" and isinstance(result, dict) and result.get("ok"):
+    # A searched body/container OR a spot where we picked something up is a
+    # notable location -> auto-mark it so the agent can find its way back even
+    # if it never annotates on its own (e.g. returning to a crime scene).
+    if atype in ("search", "pickup") and isinstance(result, dict) and result.get("ok"):
         pp = state.get("player") or {}
-        tgt = result.get("target", "searched spot")
-        kb.record_place(f"where I searched {tgt}", pp.get("tx", 0), pp.get("ty", 0),
+        tgt = result.get("target") or action.get("name") or "spot"
+        verb = "searched" if atype == "search" else "found items at"
+        kb.record_place(f"where I {verb} {tgt}", pp.get("tx", 0), pp.get("ty", 0),
                         kind="marked")
 
     p = state.get("player") or {}
