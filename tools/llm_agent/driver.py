@@ -67,6 +67,11 @@ General principles (apply to ANY situation, not one specific puzzle):
     come across; collect items that look important (keys, notes, valuables).
   * MAKE PROGRESS: prefer purposeful action over aimless wandering or repeating
     yourself. If you have exhausted a person or place, move on to somewhere new.
+  * DON'T LINGER: do not re-interview people you've already learned from
+    (especially your own party companions - they have nothing new). When you
+    have gathered the local leads, LEAVE the area: travel to the town gate/edge
+    and out to new regions to advance the story. The world is far bigger than
+    one town - staying put stalls the whole adventure.
   * SURVIVE: keep fed and stay alive; avoid needless danger.
 You are not told the solution to anything - reason from what you observe and are
 told, as a curious, capable adventurer would.
@@ -1322,29 +1327,45 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         #    model), not merely "talked before".
         if isinstance(action, dict) and action.get("type") == "talk":
             nm = action.get("name", "")
-            last_nm = session.get("last_talk_target")
-            if nm and nm == last_nm:
-                session["same_talk_streak"] = session.get("same_talk_streak", 0) + 1
-            else:
-                session["same_talk_streak"] = 0
-            session["last_talk_target"] = nm
-            # Only intervene after re-picking the SAME npc 4+ turns straight.
-            if nm and session.get("same_talk_streak", 0) >= 4:
-                session["same_talk_streak"] = 0
-                fresh = [n for n in (state.get("nearby") or [])
-                         if not n.get("dead") and n.get("name") != nm
-                         and kb.talk_status(n.get("name")) != "exhausted"]
-                if fresh:
-                    target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
-                    action = {"type": "talk", "name": target["name"]}
-                    reason = f"(guard) stuck re-picking {nm}; trying {target['name']} instead"
+            # Party COMPANIONS (in_party) have mostly static dialogue - once
+            # you've spoken to them a couple times there is rarely anything new,
+            # yet the model loves to re-interview them (Iolo was talked to 140+
+            # times). If the target is a companion we've already talked to,
+            # redirect to pursuing a quest lead or exploring somewhere new.
+            _party = {n.get("name") for n in (state.get("nearby") or []) if n.get("in_party")}
+            if nm in _party and kb.times_talked(nm) >= 2:
+                qa, qr = _pursue_focus_quest(state, kb)
+                if qa and not (qa.get("type") == "talk" and qa.get("name") in _party):
+                    action, reason = qa, qr
                 else:
-                    qa, qr = _pursue_focus_quest(state, kb)
-                    if qa and not (qa.get("type") == "talk" and qa.get("name") == nm):
-                        action, reason = qa, qr
+                    action = _explore_far(state, session, wedged)
+                    reason = f"(guard) {nm} is a companion with nothing new; exploring for progress"
+                session["last_talk_target"] = nm
+            else:
+                last_nm = session.get("last_talk_target")
+                if nm and nm == last_nm:
+                    session["same_talk_streak"] = session.get("same_talk_streak", 0) + 1
+                else:
+                    session["same_talk_streak"] = 0
+                session["last_talk_target"] = nm
+                # Only intervene after re-picking the SAME npc 4+ turns straight.
+                if nm and session.get("same_talk_streak", 0) >= 4:
+                    session["same_talk_streak"] = 0
+                    fresh = [n for n in (state.get("nearby") or [])
+                             if not n.get("dead") and n.get("name") != nm
+                             and not n.get("in_party")
+                             and kb.talk_status(n.get("name")) != "exhausted"]
+                    if fresh:
+                        target = min(fresh, key=lambda n: abs(n["dx"]) + abs(n["dy"]))
+                        action = {"type": "talk", "name": target["name"]}
+                        reason = f"(guard) stuck re-picking {nm}; trying {target['name']} instead"
                     else:
-                        action = _explore_far(state, session, wedged)
-                        reason = f"(guard) stuck re-picking {nm}; exploring instead"
+                        qa, qr = _pursue_focus_quest(state, kb)
+                        if qa and not (qa.get("type") == "talk" and qa.get("name") == nm):
+                            action, reason = qa, qr
+                        else:
+                            action = _explore_far(state, session, wedged)
+                            reason = f"(guard) stuck re-picking {nm}; exploring instead"
         # 3) Anti-chase / auto-loot when stuck.
         elif (isinstance(action, dict) and action.get("type") == "move"
               and not state.get("conversation_in_progress")):
