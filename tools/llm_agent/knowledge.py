@@ -47,13 +47,31 @@ class KnowledgeBase:
         self.dialogue_history: list[dict] = []
         # Short rolling window of meaningful actions taken (open/pickup/etc).
         self.action_history: list[str] = []
+        # Persistent HINT history: every operator hint ever given, with the
+        # step it was given at. Hints are guidance from the human and are high
+        # value - we keep them all (cheap) so the agent can recall earlier
+        # steering even long after a hint's short "active" window expires.
+        # Each: {"step":int, "text":str}
+        self.hints: list[dict] = []
+        # Persistent OBSERVATION memory: notable things seen and ambient speech
+        # overheard, deduped and filtered so it is not just a dump of every tile
+        # every turn. Each: {"step":int, "kind":str, "text":str}
+        self.observations: list[dict] = []
+        # Rolling EPISODIC SUMMARY: a compact running gist of older events that
+        # have scrolled out of the raw dialogue/action windows. This is how we
+        # keep clues/story alive within a bounded token budget - old detail is
+        # compressed into this text instead of being dropped outright.
+        self.episodic_summary: str = ""
 
     # ----- persistence ---------------------------------------------------
     def to_dict(self) -> dict:
         return {"quests": self.quests, "npcs": self.npcs, "journal": self.journal,
                 "dialogue_history": self.dialogue_history,
                 "action_history": self.action_history,
-                "places": self.places}
+                "places": self.places,
+                "hints": self.hints,
+                "observations": self.observations,
+                "episodic_summary": self.episodic_summary}
 
     @classmethod
     def load(cls, path: Optional[str]) -> "KnowledgeBase":
@@ -69,6 +87,9 @@ class KnowledgeBase:
             kb.dialogue_history = list(data.get("dialogue_history", []))
             kb.action_history = list(data.get("action_history", []))
             kb.places = dict(data.get("places", {}))
+            kb.hints = list(data.get("hints", []))
+            kb.observations = list(data.get("observations", []))
+            kb.episodic_summary = str(data.get("episodic_summary", "") or "")
         except (OSError, ValueError):
             pass
         return kb
@@ -314,6 +335,118 @@ class KnowledgeBase:
 
     def action_view(self, limit: int = 10) -> list:
         return self.action_history[-limit:]
+
+    # ----- hint history (operator guidance - persistent, high value) -----
+    def record_hint(self, text: str, step: int = 0) -> None:
+        """Record an operator hint permanently. Deduped against the immediately
+        previous hint so a hint held 'active' for several turns is stored once."""
+        text = (text or "").strip()
+        if not text:
+            return
+        if self.hints and self.hints[-1].get("text") == text:
+            return
+        self.hints.append({"step": int(step), "text": text[:300]})
+        # Keep a generous archive; these are cheap and valuable.
+        self.hints = self.hints[-100:]
+
+    def recent_hints(self, limit: int = 5) -> list:
+        """The most recent operator hints (newest last), for the prompt so the
+        agent remembers steering it was given earlier - not just this turn."""
+        return [h.get("text", "") for h in self.hints[-limit:]]
+
+    def hints_pretty(self, limit: int = 12) -> str:
+        if not self.hints:
+            return "(no hints given yet)"
+        return "\n".join(f"  @{h.get('step',0)}: {h.get('text','')}"
+                         for h in self.hints[-limit:])
+
+    # ----- observation memory (notable things seen / overheard) ----------
+    # Words that make an on-screen object worth remembering as "seen" (general,
+    # not tied to any puzzle). Doors/signs are already mapped as places.
+    _NOTABLE_SEEN = (
+        "body", "corpse", "chest", "key", "book", "scroll", "note", "letter",
+        "gold", "gem", "ring", "sword", "shield", "armor", "potion", "wand",
+        "lever", "switch", "grave", "coffin", "altar", "shrine", "cauldron",
+        "skeleton", "blood", "trap", "locked", "magic", "rune",
+    )
+
+    def note_observation(self, text: str, kind: str = "seen", step: int = 0) -> bool:
+        """Log a notable observation (something seen or overheard), deduped so
+        repeated sightings of the same thing don't flood memory. Returns True if
+        a new observation was actually recorded."""
+        text = (text or "").strip()
+        if not text:
+            return False
+        # Dedup against anything recorded recently (last 40) regardless of step.
+        recent = {o.get("text") for o in self.observations[-40:]}
+        if text in recent:
+            return False
+        self.observations.append({"step": int(step), "kind": kind, "text": text[:200]})
+        self.observations = self.observations[-300:]
+        return True
+
+    def is_notable_object(self, name: str) -> bool:
+        low = (name or "").lower()
+        return any(w in low for w in self._NOTABLE_SEEN)
+
+    def observations_view(self, limit: int = 12) -> list:
+        """Recent notable observations (newest last) for the prompt."""
+        return [f"{o.get('kind','')}: {o.get('text','')}"
+                for o in self.observations[-limit:]]
+
+    def observations_pretty(self, limit: int = 20) -> str:
+        if not self.observations:
+            return "(nothing notable logged yet)"
+        return "\n".join(f"  @{o.get('step',0)} [{o.get('kind','')}] {o.get('text','')}"
+                         for o in self.observations[-limit:])
+
+    # ----- episodic summary + context budget -----------------------------
+    def append_summary(self, text: str) -> None:
+        """Fold a gist line into the rolling episodic summary (bounded)."""
+        text = (text or "").strip()
+        if not text:
+            return
+        if self.episodic_summary:
+            self.episodic_summary += " " + text
+        else:
+            self.episodic_summary = text
+        # Bound the summary so it can't grow without limit; keep the tail
+        # (most recent gist). ~1500 chars is a few hundred tokens.
+        if len(self.episodic_summary) > 1500:
+            self.episodic_summary = "..." + self.episodic_summary[-1500:]
+
+    # Phrases whose presence makes an old dialogue line worth preserving as gist
+    # when it scrolls out of the raw window (clues/tasks), vs. dropping chit-chat.
+    _KEEP_GIST = (
+        "must", "need", "should", "find", "bring", "fetch", "seek", "go to",
+        "password", "key", "quest", "task", "search", "look for", "deliver",
+        "rescue", "retrieve", "secret", "hidden", "murder", "kill", "steal",
+        "beware", "danger", "north", "south", "east", "west", "gold", "reward",
+    )
+
+    def fold_dialogue_into_summary(self, keep_recent: int) -> int:
+        """Compress dialogue older than the most-recent `keep_recent` entries
+        into the episodic summary (extractive: keep clue/task-like NPC lines),
+        then drop them from the raw window. Returns how many were folded.
+
+        This is the core of the context-budget strategy: instead of merely
+        dropping old lines, their gist survives in a compact running summary."""
+        if len(self.dialogue_history) <= keep_recent:
+            return 0
+        old = self.dialogue_history[:-keep_recent] if keep_recent > 0 else self.dialogue_history[:]
+        kept = []
+        for e in old:
+            said = e.get("said") or e.get("me") or ""
+            low = said.lower()
+            who = e.get("npc") if "npc" in e else "you"
+            if any(k in low for k in self._KEEP_GIST) and len(said) > 15:
+                kept.append(f"{who}: {said[:100]}")
+        if kept:
+            # Cap how much we add at once so a big fold doesn't bloat the summary.
+            self.append_summary(" | ".join(kept[-12:]))
+        n = len(old)
+        self.dialogue_history = self.dialogue_history[-keep_recent:] if keep_recent > 0 else []
+        return n
 
     # ----- mental map / places -------------------------------------------
     def record_place(self, name: str, tx: int, ty: int,

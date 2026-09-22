@@ -139,6 +139,15 @@ one JSON object, nothing else. Put the tool's parameters at the TOP LEVEL of
       Use this to remember what you have learned and what was said earlier.
   recent_actions: your last few meaningful actions (talk/open/pickup/etc).
       Use this to avoid repeating something you just did.
+  story_so_far: a compact running summary of OLDER events/clues that have
+      scrolled out of recent_dialogue. Older detail is compressed here (not
+      lost) so you can still recall earlier story and leads on a long journey.
+  operator_hints: guidance your human operator has given you over time (newest
+      last). Treat these as important standing instructions, not just for one
+      turn - honor earlier hints even if they are no longer repeated.
+  observed: notable things you have SEEN or OVERHEARD (deduped), each like
+      "seen: chest at (x,y)" or 'heard: cat: "Meeow"'. Your durable record of
+      what you encountered; use it to recall and return to things of interest.
 
 # TOOLS (the complete list of things you can do - nothing else is possible)
   move    - Walk one step. params: {"dir": one of n,s,e,w,ne,nw,se,sw}
@@ -258,8 +267,23 @@ Reply with ONLY the single JSON object. No prose, no markdown.
 """
 
 
-def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: str = "", alert: str = "") -> str:
-    """Compact the observation to keep the prompt small and focused."""
+def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: str = "", alert: str = "", squeeze: int = 0) -> str:
+    """Compact the observation to keep the prompt small and focused.
+
+    `squeeze` is a context-pressure level (0 = plenty of room .. 3 = very
+    tight). Higher levels shrink the raw rolling windows (dialogue/actions/
+    objects) so the prompt stays within num_ctx as the playthrough grows. The
+    durable structured memory (quests, places, hints, episodic summary) is
+    always kept - only the verbose recent-context tiers are trimmed."""
+    # Window sizes per squeeze level (dialogue, actions, objects, nearby, places).
+    _TIERS = [
+        (30, 10, 14, 8, 12),   # 0: roomy
+        (18, 8, 10, 8, 10),    # 1: trim
+        (10, 6, 8, 6, 8),      # 2: tight
+        (6, 4, 6, 5, 6),       # 3: very tight
+    ]
+    lvl = max(0, min(int(squeeze), len(_TIERS) - 1))
+    dlg_n, act_n, obj_n, near_n, place_n = _TIERS[lvl]
     p = state.get("player") or {}
     nearby = state.get("nearby") or []
     objects = state.get("objects") or []
@@ -281,12 +305,12 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             {"name": n.get("name"), "dx": n.get("dx"), "dy": n.get("dy"),
              "in_party": n.get("in_party"),
              "status": (kb.talk_status(n.get("name")) if kb and n.get("name") else "new")}
-            for n in nearby[:8]
+            for n in nearby[:near_n]
         ],
         "objects": [
             {"name": o.get("name"), "dx": o.get("dx"), "dy": o.get("dy"),
              **({"body": True} if o.get("body") else {})}
-            for o in objects[:14]
+            for o in objects[:obj_n]
         ],
         "grid_legend": state.get("grid_legend"),
         "grid": state.get("grid"),
@@ -301,21 +325,35 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     if kb is not None:
         view["quests"] = kb.quest_view()
         view["already_talked_to"] = sorted(kb.npcs.keys())
+        # Durable memory that is always kept regardless of context pressure:
+        # a rolling episodic summary of older events (clues/story compressed),
+        # and the operator's hint history so earlier steering isn't forgotten.
+        if kb.episodic_summary:
+            view["story_so_far"] = kb.episodic_summary
+        rh = kb.recent_hints(5)
+        if rh:
+            view["operator_hints"] = rh
+        # Notable things seen / overheard, deduped (persistent observation mem).
+        obs = kb.observations_view(8 if lvl >= 2 else 12)
+        if obs:
+            view["observed"] = obs
         # Known places (mental map), nearest first, with direction from here.
-        places = kb.places_view(p.get("tx", 0), p.get("ty", 0), limit=12)
+        places = kb.places_view(p.get("tx", 0), p.get("ty", 0), limit=place_n)
         if places:
             view["known_places"] = places
         # NPC notes: focus on those currently nearby, plus recently noted.
-        nearby_names = [n.get("name") for n in nearby[:8] if n.get("name")]
+        nearby_names = [n.get("name") for n in nearby[:near_n] if n.get("name")]
         notes = kb.npc_view(nearby_names)
         if notes:
             view["npc_notes"] = notes
         # Growing window of recent CONVERSATION (story/clues live here) and a
-        # short window of recent ACTIONS (to avoid repeating yourself).
-        dh = kb.dialogue_view(30)
+        # short window of recent ACTIONS (to avoid repeating yourself). These
+        # shrink under context pressure; what scrolls off is folded into
+        # story_so_far by the driver's budget loop, so clues are not lost.
+        dh = kb.dialogue_view(dlg_n)
         if dh:
             view["recent_dialogue"] = dh
-        ah = kb.action_view(10)
+        ah = kb.action_view(act_n)
         if ah:
             view["recent_actions"] = ah
     if last_look:
@@ -669,6 +707,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 f"NPCs met: {len(kb.npcs)}   places mapped: {len(kb.places)}",
                 f"quests: {len(kb.quests)}   journal: {len(kb.journal)}",
                 f"dialogue mem: {len(kb.dialogue_history)}   actions mem: {len(kb.action_history)}",
+                f"hints: {len(kb.hints)}   observations: {len(kb.observations)}",
+                f"story_so_far: {len(kb.episodic_summary)} chars",
             ]
             if session.get("last_ctx"):
                 stats.append(session["last_ctx"])
@@ -709,6 +749,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             kb.record_place(_o["name"], _ptx + _o.get("dx", 0),
                             _pty + _o.get("dy", 0), kind="landmark")
 
+    # Persist notable OBSERVATIONS (deduped): ambient speech overheard, plus
+    # notable objects seen (bodies, chests, keys, etc). This gives the agent a
+    # durable record of "things I saw / heard" beyond the current frame.
+    for _a in (state.get("ambient_speech") or []):
+        _said = (_a.get("said") or "").strip()
+        if _said:
+            _who = _a.get("who") or "someone"
+            if kb.note_observation(f'{_who}: "{_said}"', kind="heard", step=step):
+                print(f"[{step:03d}] overheard {_who}: {_said}")
+    for _o in (state.get("objects") or []):
+        _onm = _o.get("name") or ""
+        if _o.get("body") or kb.is_notable_object(_onm):
+            _ox, _oy = _ptx + _o.get("dx", 0), _pty + _o.get("dy", 0)
+            kb.note_observation(f"{_onm} at ({_ox},{_oy})", kind="seen", step=step)
+
     # Record NPC dialog into the journal + dialogue history (with speaker).
     npc_text = state.get("npc_text")
     if state.get("conversation_in_progress") and npc_text:
@@ -731,12 +786,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if args.dry_run:
         reason, action = scripted_reply(step, state)
     else:
-        # Pull any user hint typed into the GUI; keep it active for a few turns.
+        # Pull any user hint typed into the GUI; keep it active for a few turns
+        # AND record it permanently so the agent can recall it later.
         if window.available:
             h = window.get_hint()
             if h:
                 session["hint"] = h
                 session["hint_ttl"] = 3
+                kb.record_hint(h, step)
                 print(f"[{step:03d}] USER HINT: {h}")
         alert_parts = []
         if session.get("hint") and session.get("hint_ttl", 0) > 0:
@@ -747,14 +804,41 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if session.get("last_bump"):
             alert_parts.append(session["last_bump"])
         alert = "  ".join(alert_parts)
-        res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb, session.pop("last_look", ""), alert))
+        # --- Context budget feedback loop -------------------------------
+        # Decide how hard to squeeze the raw context tiers based on LAST turn's
+        # measured prompt size relative to num_ctx. As the playthrough grows and
+        # the prompt creeps toward the limit, shrink the verbose windows and
+        # fold the dialogue that scrolls off into the durable episodic summary,
+        # so clues survive compression instead of being dropped.
+        ctx_max = session.get("ctx_max") or ollama.num_ctx or 8192
+        last_pt = session.get("last_prompt_tokens", 0)
+        frac = (last_pt / ctx_max) if ctx_max else 0.0
+        if frac >= 0.85:
+            squeeze = 3
+        elif frac >= 0.70:
+            squeeze = 2
+        elif frac >= 0.55:
+            squeeze = 1
+        else:
+            squeeze = 0
+        session["squeeze"] = squeeze
+        # When under real pressure, compress old dialogue into story_so_far and
+        # drop it from the raw window (keep the most recent exchanges intact).
+        if squeeze >= 2:
+            keep = 10 if squeeze == 2 else 6
+            folded = kb.fold_dialogue_into_summary(keep_recent=keep)
+            if folded:
+                print(f"[{step:03d}] context {int(frac*100)}%: folded {folded} old "
+                      f"dialogue lines into story_so_far (squeeze={squeeze})")
+        res = ollama.chat_ex(SYSTEM_PROMPT, summarize_state(state, kb, session.pop("last_look", ""), alert, squeeze))
         reply = res["content"]
         reason, action = parse_reply(reply)
         # Track context usage so we can see if the prompt is bloating/truncating.
-        ctx_max = session.get("ctx_max") or ollama.num_ctx
         pt = res.get("prompt_tokens", 0)
+        session["last_prompt_tokens"] = pt
         pct = int(100 * pt / ctx_max) if ctx_max else 0
-        session["last_ctx"] = f"context: {pt} prompt + {res.get('response_tokens',0)} resp tok / {ctx_max} ({pct}%)"
+        session["last_ctx"] = (f"context: {pt} prompt + {res.get('response_tokens',0)} resp "
+                               f"tok / {ctx_max} ({pct}%)  squeeze={squeeze}")
         if pt > 0.9 * ctx_max:
             print(f"[{step:03d}] WARNING: prompt {pt} tok near context limit {ctx_max}")
         if window.available:
