@@ -157,7 +157,11 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
                                 NOT asked yet. Prefer these - ask the important
                                 unasked topics (e.g. "key", "password") before
                                 leaving the conversation.
-  nearby (list)               - NPCs you can TALK to: {name, dx, dy, status}
+  nearby (list)               - NPCs you can TALK to: {name, dx, dy, status,
+                                condition?}. "condition" (if present) is a
+                                physical state: "sleeping" (CANNOT be talked to -
+                                wait for day or leave them), "paralyzed",
+                                "poisoned", "charmed", "cursed", or "hostile".
                                 (your own party is listed separately in "party")
                                 dx>0 = east, dx<0 = west, dy>0 = south, dy<0 = north
                                 status = new (never talked) | talked (spoken to)
@@ -421,7 +425,8 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "ambient_speech": state.get("ambient_speech") or [],
         "nearby": [
             {"name": n.get("name"), "dx": n.get("dx"), "dy": n.get("dy"),
-             "status": (kb.talk_status(n.get("name")) if kb and n.get("name") else "new")}
+             "status": (kb.talk_status(n.get("name")) if kb and n.get("name") else "new"),
+             **({"condition": n["condition"]} if n.get("condition") else {})}
             for n in nearby[:near_n] if not n.get("in_party")
         ],
         # Party companions are shown separately - they follow you and have no
@@ -1494,6 +1499,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         #    model), not merely "talked before".
         if isinstance(action, dict) and action.get("type") == "talk":
             nm = action.get("name", "")
+            # Don't try to talk to a SLEEPING NPC - the conversation won't open.
+            _sleeping = {n.get("name") for n in (state.get("nearby") or [])
+                         if n.get("condition") == "sleeping"}
+            if nm and nm in _sleeping:
+                session["last_bump"] = (
+                    f"{nm} is SLEEPING and cannot be talked to right now. Come "
+                    f"back in the daytime, or pursue another goal meanwhile.")
+                qa, qr = _pursue_focus_quest(state, kb)
+                if qa and not (qa.get("type") == "talk" and qa.get("name") == nm):
+                    action, reason = qa, qr
+                else:
+                    action = _explore_far(state, session, wedged)
+                    reason = f"(guard) {nm} is sleeping; doing something else"
+                print(f"[{step:03d}] talk-guard: {nm} is sleeping; skipping")
             # Party COMPANIONS (in_party) have mostly static dialogue - once
             # you've spoken to them a couple times there is rarely anything new,
             # yet the model loves to re-interview them (Iolo was talked to 140+

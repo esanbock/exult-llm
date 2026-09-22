@@ -27,6 +27,7 @@
 #include "agent.h"
 
 #include "actors.h"
+#include "schedule.h"
 #include "gamewin.h"
 #include "ucmachine.h"
 #include "conversation.h"
@@ -540,6 +541,29 @@ namespace LLM_agent {
 				os << ',' << json_int("dy", nt.ty - at.ty);
 				os << ',' << json_bool("in_party", npc->get_party_id() >= 0);
 				os << ',' << json_bool("dead", npc->is_dead());
+				// Status the agent should know before trying to interact - most
+				// importantly SLEEPING (can't be talked to). Report the most
+				// relevant single status word.
+				{
+					const char* st = nullptr;
+					if (npc->get_flag(Obj_flags::asleep)
+							|| npc->get_schedule_type() == Schedule::sleep) {
+						st = "sleeping";
+					} else if (npc->get_flag(Obj_flags::paralyzed)) {
+						st = "paralyzed";
+					} else if (npc->get_flag(Obj_flags::poisoned)) {
+						st = "poisoned";
+					} else if (npc->get_flag(Obj_flags::charmed)) {
+						st = "charmed";
+					} else if (npc->get_flag(Obj_flags::cursed)) {
+						st = "cursed";
+					} else if (npc->get_schedule_type() == Schedule::combat) {
+						st = "hostile";
+					}
+					if (st) {
+						os << ',' << json_str("condition", st);
+					}
+				}
 				os << '}';
 			}
 		}
