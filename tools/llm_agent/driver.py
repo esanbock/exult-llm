@@ -810,7 +810,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         try:
             nearby_names = [n.get("name") for n in (state.get("nearby") or []) if n.get("name")]
             window.set_quests(kb.quests_pretty())
-            window.set_npcs(kb.npcs_pretty(nearby_names))
+            window.set_npc_tree(kb.npcs_tree_data())
+            window.set_topics_tree(kb.topics_tree_data())
             p = state.get("player") or {}
             stats = [
                 f"pos: ({p.get('tx')},{p.get('ty')})  hp:{p.get('hp')}  food:{p.get('food')}",

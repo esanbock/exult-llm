@@ -81,8 +81,36 @@ class ThoughtsWindow:
         _pane(left, "dialog", "Dialog / characters / objects on screen", 8)
 
         # RIGHT: inspector
-        _pane(right, "quests", "Quest log (focus / actionable / blocked)", 14, mono=True)
-        _pane(right, "npcs", "NPC knowledge (who, notes)", 10)
+        _pane(right, "quests", "Quest log (focus / actionable / blocked)", 12, mono=True)
+
+        # Knowledge notebook: expandable trees for Topics and Characters.
+        nb = ttk.Notebook(right)
+        nb.pack(fill="both", expand=True, padx=4, pady=3)
+
+        # Topics tree: topic -> mentions (npc: line)
+        topic_frame = tk.Frame(nb)
+        self._topic_tree = ttk.Treeview(topic_frame, columns=("meta",), show="tree headings")
+        self._topic_tree.heading("#0", text="Topic / mention")
+        self._topic_tree.heading("meta", text="npcs / lines")
+        self._topic_tree.column("meta", width=90, anchor="e")
+        _tsb = ttk.Scrollbar(topic_frame, orient="vertical", command=self._topic_tree.yview)
+        self._topic_tree.configure(yscrollcommand=_tsb.set)
+        self._topic_tree.pack(side="left", fill="both", expand=True)
+        _tsb.pack(side="right", fill="y")
+        nb.add(topic_frame, text="Topics")
+
+        # Characters tree: npc -> {transcript, topics asked/unasked, notes}
+        char_frame = tk.Frame(nb)
+        self._char_tree = ttk.Treeview(char_frame, columns=("meta",), show="tree headings")
+        self._char_tree.heading("#0", text="Character / dialogue")
+        self._char_tree.heading("meta", text="info")
+        self._char_tree.column("meta", width=90, anchor="e")
+        _csb = ttk.Scrollbar(char_frame, orient="vertical", command=self._char_tree.yview)
+        self._char_tree.configure(yscrollcommand=_csb.set)
+        self._char_tree.pack(side="left", fill="both", expand=True)
+        _csb.pack(side="right", fill="y")
+        nb.add(char_frame, text="Characters")
+
         _pane(right, "stats", "Stats & memory", 6, mono=True)
 
         # Hint bar: type a hint and Send it to the agent for the next turn(s).
@@ -127,6 +155,10 @@ class ThoughtsWindow:
                     except Exception:
                         pass
                     self._ctx_lbl.config(text=label)
+                elif kind == "topics_tree":
+                    self._rebuild_topics(payload)
+                elif kind == "npc_tree":
+                    self._rebuild_chars(payload)
                 elif kind in self._panes:
                     w = self._panes[kind]
                     w.delete("1.0", "end")
@@ -139,6 +171,68 @@ class ThoughtsWindow:
     def mainloop(self) -> None:
         if self._root is not None:
             self._root.mainloop()
+
+    # -- tree rebuilders (main thread) ----------------------------------------
+    def _expanded_ids(self, tree) -> set:
+        """Top-level item ids (by their text) currently expanded, so a rebuild
+        keeps the user's open nodes open."""
+        out = set()
+        for iid in tree.get_children(""):
+            if tree.item(iid, "open"):
+                out.add(tree.item(iid, "text"))
+        return out
+
+    def _rebuild_topics(self, topics: list) -> None:
+        """topics: list of {name, npcs, mentions:[{npc,said}]} sorted by the
+        driver (most-discussed first)."""
+        tree = self._topic_tree
+        keep_open = self._expanded_ids(tree)
+        tree.delete(*tree.get_children(""))
+        for t in topics or []:
+            name = t.get("name", "?")
+            ments = t.get("mentions", [])
+            meta = f"{t.get('npcs', 0)}n / {len(ments)}l"
+            parent = tree.insert("", "end", text=name, values=(meta,),
+                                 open=(name in keep_open))
+            for m in ments:
+                who = m.get("npc", "?")
+                said = (m.get("said", "") or "")[:120]
+                tree.insert(parent, "end", text=f"{who}: {said}", values=("",))
+
+    def _rebuild_chars(self, chars: list) -> None:
+        """chars: list of {name, times_talked, transcript:[{said|me}],
+        topics_asked:[], topics_unasked:[], notes:[]}"""
+        tree = self._char_tree
+        keep_open = self._expanded_ids(tree)
+        tree.delete(*tree.get_children(""))
+        for c in chars or []:
+            name = c.get("name", "?")
+            meta = f"x{c.get('times_talked', 0)}"
+            parent = tree.insert("", "end", text=name, values=(meta,),
+                                 open=(name in keep_open))
+            # Transcript subtree
+            tr = c.get("transcript", [])
+            if tr:
+                tnode = tree.insert(parent, "end", text=f"transcript ({len(tr)})", values=("",))
+                for e in tr:
+                    if "said" in e:
+                        line = f"{name}: {e['said'][:110]}"
+                    else:
+                        line = f"you asked: {e.get('me', '')[:60]}"
+                    tree.insert(tnode, "end", text=line, values=("",))
+            # Topics asked / unasked
+            ua = c.get("topics_unasked", [])
+            if ua:
+                unode = tree.insert(parent, "end", text=f"not yet asked ({len(ua)})", values=("",))
+                for topic in ua:
+                    tree.insert(unode, "end", text=topic, values=("",))
+            asked = c.get("topics_asked", [])
+            if asked:
+                anode = tree.insert(parent, "end", text=f"asked ({len(asked)})", values=("",))
+                for topic in asked:
+                    tree.insert(anode, "end", text=topic, values=("",))
+            for note in c.get("notes", [])[-6:]:
+                tree.insert(parent, "end", text=f"note: {note[:110]}", values=("",))
 
     def close(self) -> None:
         if self._root is not None:
@@ -172,7 +266,17 @@ class ThoughtsWindow:
         self._q.put(("quests", text))
 
     def set_npcs(self, text: str) -> None:
-        self._q.put(("npcs", text))
+        # Superseded by the Characters tree; kept as a no-op for compatibility.
+        pass
+
+    def set_topics_tree(self, topics: list) -> None:
+        """topics: list of {name, npcs, mentions:[{npc,said}]}."""
+        self._q.put(("topics_tree", topics))
+
+    def set_npc_tree(self, chars: list) -> None:
+        """chars: list of {name, times_talked, transcript, topics_asked,
+        topics_unasked, notes}."""
+        self._q.put(("npc_tree", chars))
 
     def set_stats(self, text: str) -> None:
         self._q.put(("stats", text))

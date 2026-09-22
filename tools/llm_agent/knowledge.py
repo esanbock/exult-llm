@@ -497,6 +497,37 @@ class KnowledgeBase:
         return "\n".join(f"  {t['topic']}  ({t['npcs']} npc, {t['learned']} lines)"
                          for t in tv)
 
+    def topics_tree_data(self, limit: int = 40) -> list:
+        """Structured topic data for the GUI tree: most-discussed first, each
+        with its mentions."""
+        recs = sorted(self.topics.values(),
+                      key=lambda r: -len(r.get("mentions", [])))
+        out = []
+        for r in recs[:limit]:
+            out.append({"name": r.get("name", "?"),
+                        "npcs": len(r.get("npcs", [])),
+                        "mentions": r.get("mentions", [])[-24:]})
+        return out
+
+    def npcs_tree_data(self, limit: int = 40) -> list:
+        """Structured per-character data for the GUI tree: transcript, topics
+        asked/unasked, notes. Most-talked-to first."""
+        recs = sorted(self.npcs.values(),
+                      key=lambda r: -r.get("times_talked", 0))
+        out = []
+        for r in recs[:limit]:
+            offered = r.get("topics_offered", [])
+            asked = set(r.get("topics_asked", []))
+            out.append({
+                "name": r.get("name", "?"),
+                "times_talked": r.get("times_talked", 0),
+                "transcript": r.get("transcript", [])[-40:],
+                "topics_asked": r.get("topics_asked", []),
+                "topics_unasked": [t for t in offered if t not in asked],
+                "notes": r.get("notes", []),
+            })
+        return out
+
     def recall_npc(self, npc: str) -> dict:
         """Full retrievable record of a character: everything they said (their
         transcript), the topics offered, and which topics we already asked.
