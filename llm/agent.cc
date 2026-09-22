@@ -469,7 +469,47 @@ namespace LLM_agent {
 		// you take what you want and "close" it.
 		{
 			Gump_manager* gm = gwin->get_gump_man();
-			os << ',' << json_bool("gump_open", gm && gm->showing_gumps(true));
+			const bool open = gm && gm->showing_gumps(true);
+			os << ',' << json_bool("gump_open", open);
+			// Report the contents of the container whose gump is ACTUALLY open,
+			// so the driver loots the right thing (not some other nearby bag).
+			// Scan nearby objects; the one with an open gump is the open one.
+			os << ',' << "\"gump_contents\":[";
+			if (open && av) {
+				const Tile_coord at = av->get_tile();
+				Game_object_vector cobjs;
+				Game_object::find_nearby(cobjs, at, -1, 6, 128);
+				Container_game_object* opencont = nullptr;
+				for (Game_object* obj : cobjs) {
+					if (!obj) {
+						continue;
+					}
+					Container_game_object* cc = obj->as_container();
+					if (cc && gm->find_gump(obj)) {
+						opencont = cc;
+						break;
+					}
+				}
+				if (opencont) {
+					bool cfirst = true;
+					Object_iterator it(opencont->get_objects());
+					Game_object* inner;
+					int ccount = 0;
+					while ((inner = it.get_next()) != nullptr && ccount < 30) {
+						const std::string inm = inner->get_name();
+						if (inm.empty()) {
+							continue;
+						}
+						if (!cfirst) {
+							os << ',';
+						}
+						cfirst = false;
+						os << '"' << json_escape(inm) << '"';
+						++ccount;
+					}
+				}
+			}
+			os << ']';
 		}
 
 		// Nearby NPCs.

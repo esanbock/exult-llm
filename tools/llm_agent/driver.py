@@ -101,8 +101,13 @@ you intend to do - keep your quest log current and prioritized.
                                 your last move was blocked.
   world_loaded (bool)         - is a game world loaded
   gump_open (bool)            - a container/body window is OPEN and blocks your
-                                movement. "take" the items you want (their names
-                                are in objects[].contents), then "close" it.
+                                movement. The items INSIDE the open window are
+                                listed in "gump_contents" (NOT objects[].contents,
+                                which are other nearby containers). "take" the
+                                ones you want by name, then "close" it. If
+                                gump_contents is empty, just "close".
+  gump_contents (list)        - item names inside the currently OPEN container/
+                                body window (empty if it holds nothing).
   player: {tx,ty (your tile), hp, dead, food}
   in_combat (bool)            - are you in combat mode
   conversation_in_progress (bool) - true while a conversation is open (faces shown)
@@ -1107,11 +1112,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             pass  # let the model's own take/close/equip proceed
         else:
             session["gump_wait"] = session.get("gump_wait", 0) + 1
-            # Grab any remaining named contents, then close.
-            loot = []
-            for ob in (state.get("objects") or []):
-                for c in (ob.get("contents") or []):
-                    loot.append(c)
+            # Loot ONLY the container whose gump is actually open (reported as
+            # gump_contents by the engine), not every nearby container - that
+            # bug made us 'take torch/scroll' from a different bag when the open
+            # body was already empty.
+            loot = list(state.get("gump_contents") or [])
             already = session.setdefault("gump_taken", set())
             todo = [c for c in loot if c not in already]
             if todo and session["gump_wait"] <= 6:
