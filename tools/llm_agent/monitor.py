@@ -38,7 +38,7 @@ def _read_mem():
 def main():
     lines = _read_log()
     mem = _read_mem()
-    pos_lines = [l for l in lines if re.match(r"^\[\d{3}\] pos=", l)]
+    pos_lines = [l for l in lines if re.match(r"^\[\d{3,}\] pos=", l)]
     turns = len(pos_lines)
     parse_fails = sum(1 for l in lines if "parse-fail" in l)
 
