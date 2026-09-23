@@ -703,6 +703,19 @@ class KnowledgeBase:
     def record_action(self, text: str) -> None:
         if not text:
             return
+        # Suppress consecutive duplicates and low-value filler ("looked around",
+        # bare gotos) so the recent_actions window keeps MEANINGFUL outcomes
+        # (e.g. "search bag -> EMPTY") visible instead of being flooded by
+        # guard-generated noise. This is what lets the agent SEE what it just
+        # did and stop re-deriving a dead goal.
+        _low = ("looked around", "examined", "waited")
+        if self.action_history:
+            prev = self.action_history[-1]
+            if prev == text:
+                return                       # exact repeat -> skip
+            if any(text.startswith(w) for w in _low) and \
+               any(prev.startswith(w) for w in _low):
+                return                       # consecutive filler -> skip
         self.action_history.append(text)
         self.action_history = self.action_history[-self.ACTION_WINDOW:]
 

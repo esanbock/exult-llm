@@ -576,11 +576,15 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         topics = kb.topics_view(8 if lvl >= 2 else 16)
         if topics:
             view["known_topics"] = topics
-        # Spots already searched and empty - so the agent stops returning to the
-        # same looted body/container.
-        se = kb.searched_empty_view(8)
+        # Spots already searched and empty - stated IMPERATIVELY so the agent
+        # stops returning to the same looted body/container/bag.
+        se = kb.searched_empty_view(10)
         if se:
-            view["already_searched_empty"] = se
+            view["already_searched_empty_DO_NOT_RETURN"] = se
+            view["already_searched_note"] = (
+                f"You have already searched {len(se)} spot(s) and found them EMPTY "
+                "(listed above). Searching or gotoing them again wastes turns - the "
+                "item is NOT there. Pursue a DIFFERENT lead.")
         # If we're in a conversation, proactively show what we've already asked
         # THIS person and what we have NOT asked yet, so the agent doesn't
         # re-ask covered topics or forget an important one (e.g. "key").
