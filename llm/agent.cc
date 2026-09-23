@@ -682,6 +682,12 @@ namespace LLM_agent {
 				const Tile_coord  ot   = obj->get_tile();
 				const Shape_info& info = obj->get_info();
 				const bool is_body = info.is_body_shape();
+				// A body is only LOOTABLE if it is a container (e.g. the slain
+				// gargoyle you can search). A body-shape that is NOT a container
+				// (e.g. a ritually-murdered corpse) has nothing to take -
+				// searching it is pointless. Distinguish them so the agent
+				// doesn't loop searching a non-lootable corpse.
+				const bool is_lootable_body = is_body && obj->as_container();
 				if (!first) {
 					os << ',';
 				}
@@ -690,8 +696,11 @@ namespace LLM_agent {
 				os << json_str("name", nm);
 				os << ',' << json_int("dx", ot.tx - at.tx);
 				os << ',' << json_int("dy", ot.ty - at.ty);
-				if (is_body) {
-					os << ',' << json_bool("body", true);
+				if (is_lootable_body) {
+					os << ',' << json_bool("body", true);    // searchable/lootable
+				} else if (is_body) {
+					// A corpse with nothing to loot - searching does nothing.
+					os << ',' << json_bool("corpse", true);
 				}
 				// Town EXIT: a portcullis / town gate / gateway is how you leave
 				// the town to the outside world. Flag it so the agent knows this
@@ -1280,8 +1289,46 @@ namespace LLM_agent {
 				return "{\"ok\":false,\"error\":\"no body or container nearby\"}";
 			}
 			const std::string nm = best->get_name();
-			best->activate();    // opens the body/container
-			return "{\"ok\":true,\"did\":\"search\",\"target\":\"" + json_escape(nm) + "\"}";
+			best->activate();    // opens the body/container (shows the gump)
+			// LOOT it: transfer takeable contents into the avatar's inventory,
+			// like a person emptying a bag/chest/corpse. This is what makes
+			// "search" actually useful - just opening the gump left the gold,
+			// food, torches etc. sitting inside. We take everything that is
+			// freely takeable; a non-container corpse simply has nothing.
+			Container_game_object* cont = best->as_container();
+			std::string took;
+			int         took_n = 0;
+			if (cont) {
+				Game_object_vector contents;
+				cont->get_objects(contents, c_any_shapenum, c_any_qual, c_any_framenum);
+				for (Game_object* it : contents) {
+					if (!it) {
+						continue;
+					}
+					const std::string inm = it->get_name();
+					Game_object_shared keep;
+					it->remove_this(&keep);
+					if (av->add(it, false, true)) {
+						if (took_n < 12) {
+							if (took_n) {
+								took += ", ";
+							}
+							took += inm;
+						}
+						++took_n;
+					} else {
+						// Couldn't carry it (too heavy/full) - put it back.
+						cont->add(it, true);
+					}
+				}
+			}
+			if (took_n > 0) {
+				return "{\"ok\":true,\"did\":\"search\",\"target\":\""
+					   + json_escape(nm) + "\",\"looted\":\"" + json_escape(took)
+					   + "\",\"count\":" + std::to_string(took_n) + "}";
+			}
+			return "{\"ok\":true,\"did\":\"search\",\"target\":\""
+				   + json_escape(nm) + "\",\"looted\":\"\",\"empty\":true}";
 		}
 
 		if (type == "pickup") {

@@ -213,7 +213,12 @@ periodically). For finer detail you have the recall/quests tools.
                                 "owned": true - that item is someone's property;
                                 taking it is STEALING (avoid it). Items without
                                 "owned" are free to take. "body":true means a
-                                searchable corpse. "town_exit":true marks a town
+                                LOOTABLE body/container - "search" next to it
+                                empties its contents into your pack. BUT
+                                "corpse_not_lootable":true means a corpse with
+                                NOTHING to take - do NOT search it, it wastes
+                                turns; examine ("look") it instead if curious.
+                                "town_exit":true marks a town
                                 gate/portcullis - the way OUT of town to the
                                 wider world (goto it to leave, once any gate
                                 password/lock is dealt with).
@@ -494,7 +499,10 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "party": [n.get("name") for n in nearby if n.get("in_party") and n.get("name")],
         "objects": [
             {"name": o.get("name"), "dx": o.get("dx"), "dy": o.get("dy"),
-             **({"body": True} if o.get("body") else {})}
+             **({"body": True} if o.get("body") else {}),
+             **({"corpse_not_lootable": True} if o.get("corpse") else {}),
+             **({"owned": True} if o.get("owned") else {}),
+             **({"town_exit": True} if o.get("town_exit") else {})}
             for o in objects[:obj_n]
         ],
         "grid_legend": state.get("grid_legend"),
@@ -1822,6 +1830,36 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             and not state.get("conversation_in_progress")):
         _pp = state.get("player") or {}
         _here = (_pp.get("tx"), _pp.get("ty"))
+        # Non-lootable corpse short-circuit: if the closest body-like thing is a
+        # corpse the engine flagged as NOT a container (nothing to take) and no
+        # real lootable body/container is nearby, searching it is pointless -
+        # examine it instead and tell the agent. (The ritually-murdered human
+        # body vs the lootable gargoyle - general, not plot-specific.)
+        _objs_all = state.get("objects") or []
+        _lootable_near = [o for o in _objs_all
+                          if o.get("body")
+                          and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 4]
+        _corpse_near = [o for o in _objs_all
+                        if o.get("corpse")
+                        and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 4]
+        if _corpse_near and not _lootable_near:
+            session["last_look"] = describe_scene(state, kb)
+            kb.record_action("examined a corpse (not lootable)")
+            action = {"type": "wait"}
+            reason = "(guard) corpse not lootable; examined instead"
+            session["last_bump"] = (
+                "That corpse is NOT a container - it has nothing to take, so "
+                "'search' does nothing on it. You've noted the scene; move on "
+                "(look for a real container/body, loose items, or a person "
+                "with information).")
+            print(f"[{step:03d}] search-guard: corpse not lootable; examine instead")
+
+    # Remaining search-guard logic only applies if the action is STILL a search
+    # (the corpse short-circuit above may have turned it into a wait).
+    if (isinstance(action, dict) and action.get("type") == "search"
+            and not state.get("conversation_in_progress")):
+        _pp = state.get("player") or {}
+        _here = (_pp.get("tx"), _pp.get("ty"))
         # Consider "already looted here" if we're within 2 tiles of any spot we
         # emptied (the agent re-searches slightly different adjacent tiles).
         _looted = session.get("looted_spots", set())
@@ -2176,14 +2214,23 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         outcome = ""
         if atype == "search":
             if _ok:
-                gc = state.get("gump_contents")
-                outcome = " -> EMPTY (nothing to take)" if not gc else f" -> found {gc}"
-                # Remember this exact spot as already-searched-and-empty so the
-                # agent doesn't keep coming back to it (short-term memory).
-                if not gc:
+                # The engine now LOOTS the body/container and reports exactly
+                # what it took ("looted": "gold, bread, torch", "count": N) or
+                # "empty": true. Trust that over the stale gump snapshot.
+                looted_str = result.get("looted") if isinstance(result, dict) else None
+                took_n = result.get("count") if isinstance(result, dict) else None
+                is_empty = result.get("empty") if isinstance(result, dict) else None
+                if took_n:
+                    outcome = f" -> LOOTED {looted_str} ({took_n})"
+                elif is_empty or not looted_str:
+                    outcome = " -> EMPTY (nothing to take)"
+                    # Remember this spot as already-searched-and-empty so the
+                    # agent stops returning to it (short-term memory).
                     pp = state.get("player") or {}
                     kb.mark_searched_empty(pp.get("tx", 0), pp.get("ty", 0),
                                            action.get("name") or "body")
+                else:
+                    outcome = f" -> LOOTED {looted_str}"
             else:
                 outcome = " -> nothing to search here"
         elif atype in ("pickup", "take"):
