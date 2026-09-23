@@ -352,12 +352,15 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
    across many turns. After using one, take a game action the same or next turn.)
 
 # HOW TO DECIDE (policy)
-  1. If conversation_active is true -> use "answer" (pick the index of the reply
-     you want). PRIORITISE topics in "not_yet_asked_this_npc" - especially
-     important ones like a key, password, name, or a person/place mentioned -
-     and avoid re-picking anything in "already_asked_this_npc". Once you have
-     asked the useful unasked topics (or you see the same choices again), END
-     the conversation by choosing the "bye"/"leave" reply. Do NOT loop.
+  1. If conversation_active is true -> use "answer". Be THOROUGH like a good
+     detective: ask EVERY topic in "not_yet_asked_this_npc" before leaving -
+     each one may reveal a lead, a name, a clue, or a new topic. Always ask a
+     person's "name" and "job", and especially any proper noun (a person, place,
+     group, or event - e.g. "Inamo", "stables", "Fellowship"). Asking a topic
+     often UNLOCKS new topics, so keep going until "not_yet_asked_this_npc" is
+     empty. Do NOT leave a conversation early with useful topics unasked. Avoid
+     re-picking anything in "already_asked_this_npc". Only choose "bye"/"leave"
+     once there are no useful unasked topics left.
   2. Else if conversation_in_progress is true (a conversation is open but no
      choices yet) -> use "key" with "space" to advance the NPC's text until the
      answer choices appear. Do NOT "talk" again or "move" during a conversation.
@@ -1458,6 +1461,35 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             reason = f"(guard) ending conversation ({'too long' if too_long else 'looping'})"
         elif chosen_idx is not None:
             picked.add(chosen_idx)
+
+    # 0b) Don't LEAVE a conversation while meaningful topics are unasked - a
+    #     thorough player exhausts the dialogue tree. If the model picks a
+    #     bye/leave answer but there are still useful unasked topics, redirect
+    #     to ask one of them instead. Skip generic closers.
+    if (state.get("conversation_active") and answers
+            and isinstance(action, dict) and action.get("type") == "answer"
+            and not session.get("leaving")):
+        _ci = action.get("index")
+        _choice = answers[_ci].lower() if isinstance(_ci, int) and 0 <= _ci < len(answers) else ""
+        _leaving_choice = any(w in _choice for w in ("bye", "leave", "farewell", "goodbye", "nothing"))
+        if _leaving_choice:
+            _generic = {"name", "job", "bye", "yes", "no", "leave", "farewell",
+                        "goodbye", "nothing", "hello"}
+            # Unasked, non-generic topics still available in the CURRENT menu.
+            cur_npc = session.get("current_npc", "?")
+            asked = set((kb.recall_npc(cur_npc) or {}).get("topics_asked", []))
+            unasked = [(i, a) for i, a in enumerate(answers)
+                       if a.lower() not in _generic and a not in asked]
+            # Also allow 'name'/'job' if not yet asked (a thorough player asks).
+            basic = [(i, a) for i, a in enumerate(answers)
+                     if a.lower() in ("name", "job") and a not in asked]
+            pick = unasked or basic
+            if pick and session.get("topic_push", 0) < 12:
+                session["topic_push"] = session.get("topic_push", 0) + 1
+                action = {"type": "answer", "index": pick[0][0]}
+                reason = f"(guard) exhausting dialogue: asking '{pick[0][1]}' before leaving"
+    if not state.get("conversation_active"):
+        session["topic_push"] = 0
 
     # 1) If a conversation is open but no choices are shown yet, advance text.
     #    But if it has stayed 'in progress' with no choices for many turns
