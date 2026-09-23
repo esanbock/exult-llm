@@ -1463,12 +1463,45 @@ namespace LLM_agent {
 					}
 				}
 			}
-			// Pathfinder gave up (destination too far / complex for its search
-			// budget). Rather than report total failure and leave the agent
-			// spinning, take ONE concrete step toward the destination using the
-			// walk engine (start_actor). This guarantees progress each turn and
-			// lets the agent iteratively approach far targets a few tiles at a
-			// time. We only do this if the immediate step tile is not blocked.
+			// Pathfinder gave up on the exact destination (too far / walls in
+			// the way). A human sees the 2D map and walks to the nearest
+			// reachable spot toward the target, then continues. Emulate that:
+			// try A* to intermediate tiles along the line to the target,
+			// progressively closer to us, and go to the first REACHABLE one.
+			{
+				const int dx = dest.tx - at.tx;
+				const int dy = dest.ty - at.ty;
+				const int dist = std::max(std::abs(dx), std::abs(dy));
+				// Try waypoints at ~90%, 75%, 60%, ... of the way, plus small
+				// lateral offsets, so we route around an obstacle rather than
+				// give up. First reachable waypoint wins.
+				static const double fracs[] = {0.85, 0.7, 0.55, 0.4, 0.25, 0.15};
+				for (double f : fracs) {
+					const int wx = at.tx + static_cast<int>(dx * f);
+					const int wy = at.ty + static_cast<int>(dy * f);
+					// Try the point and a few lateral nudges (to slip around
+					// a wall corner).
+					const int off[][2] = {{0, 0}, {2, 0}, {-2, 0}, {0, 2},
+										  {0, -2}, {3, 3}, {-3, 3}, {3, -3}, {-3, -3}};
+					for (auto& o : off) {
+						Tile_coord wp(
+								(wx + o[0] + c_num_tiles) % c_num_tiles,
+								(wy + o[1] + c_num_tiles) % c_num_tiles, at.tz);
+						if (wp.tx == at.tx && wp.ty == at.ty) {
+							continue;
+						}
+						if (av->walk_path_to_tile(wp, static_cast<int>(speed))) {
+							return "{\"ok\":true,\"did\":\"goto\",\"partial\":true,"
+								   + json_int("tx", wp.tx) + "," + json_int("ty", wp.ty)
+								   + "," + json_int("toward_tx", dest.tx) + ","
+								   + json_int("toward_ty", dest.ty) + "}";
+						}
+					}
+					(void)dist;
+				}
+			}
+			// Last resort: a single walk-step toward the target if the adjacent
+			// tile is free (handles the very-close case).
 			{
 				Game_map* gmap = gwin->get_map();
 				const int ddx  = (dest.tx > at.tx) - (dest.tx < at.tx);
@@ -1478,7 +1511,6 @@ namespace LLM_agent {
 							(at.tx + ddx + c_num_tiles) % c_num_tiles,
 							(at.ty + ddy + c_num_tiles) % c_num_tiles, at.tz);
 					if (!gmap->is_tile_occupied(step)) {
-						// Convert the step into a screen target for start_actor.
 						const int w   = gwin->get_width();
 						const int h   = gwin->get_height();
 						const int sx  = w / 2 + ddx * 40;
