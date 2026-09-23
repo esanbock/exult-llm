@@ -1023,6 +1023,22 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 _near = min(_cands, key=lambda n: abs(n.get("dx", 99)) + abs(n.get("dy", 99)))
                 cur_npc = _near["name"]
                 session["current_npc"] = cur_npc
+        # NAME REVEAL: NPCs are shown by a generic role ("shopkeeper", "peasant",
+        # "guard") until they tell you their name. When a line reveals "My name
+        # is X", merge the generic-role record into the real name so we don't
+        # split one NPC across two records (e.g. shopkeeper -> Apollonia).
+        import re as _re
+        _mn = _re.search(r"[Mm]y name is ([A-Z][A-Za-z'\-]+)", npc_text or "")
+        if _mn:
+            _real = _mn.group(1)
+            _generic_roles = ("shopkeeper", "peasant", "guard", "man", "woman",
+                              "noble", "fighter", "sage", "merchant", "beggar",
+                              "child", "sailor", "monk", "healer", "innkeeper")
+            if cur_npc.lower() in _generic_roles and _real != cur_npc:
+                kb.merge_npc(cur_npc, _real)
+                cur_npc = _real
+                session["current_npc"] = _real
+                print(f"[{step:03d}] name reveal: merged '{_mn.group(0)}' -> {_real}")
         kb.record_npc_line(cur_npc, npc_text)
         # Capture the answer TOPICS offered now (the dialogue-tree branches) so
         # the agent has a persistent record of what it can still ask this NPC.

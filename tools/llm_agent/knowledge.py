@@ -843,6 +843,31 @@ class KnowledgeBase:
         return n
 
     # ----- mental map / places -------------------------------------------
+    def merge_npc(self, from_name: str, to_name: str) -> None:
+        """Merge a generic-role NPC record (e.g. 'shopkeeper') into the real-name
+        record (e.g. 'Apollonia') once the name is revealed, so one NPC isn't
+        split across two records. Combines transcript, topics, notes, counts."""
+        if not from_name or not to_name or from_name == to_name:
+            return
+        src = self.npcs.get(from_name)
+        if not src:
+            return
+        dst = self.npcs.setdefault(to_name, {"name": to_name, "times_talked": 0,
+                                             "notes": []})
+        dst["name"] = to_name
+        dst["times_talked"] = dst.get("times_talked", 0) + src.get("times_talked", 0)
+        # Merge list fields (dedup, preserve order).
+        for fld in ("transcript", "topics_offered", "topics_asked", "notes"):
+            merged = list(dst.get(fld, []))
+            for item in src.get(fld, []):
+                if item not in merged:
+                    merged.append(item)
+            if merged:
+                dst[fld] = merged[-80:] if fld == "transcript" else merged[-40:]
+        if src.get("last_pos") and not dst.get("last_pos"):
+            dst["last_pos"] = src["last_pos"]
+        del self.npcs[from_name]
+
     def mark_searched_empty(self, tx: int, ty: int, name: str = "body") -> None:
         """Remember a spot searched and found EMPTY so the agent stops returning
         to the same looted body/container (short-term-memory aid)."""
