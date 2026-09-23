@@ -340,6 +340,11 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
   key     - Press a key. params: {"key": "space"|"escape"|"a".."z"|"0".."9"}.
             Use "space" to advance NPC text when there is npc_text but no answers.
   combat  - Toggle combat/attack mode on or off. params: none.
+  set_combat_mode - Set how you and your party fight in combat. params:
+            {"mode": one of "nearest"|"weakest"|"strongest"|"berserk"|"defend"|
+            "flank"|"flee"|"protect"|"random"|"manual"}. Guide: "attack weakest"
+            to finish off wounded foes, "defend" (dodge more) when hurt, "flee"
+            to retreat from a losing fight, "berserk" to never retreat.
   feed    - Eat food to refill your food level (prevents starving). params: none.
   save    - Save the game so progress is not lost. params: none. (The driver
             also auto-saves periodically; you rarely need this.)

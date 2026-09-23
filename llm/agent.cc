@@ -977,6 +977,39 @@ namespace LLM_agent {
 			return "{\"ok\":true,\"did\":\"combat\"}";
 		}
 
+		if (type == "set_combat_mode") {
+			// Set how the avatar (and party) fight when in combat. Names map to
+			// Exult's Attack_mode enum.
+			string mode;
+			get_string(action_json, "mode", mode);
+			std::transform(mode.begin(), mode.end(), mode.begin(), ::tolower);
+			static const std::map<std::string, Actor::Attack_mode> modes = {
+				{"nearest", Actor::nearest}, {"weakest", Actor::weakest},
+				{"strongest", Actor::strongest}, {"berserk", Actor::berserk},
+				{"protect", Actor::protect}, {"defend", Actor::defend},
+				{"flank", Actor::flank}, {"flee", Actor::flee},
+				{"random", Actor::random}, {"manual", Actor::manual}};
+			auto it = modes.find(mode);
+			if (it == modes.end()) {
+				return "{\"ok\":false,\"error\":\"unknown combat mode\"}";
+			}
+			Actor* cav = gwin->get_main_actor();
+			if (cav) {
+				cav->set_attack_mode(it->second, true);
+			}
+			// Apply to party members too so the whole group fights consistently.
+			Party_manager* pm = gwin->get_party_man();
+			if (pm) {
+				for (int i = 0; i < pm->get_count(); ++i) {
+					Game_object* m = gwin->get_npc(pm->get_member(i));
+					if (Actor* ma = m ? m->as_actor() : nullptr) {
+						ma->set_attack_mode(it->second, true);
+					}
+				}
+			}
+			return "{\"ok\":true,\"did\":\"set_combat_mode\"," + json_str("mode", mode) + "}";
+		}
+
 		if (type == "combat_pause") {
 			ActionCombatPause(nullptr);
 			return "{\"ok\":true,\"did\":\"combat_pause\"}";
