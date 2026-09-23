@@ -693,6 +693,20 @@ namespace LLM_agent {
 				if (is_body) {
 					os << ',' << json_bool("body", true);
 				}
+				// Town EXIT: a portcullis / town gate / gateway is how you leave
+				// the town to the outside world. Flag it so the agent knows this
+				// is the way out (a human recognises the big gate on sight).
+				{
+					std::string _lo = nm;
+					std::transform(_lo.begin(), _lo.end(), _lo.begin(), ::tolower);
+					if (_lo.find("portcullis") != std::string::npos
+							|| _lo.find("gateway") != std::string::npos
+							|| (_lo.find("gate") != std::string::npos
+								&& _lo.find("gateway") == std::string::npos
+								&& _lo.find("fence") == std::string::npos)) {
+						os << ',' << json_bool("town_exit", true);
+					}
+				}
 				// Ownership: an item flagged okay_to_take is free to take;
 				// otherwise it may be someone's property (taking it is theft).
 				// Report owned=true for not-okay-to-take, non-body items so the

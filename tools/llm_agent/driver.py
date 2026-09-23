@@ -185,7 +185,10 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
                                 "owned": true - that item is someone's property;
                                 taking it is STEALING (avoid it). Items without
                                 "owned" are free to take. "body":true means a
-                                searchable corpse.
+                                searchable corpse. "town_exit":true marks a town
+                                gate/portcullis - the way OUT of town to the
+                                wider world (goto it to leave, once any gate
+                                password/lock is dealt with).
   grid (string)               - top-down ASCII map centered on you (@):
                                   @ you   C companion   & other NPC   x body
                                   T tree   W wall/building   = fence/gate
