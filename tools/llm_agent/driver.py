@@ -1791,6 +1791,31 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             session["wedge_recent"] = []
             action = {"type": "goto", "tx": px + best[0], "ty": py + best[1]}
             reason = f"(guard) oscillation trap; committing to far tile ({px+best[0]},{py+best[1]})"
+        elif _force_step:
+            # Trapped and the visible flood-fill can't find a far tile (a tortuous
+            # pocket). Escape via the engine's FULL pathfinder: goto a remembered
+            # open place (which uses A* over the whole map, not just the visible
+            # grid). Rotate through known places so we don't retry a bad one.
+            session["wedge_recent"] = []
+            _places = kb.places_view(px, py, limit=8) if kb else []
+            _far = [pl for pl in _places
+                    if abs(pl.get("dx", 0)) + abs(pl.get("dy", 0)) >= 6]
+            _idx = session.get("trap_place_idx", 0)
+            if _far:
+                _pl = _far[_idx % len(_far)]
+                session["trap_place_idx"] = _idx + 1
+                _ptx = px + _pl.get("dx", 0)
+                _pty = py + _pl.get("dy", 0)
+                action = {"type": "goto", "tx": _ptx, "ty": _pty}
+                reason = f"(guard) trap; routing to known place '{_pl.get('name')}' via full A*"
+            else:
+                # No far place known: step toward the single open neighbor.
+                _dd = {"n": (0,-1),"s": (0,1),"e": (1,0),"w": (-1,0),
+                       "ne": (1,-1),"nw": (-1,-1),"se": (1,1),"sw": (-1,1)}
+                _pk = next((d for d, (ddx, ddy) in _dd.items()
+                            if _cell(ddx, ddy) in WALK), "w")
+                action = {"type": "move", "dir": _pk, "speed": 120}
+                reason = f"(guard) trap; stepping {_pk} toward the only opening"
         elif best and best_d >= 2 and not _force_step:
             action = {"type": "goto", "tx": px + best[0], "ty": py + best[1]}
             reason = f"(guard) wedged; flood-fill escape to open tile ({px+best[0]},{py+best[1]})"
