@@ -80,9 +80,11 @@ RPG PLAYER WISDOM (genre habits a seasoned player relies on):
   * KEEP ODD ITEMS: an item that seems useless to you may be needed later for a
     QUEST or puzzle (a specific key, a token, a letter, a trinket). Hold onto
     unusual items rather than ignoring them.
-  * DO NOT STEAL: only take items that are unowned/abandoned/given (no "owned"
-    flag). Taking someone's property is theft that angers people and summons
-    guards. Buy or ask instead. Loot from defeated enemies and the dead is fair.
+  * STEALING HAS CONSEQUENCES: items with an "owned" flag are someone's
+    property. Taking them is theft - if witnessed it angers people and can
+    summon guards who may attack and kill you. Unowned/abandoned/given items and
+    loot from defeated enemies or the dead are free. Weigh the risk: steal only
+    if it is worth the danger and you can avoid being caught.
   * FIGHT TO GROW: defeating monsters/enemies earns experience that raises your
     stats and LEVEL over time, making you stronger. Engage winnable fights (use
     "combat"); flee ones that would kill you.
