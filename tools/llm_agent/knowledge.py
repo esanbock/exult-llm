@@ -809,6 +809,19 @@ class KnowledgeBase:
         if len(self.episodic_summary) > 1500:
             self.episodic_summary = "..." + self.episodic_summary[-1500:]
 
+    # Max length of the LLM-maintained plot summary (a few hundred tokens).
+    PLOT_SUMMARY_MAX = 1200
+
+    def set_plot_summary(self, text: str) -> None:
+        """The LLM REPLACES its running plot summary with an updated version.
+        This is the always-in-context 'story so far' the agent maintains itself
+        (for full detail it uses recall/quests tools). Bounded so it can't bloat
+        the context."""
+        text = (text or "").strip()
+        if not text:
+            return
+        self.episodic_summary = text[:self.PLOT_SUMMARY_MAX]
+
     # Phrases whose presence makes an old dialogue line worth preserving as gist
     # when it scrolls out of the raw window (clues/tasks), vs. dropping chit-chat.
     _KEEP_GIST = (

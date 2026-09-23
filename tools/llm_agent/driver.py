@@ -139,6 +139,17 @@ whenever you form a theory or learn something meaningful about a subject; add a
 NEW note to the same topic name as your understanding evolves, so your thinking
 accumulates over time. Use "recall" with a topic name to review all your notes.
 
+You should also MAINTAIN A RUNNING PLOT SUMMARY: include an optional
+"plot_summary" field (<=1000 chars) in your reply to record the overall story so
+far - who and what matter, key clues, and your current objective. It replaces
+the previous summary and is ALWAYS kept in your context as "story_so_far", so
+update it whenever something important happens (you'll also be reminded
+periodically). For finer detail you have the recall/quests tools.
+  {"action": {"type": "wait"}, "plot_summary": "Trinsic: blacksmith Christopher
+   murdered; a man+wingless gargoyle fled to the dock. I have his chest key.
+   Need: report to Mayor Finnigan for the gate password to leave.",
+   "reason": "record progress"}
+
 # STATE SCHEMA (what you receive each turn)
   alert (string, optional)    - urgent guidance for THIS turn. If it contains a
                                 "HINT from your operator", follow that hint as
@@ -258,9 +269,9 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
       failed or found nothing.
   already_searched_empty (list) - bodies/containers you ALREADY searched and
       found empty. Do NOT return to search these again - move on.
-  story_so_far: a compact running summary of OLDER events/clues that have
-      scrolled out of recent_dialogue. Older detail is compressed here (not
-      lost) so you can still recall earlier story and leads on a long journey.
+  story_so_far: YOUR running plot summary (you maintain it via "plot_summary").
+      Always in context - the big picture of the story, key clues, and current
+      objective. Keep it updated; use recall/quests tools for finer detail.
   operator_hints: guidance your human operator has given you over time (newest
       last). Treat these as important standing instructions, not just for one
       turn - honor earlier hints even if they are no longer repeated.
@@ -1112,6 +1123,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 session.pop("hint", None)
         if session.get("last_bump"):
             alert_parts.append(session["last_bump"])
+        # Periodically remind the agent to refresh its running plot summary so
+        # 'story_so_far' stays current (it's the always-in-context memory; detail
+        # is in recall/quests tools). Every ~15 turns.
+        if step > 0 and step % 15 == 0:
+            alert_parts.append(
+                "Update your running plot summary now: include a \"plot_summary\" "
+                "field (<=1000 chars) capturing the overall story so far - who/what "
+                "matters, key clues, and your current objective.")
         alert = "  ".join(alert_parts)
         # --- Context budget feedback loop -------------------------------
         # Decide how hard to squeeze the raw context tiers based on LAST turn's
@@ -1218,6 +1237,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     print(f"[{step:03d}] inline add_topic: {tname!r} -> {tkey}")
                 elif isinstance(t, str) and t.strip():
                     kb.add_topic(t.strip(), "", step)
+            # Inline PLOT SUMMARY: the LLM maintains a running "story so far" it
+            # keeps updated. Replaces the bounded summary that's always in
+            # context (for detail it uses recall/quests). Accept a few key names.
+            _ps = _obj.get("plot_summary") or _obj.get("story_so_far") or _obj.get("summary")
+            if isinstance(_ps, str) and _ps.strip():
+                kb.set_plot_summary(_ps)
+                print(f"[{step:03d}] plot summary updated ({len(_ps)} chars)")
         # Track context usage so we can see if the prompt is bloating/truncating.
         pt = res.get("prompt_tokens", 0)
         session["last_prompt_tokens"] = pt
