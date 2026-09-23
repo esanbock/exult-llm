@@ -103,8 +103,13 @@ class OllamaClient:
                 {"role": "user", "content": user},
             ],
             "stream": False,
+            # Reasoning models (gpt-oss) emit a separate chain-of-thought that
+            # consumes response tokens BEFORE the JSON. Giving generous headroom
+            # (num_predict) lets both the thinking and the JSON fit, avoiding
+            # empty replies. (Do NOT disable thinking AND use format=json for
+            # gpt-oss - that combination triggers a repeat-loop abort.)
             "options": {"temperature": temperature, "num_ctx": self.num_ctx,
-                        "num_predict": 768},
+                        "num_predict": 2048},
         }
         if force_json:
             payload["format"] = "json"
