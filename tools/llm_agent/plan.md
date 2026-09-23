@@ -117,3 +117,6 @@ Working (validated by direct play):
   DOES work from a few tiles away without a walking path (finds visible npc),
   which helps. Possible future aid: a "path exists?" check or letting goto route
   to a remembered npc even when off-screen (driver already maps name->last_pos).
+
+## Future capability
+- SPELLCASTING: no cast action exists yet. Ultima VII has a spellbook + reagents. Add a 'cast' action (select spell, consume reagents) so the RPG-wisdom 'use magic' guidance becomes real. Removed the spell prompt line for now to avoid pointing the agent at a non-existent tool.
