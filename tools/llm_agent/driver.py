@@ -2111,12 +2111,51 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = _explore_far(state, session, wedged)
                     reason = f"(guard) '{nm}' unknown; exploring to find it"
 
-    # A goto that isn't actually moving the avatar loops forever (the engine
-    # sometimes reports ok/stepped for a goto but the avatar never advances,
-    # while a plain "move" reliably walks several tiles). So: if we didn't move
-    # since last turn, convert this goto into a direct MOVE toward the target -
-    # move is the dependable primitive. Also handle a goto to ~our own tile.
-    if isinstance(action, dict) and action.get("type") == "goto" and "tx" in action:
+    # --- Emptied-body magnet guard: the agent (often driven by a stale plot
+    #     summary that says a body is "unsearched") keeps issuing goto toward a
+    #     spot it ALREADY searched and found empty. Intercept a goto that lands
+    #     on/near such a spot when nothing new is there, tell it the body was
+    #     empty, and redirect - this breaks the back-and-forth without being
+    #     plot-specific. --------------------------------------------------------
+    if (isinstance(action, dict) and action.get("type") == "goto" and "tx" in action
+            and not state.get("conversation_in_progress")):
+        _tgt = (action.get("tx"), action.get("ty"))
+        _empties = [(v.get("tx"), v.get("ty"))
+                    for v in (kb.searched_empty or {}).values()
+                    if v.get("tx") is not None]
+        _to_empty = any(_tgt[0] is not None
+                        and abs(_tgt[0] - ex) + abs(_tgt[1] - ey) <= 2
+                        for (ex, ey) in _empties)
+        # Is there anything actually worth going there for RIGHT NOW? A fresh
+        # lootable body or unowned notable loot near that target overrides the
+        # guard (don't block a legit reason).
+        _worth = any(
+            (o.get("body") or (o.get("name") and not o.get("owned")
+                               and kb.is_notable_object(o.get("name"))
+                               and not o.get("corpse")))
+            and _tgt[0] is not None
+            and abs((state.get("player") or {}).get("tx", 0) + o.get("dx", 0) - _tgt[0])
+                + abs((state.get("player") or {}).get("ty", 0) + o.get("dy", 0) - _tgt[1]) <= 2
+            for o in (state.get("objects") or []))
+        if _to_empty and not _worth:
+            n = session.get("empty_magnet", 0) + 1
+            session["empty_magnet"] = n
+            if n >= 2:
+                session["empty_magnet"] = 0
+                session["last_bump"] = (
+                    "You keep heading back to a body you ALREADY searched and "
+                    "found EMPTY - there is nothing left there. Your plot summary "
+                    "may still say it's 'unsearched'; UPDATE it (set story_so_far) "
+                    "to record that the body was empty, then pursue a different "
+                    "lead: talk to people for clues, explore new buildings, or "
+                    "act on a quest.")
+                action = _explore_far(state, session, wedged)
+                reason = "(guard) emptied-body magnet; redirecting to explore"
+                print(f"[{step:03d}] goto-guard: emptied-body magnet; redirect")
+        else:
+            session["empty_magnet"] = 0
+
+
         _pp = state.get("player") or {}
         here = (_pp.get("tx"), _pp.get("ty"))
         tgt = (action["tx"], action["ty"])
