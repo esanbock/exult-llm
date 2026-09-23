@@ -164,7 +164,16 @@ periodically). For finer detail you have the recall/quests tools.
                                 gump_contents is empty, just "close".
   gump_contents (list)        - item names inside the currently OPEN container/
                                 body window (empty if it holds nothing).
-  player: {tx,ty (your tile), hp, dead, food}
+  player: {tx,ty (your absolute tile on the world map), hp, dead, food}
+                                COORDINATES: everything uses ONE consistent frame.
+                                Your tile is (tx,ty). Every object/person gives a
+                                RELATIVE offset {dx,dy} from you, so its absolute
+                                tile is (tx+dx, ty+dy). The ASCII map is centered
+                                on you (@ = your tile); moving right/east is +dx,
+                                down/south is +dy. To walk somewhere, "goto" an
+                                absolute (tx,ty) - e.g. an object at dx=5,dy=-3
+                                means goto (tx+5, ty-3). You do NOT need the map's
+                                coordinate range; @ is always your anchor.
   time_of_day (string)        - morning/afternoon/evening/night, plus hour (0-23)
                                 and is_night. At night most townsfolk are asleep
                                 (see condition:"sleeping"); use "wait_until" to
