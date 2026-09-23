@@ -800,12 +800,21 @@ def _pursue_focus_quest(state: dict, kb: "KnowledgeBase"):
     position. Returns (action, reason) or (None, None) if not applicable."""
     party = {n.get("name") for n in (state.get("nearby") or []) if n.get("in_party")}
     qv = kb.quest_view()
-    # Consider the focus quest, then other actionable quests, skipping any whose
-    # NPC is a party companion (they follow you, so "go to them" is pointless).
+    known_npcs = list(kb.npcs.keys())
     for focus in qv.get("open", []):
         if not focus:
             continue
         npc = focus.get("npc")
+        # If the quest has no explicit npc, try to infer one from its title by
+        # matching a known NPC name (e.g. "Speak to Mayor Finnigan" -> Finnigan).
+        # gemma often names the NPC in the title but not the npc field.
+        if not npc:
+            title = (focus.get("title") or "")
+            for kn in known_npcs:
+                if kn and kn.lower() in title.lower() and kn.lower() not in (
+                        "dog", "cat", "horse", "sheep", "fox"):
+                    npc = kn
+                    break
         if not npc or npc in party:
             continue
         # Is the quest's NPC visible right now?
