@@ -531,15 +531,28 @@ namespace LLM_agent {
 		// Nearby NPCs.
 		os << ',' << "\"nearby\":[";
 		{
-			std::vector<Actor*> list;
-			gwin->get_nearby_npcs(list);
-			bool                first = true;
-			const Tile_coord    at    = av ? av->get_tile() : Tile_coord(0, 0, 0);
-			int                 count = 0;
-			for (Actor* npc : list) {
+			const Tile_coord at = av ? av->get_tile() : Tile_coord(0, 0, 0);
+			// Use a STABLE radius-based actor scan rather than the volatile
+			// proximity manager (get_nearby_npcs flickered turn-to-turn and
+			// reported NPCs from far off inconsistently). This gives the agent a
+			// consistent, screen-like view of who is nearby - what a human sees.
+			Actor_vector actors;
+			if (av) {
+				Game_object::find_nearby_actors(actors, at, c_any_shapenum, 24);
+			}
+			std::vector<std::pair<int, Actor*>> sorted;
+			for (Actor* npc : actors) {
 				if (!npc || npc == av) {
 					continue;
 				}
+				const Tile_coord nt = npc->get_tile();
+				sorted.emplace_back(std::abs(nt.tx - at.tx) + std::abs(nt.ty - at.ty), npc);
+			}
+			std::sort(sorted.begin(), sorted.end(),
+					  [](const auto& a, const auto& b) { return a.first < b.first; });
+			bool first = true;
+			int  count = 0;
+			for (auto& [d, npc] : sorted) {
 				if (count++ >= 24) {    // cap payload size
 					break;
 				}
