@@ -892,31 +892,11 @@ class KnowledgeBase:
         if len(self.searched_empty) > 20:
             for k in list(self.searched_empty)[:-20]:
                 del self.searched_empty[k]
-        # Correct a stale plot summary that still calls this body "unsearched" -
-        # a false belief there actively drags the agent back to the empty body.
-        # We only neutralise the contradicting clause; the LLM still owns the
-        # summary and can rewrite it. (General: any body/corpse "unsearched".)
-        summ = self.episodic_summary or ""
-        if summ:
-            import re as _re
-            low = summ.lower()
-            if ("unsearched" in low or "search the body" in low
-                    or "search body" in low or "need evidence from body" in low
-                    or _re.search(r"search[^.;]*\bbody\b", low)):
-                new = summ
-                # "... body ... unsearched ..." clause
-                new = _re.sub(
-                    r"[^.;]*\b(body|corpse)\b[^.;]*\bunsearched\b[^.;]*[.;]?",
-                    " (body already searched: empty.)", new, flags=_re.IGNORECASE)
-                # "search (the) body ... for clues" objective clauses
-                new = _re.sub(
-                    r"[^.;]*\bsearch(ing)?\s+(the\s+)?(body|corpse)\b[^.;]*[.;]?",
-                    "", new, flags=_re.IGNORECASE)
-                new = _re.sub(r"need evidence from (the )?body[,;]?",
-                              "", new, flags=_re.IGNORECASE)
-                # tidy leftover doubled separators/spaces
-                new = _re.sub(r"\s{2,}", " ", _re.sub(r"[;.]\s*[;.]", ".", new))
-                self.episodic_summary = new.strip().strip(";.").strip()[:600]
+        # NOTE: we do NOT rewrite the LLM's own plot summary here - editing its
+        # prose with regex is fragile and can mangle unrelated text. Instead the
+        # empty spots are surfaced authoritatively via already_searched_empty in
+        # the per-turn state, and the goto-guard intercepts repeat visits. The
+        # LLM updates its own narrative when prompted by those signals.
 
     def searched_empty_view(self, limit: int = 8) -> list:
         """Recent already-searched-empty spots for the prompt, so the agent

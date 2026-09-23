@@ -1158,6 +1158,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 "Update your running plot summary now: include a \"plot_summary\" "
                 "field (<=1000 chars) capturing the overall story so far - who/what "
                 "matters, key clues, and your current objective.")
+        # Contradiction check (any turn, cheap): if the plot summary still frames
+        # a body/search as a goal but we've already searched bodies empty, flag
+        # it so the LLM rewrites its OWN narrative (we never edit its prose).
+        _summ_low = (kb.episodic_summary or "").lower()
+        if (kb.searched_empty and "body" in _summ_low
+                and ("search" in _summ_low or "unsearched" in _summ_low
+                     or "evidence" in _summ_low)):
+            alert_parts.append(
+                "NOTE: your plot summary still treats searching a body as a goal, "
+                "but already_searched_empty shows you already emptied it (nothing "
+                "there). Rewrite \"plot_summary\" to drop that dead lead and set a "
+                "real next objective (a person to ask, a place to explore).")
         alert = "  ".join(alert_parts)
         # --- Context budget feedback loop -------------------------------
         # Decide how hard to squeeze the raw context tiers based on LAST turn's
@@ -2111,12 +2123,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = _explore_far(state, session, wedged)
                     reason = f"(guard) '{nm}' unknown; exploring to find it"
 
-    # --- Emptied-body magnet guard: the agent (often driven by a stale plot
-    #     summary that says a body is "unsearched") keeps issuing goto toward a
-    #     spot it ALREADY searched and found empty. Intercept a goto that lands
-    #     on/near such a spot when nothing new is there, tell it the body was
-    #     empty, and redirect - this breaks the back-and-forth without being
-    #     plot-specific. --------------------------------------------------------
+    # --- Emptied-body magnet: the agent sometimes keeps issuing goto toward a
+    #     spot it ALREADY searched empty. PRINCIPLE: make the agent self-
+    #     sufficient - INFORM it (don't seize its action) so it can decide, and
+    #     only override as a last resort if it's truly stuck in an infinite
+    #     loop despite being told. We never edit its memory to move it along.
     if (isinstance(action, dict) and action.get("type") == "goto" and "tx" in action
             and not state.get("conversation_in_progress")):
         _tgt = (action.get("tx"), action.get("ty"))
@@ -2126,9 +2137,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _to_empty = any(_tgt[0] is not None
                         and abs(_tgt[0] - ex) + abs(_tgt[1] - ey) <= 2
                         for (ex, ey) in _empties)
-        # Is there anything actually worth going there for RIGHT NOW? A fresh
-        # lootable body or unowned notable loot near that target overrides the
-        # guard (don't block a legit reason).
+        # A fresh lootable body or unowned notable loot at the target is a
+        # legitimate reason - never interfere with that.
         _worth = any(
             (o.get("body") or (o.get("name") and not o.get("owned")
                                and kb.is_notable_object(o.get("name"))
@@ -2140,18 +2150,22 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if _to_empty and not _worth:
             n = session.get("empty_magnet", 0) + 1
             session["empty_magnet"] = n
-            if n >= 2:
+            # INFORM every time: give the agent the fact so it can self-correct.
+            session["last_bump"] = (
+                "Heads up: that destination is a body/spot you ALREADY searched "
+                "and found EMPTY (see already_searched_empty). There is nothing "
+                "to gain there. If your plot summary still lists it as a goal, "
+                "rewrite \"plot_summary\" to drop it and choose a real lead "
+                "(a person to ask, a place to explore). Your call.")
+            # LAST-RESORT override only if it ignores the info repeatedly (hard
+            # loop) - purely to prevent an infinite stall, not to steer content.
+            if n >= 4:
                 session["empty_magnet"] = 0
-                session["last_bump"] = (
-                    "You keep heading back to a body you ALREADY searched and "
-                    "found EMPTY - there is nothing left there. Your plot summary "
-                    "may still say it's 'unsearched'; UPDATE it (set story_so_far) "
-                    "to record that the body was empty, then pursue a different "
-                    "lead: talk to people for clues, explore new buildings, or "
-                    "act on a quest.")
                 action = _explore_far(state, session, wedged)
-                reason = "(guard) emptied-body magnet; redirecting to explore"
-                print(f"[{step:03d}] goto-guard: emptied-body magnet; redirect")
+                reason = "(guard) stuck looping on an emptied body; forcing explore"
+                print(f"[{step:03d}] goto-guard: hard loop on emptied body -> explore")
+            else:
+                print(f"[{step:03d}] goto-guard: informed about emptied spot (x{n})")
         else:
             session["empty_magnet"] = 0
 
