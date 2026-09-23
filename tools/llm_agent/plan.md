@@ -72,3 +72,23 @@ Working (validated by direct play):
   (--nomenu resumes gamedat only if IDENTITY exists and it wasn't overwritten).
 - Re-apply audio config after Exult restarts (effects/speech enabled revert).
 - Conversations need ~2-3s to open; don't rush space-presses.
+- Exult occasionally exits on its own between long idle periods; check + relaunch.
+
+## Session progress (driving by hand)
+- Morning reached via wait_until; witnesses awake.
+- Petre (stablehand): footprints "lead out the back way... tracks of the
+  murderer"; Spark = Christopher's son (Christopher = the murdered blacksmith,
+  a.k.a. the victim/Gilberto).
+- Johnson (gate guard): has the "Hook" topic; "A man with a hook" - the clue
+  that (should) unlock "hook" as the report villain-description answer.
+- Report chain confirmed: chest = "all of these" (verified), suspect = Yes,
+  villain = need "hook" (pegleg rejected). password gated behind a satisfactory
+  report.
+
+## Known friction (not a code bug)
+- WANDERING NPCs: Finnigan/Johnson/Spark roam widely; goto-by-name only resolves
+  VISIBLE npcs, and goto-to-last_pos often "no path" through the stable's
+  internal walls. Reaching a specific wandering NPC costs many turns. talk()
+  DOES work from a few tiles away without a walking path (finds visible npc),
+  which helps. Possible future aid: a "path exists?" check or letting goto route
+  to a remembered npc even when off-screen (driver already maps name->last_pos).
