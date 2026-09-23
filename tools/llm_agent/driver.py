@@ -1861,17 +1861,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     print(f"[{step:03d}] search-guard: goto body '{bnm}' @({btx},{bty})")
                 else:
                     # Nothing searchable anywhere (the agent tried to 'search the
-                    # garbage' etc). search only opens BODIES/CONTAINERS, so this
-                    # would waste the turn. Redirect to look (examine) so the
-                    # turn is useful, and tell the agent what search is for.
-                    action = {"type": "look"}
-                    reason = "(guard) nothing to search here; examining instead"
+                    # garbage' etc). search only opens BODIES/CONTAINERS. The
+                    # look HANDLER already ran earlier this turn, so emitting a
+                    # look action here would fall through to the engine (unknown
+                    # action). Instead produce the examine description directly
+                    # and wait, and tell the agent what search is for.
+                    session["last_look"] = describe_scene(state, kb)
+                    kb.record_action("looked around")
+                    action = {"type": "wait"}
+                    reason = "(guard) nothing to search here; examined instead"
                     session["last_bump"] = (
                         "'search' only opens a nearby BODY or CONTAINER (chest, "
                         "barrel, bag). There is none within reach, so it does "
                         "nothing on scenery like garbage/tables. To inspect the "
                         "area use 'look'; to grab a loose item use 'pickup'.")
-                    print(f"[{step:03d}] search-guard: no searchable target; look instead")
+                    print(f"[{step:03d}] search-guard: no searchable target; examined instead")
 
     # --- Repeat-failed-pickup guard: if the agent keeps trying to pick up an
     #     item that has already failed 2+ times (out of reach / owned / not
@@ -1893,6 +1897,36 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 action = _explore_far(state, session, wedged)
                 reason = f"(guard) '{_pn}' cannot be taken; moving on"
             print(f"[{step:03d}] pickup-guard: stop retrying '{_pn}'")
+
+    # --- Open guard: "open" only works on a real DOOR within a few tiles. If
+    #     there is no door nearby, don't waste the turn - explain (and note the
+    #     town gate/portcullis is NOT opened this way; it needs the password /
+    #     winch). Redirect toward a real nearby door if one exists.
+    if (isinstance(action, dict) and action.get("type") == "open"
+            and not state.get("conversation_in_progress")):
+        _doors = state.get("doors") or []
+        # Track consecutive open attempts with no door in view; only intervene
+        # after a repeat so we never block a legitimate first attempt.
+        if not _doors:
+            session["open_fails"] = session.get("open_fails", 0) + 1
+        else:
+            session["open_fails"] = 0
+        if not _doors and session.get("open_fails", 0) >= 2:
+            session["open_fails"] = 0
+            _exit_near = any(o.get("town_exit") for o in (state.get("objects") or []))
+            if _exit_near:
+                session["last_bump"] = (
+                    "There is no ordinary door here. The town GATE/portcullis is "
+                    "not opened with 'open' - you need the gate PASSWORD (from the "
+                    "Mayor) and it is operated at the gate. Pursue the password.")
+            else:
+                session["last_bump"] = (
+                    "'open' keeps finding no door. Doors show in the 'doors' list "
+                    "and as '+'/'/' on the grid. Move next to a door, or 'goto' "
+                    "through it (goto opens it for you).")
+            action = _explore_far(state, session, wedged)
+            reason = "(guard) repeated open with no door; moving on"
+            print(f"[{step:03d}] open-guard: repeated no-door open")
 
     # --- Wall-aware move guard: never walk into a '#'. ------------------
     # The grid is centered on the avatar (radius 12 -> center [12][12]).
