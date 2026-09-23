@@ -31,6 +31,13 @@ class ThoughtsWindow:
         self._panes = {}
         # Hints the user types are queued here for the driver to consume.
         self._hints: "queue.Queue[str]" = queue.Queue()
+        # Rolling logs (last N turns) for reasoning and action/result.
+        self._MAX_TURNS = 12
+        self._cur_turn = 0
+        self._think_log: list = []   # [(turn, text)]
+        self._action_log: list = []  # [(turn, text)]
+        self._last_context = ""      # full prompt for the Show-context window
+        self._stat_labels = {}       # key -> value Label widget
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -80,15 +87,29 @@ class ThoughtsWindow:
             self._panes[key] = txt
 
         # LEFT: live play
-        _pane(left, "map", "Map (@ you, C companion, & npc, x body, * item, + door, # wall)",
+        _pane(left, "map",
+              "Map (@ you  C companion  & person  b lootable-body  x corpse  "
+              "n container  * item  E exit  ~ water  = barrier  +/ doors  # wall)",
               14, mono=True, wrap="none")
-        _pane(left, "think", "LLM reasoning (this turn)", 6)
-        _pane(left, "action", "Chosen action -> result", 4, mono=True)
-        _pane(left, "dialog", "Dialog / characters / objects on screen", 8)
+        # Rolling reasoning + action panes (show last N turns, newest at bottom).
+        _pane(left, "think", f"LLM reasoning (last {self._MAX_TURNS} turns)", 8)
+        _pane(left, "action", f"Action -> result (last {self._MAX_TURNS} turns)", 6, mono=True)
+        _pane(left, "dialog", "Dialog / characters / objects on screen", 7)
 
         # RIGHT: inspector
-        _pane(right, "plot", "Story so far (LLM's running plot summary)", 5)
-        _pane(right, "quests", "Quest log (priority-sorted; prereqs shown)", 10, mono=True)
+        _pane(right, "plot", "Story so far (LLM's running plot summary)", 4)
+        _pane(right, "quests", "Open quests (priority-sorted; prereqs shown)", 8, mono=True)
+
+        # Finished quests as a distinct LIST (not a comma-separated line).
+        rq_frame = tk.LabelFrame(right, text="Finished quests",
+                                 font=("Segoe UI", 10, "bold"))
+        rq_frame.pack(fill="both", expand=True, padx=4, pady=3)
+        self._resolved_list = tk.Listbox(rq_frame, height=6, font=("Segoe UI", 9))
+        _rsb = ttk.Scrollbar(rq_frame, orient="vertical",
+                             command=self._resolved_list.yview)
+        self._resolved_list.configure(yscrollcommand=_rsb.set)
+        self._resolved_list.pack(side="left", fill="both", expand=True)
+        _rsb.pack(side="right", fill="y")
 
         # Knowledge notebook: expandable trees for Topics and Characters.
         nb = ttk.Notebook(right)
@@ -118,7 +139,18 @@ class ThoughtsWindow:
         _csb.pack(side="right", fill="y")
         nb.add(char_frame, text="Characters")
 
-        _pane(right, "stats", "Stats & memory", 6, mono=True)
+        # Stats & memory: a grid of distinct labelled value boxes (not a textbox).
+        stats_frame = tk.LabelFrame(right, text="Stats & memory",
+                                    font=("Segoe UI", 10, "bold"))
+        stats_frame.pack(fill="x", padx=4, pady=3)
+        self._stats_grid = tk.Frame(stats_frame)
+        self._stats_grid.pack(fill="x", padx=4, pady=2)
+        # Tool-call stats stay as a small monospace block (tabular by nature).
+        tk.Label(stats_frame, text="Tool calls:", font=("Segoe UI", 9, "bold"),
+                 anchor="w").pack(fill="x", padx=4)
+        self._tool_stats = scrolledtext.ScrolledText(stats_frame, height=6,
+                                                      wrap="none", font=("Consolas", 9))
+        self._tool_stats.pack(fill="x", padx=4, pady=(0, 4))
 
         # Hint bar: type a hint and Send it to the agent for the next turn(s).
         hintrow = tk.Frame(self._root)
@@ -128,6 +160,8 @@ class ThoughtsWindow:
         self._hint_entry.pack(side="left", fill="x", expand=True, padx=6)
         self._hint_entry.bind("<Return>", lambda e: self._send_hint())
         tk.Button(hintrow, text="Send hint", command=self._send_hint).pack(side="left")
+        tk.Button(hintrow, text="Show context",
+                  command=self._show_context).pack(side="left", padx=(6, 0))
         self._hint_status = tk.Label(hintrow, text="", font=("Segoe UI", 8), fg="green")
         self._hint_status.pack(side="left", padx=6)
 
@@ -142,6 +176,61 @@ class ThoughtsWindow:
             if self._root is not None:
                 self._root.after(1500, lambda: self._hint_status.config(text=""))
 
+    def _show_context(self) -> None:
+        """Open a separate window showing the full context sent to the model
+        this turn (system prompt + per-turn state + reply)."""
+        if self._root is None:
+            return
+        win = tk.Toplevel(self._root)
+        win.title("Full context (this turn)")
+        win.geometry("900x800")
+        txt = scrolledtext.ScrolledText(win, wrap="word", font=("Consolas", 9))
+        txt.pack(fill="both", expand=True)
+        txt.insert("end", self._last_context or "(no context captured yet)")
+        txt.configure(state="disabled")
+        btnrow = tk.Frame(win)
+        btnrow.pack(fill="x")
+        tk.Label(btnrow, text=f"{len(self._last_context)} chars",
+                 font=("Segoe UI", 8)).pack(side="left", padx=6)
+        tk.Button(btnrow, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
+
+    def _render_rolling(self, key, log) -> None:
+        w = self._panes.get(key)
+        if w is None:
+            return
+        w.delete("1.0", "end")
+        for turn, text in log:
+            w.insert("end", f"[{turn}] {text}\n")
+        w.see("end")
+
+    def _rebuild_stats_grid(self, kv: dict) -> None:
+        """Render distinct labelled value boxes in a 2-column grid."""
+        grid = self._stats_grid
+        # Create labels once; update values on subsequent calls.
+        if not self._stat_labels:
+            keys = list(kv.keys())
+            for i, k in enumerate(keys):
+                r, c = divmod(i, 2)
+                cell = tk.Frame(grid, bd=1, relief="groove")
+                cell.grid(row=r, column=c, sticky="ew", padx=2, pady=1)
+                grid.grid_columnconfigure(c, weight=1)
+                tk.Label(cell, text=k, font=("Segoe UI", 8), fg="#555",
+                         anchor="w").pack(side="left", padx=(4, 2))
+                val = tk.Label(cell, text=str(kv[k]), font=("Consolas", 10, "bold"),
+                               anchor="e")
+                val.pack(side="right", padx=(2, 4))
+                self._stat_labels[k] = val
+        else:
+            for k, v in kv.items():
+                if k in self._stat_labels:
+                    self._stat_labels[k].config(text=str(v))
+
+    def _rebuild_resolved(self, items: list) -> None:
+        lb = self._resolved_list
+        lb.delete(0, "end")
+        for it in items or []:
+            lb.insert("end", "\u2713 " + str(it))
+
     def get_hint(self) -> Optional[str]:
         """Return the next queued user hint (or None). Called by the driver."""
         try:
@@ -154,6 +243,7 @@ class ThoughtsWindow:
             while True:
                 kind, payload = self._q.get_nowait()
                 if kind == "turn":
+                    self._cur_turn = payload
                     self._status.config(text=f"Turn {payload}")
                 elif kind == "ctx":
                     pct, label = payload
@@ -164,6 +254,23 @@ class ThoughtsWindow:
                     self._ctx_lbl.config(text=label)
                 elif kind == "gstatus":
                     self._gstatus.config(text=payload)
+                elif kind == "think":
+                    self._think_log.append((self._cur_turn, payload))
+                    self._think_log = self._think_log[-self._MAX_TURNS:]
+                    self._render_rolling("think", self._think_log)
+                elif kind == "action":
+                    self._action_log.append((self._cur_turn, payload))
+                    self._action_log = self._action_log[-self._MAX_TURNS:]
+                    self._render_rolling("action", self._action_log)
+                elif kind == "stats_kv":
+                    self._rebuild_stats_grid(payload)
+                elif kind == "tool_stats":
+                    self._tool_stats.delete("1.0", "end")
+                    self._tool_stats.insert("end", payload)
+                elif kind == "resolved":
+                    self._rebuild_resolved(payload)
+                elif kind == "context_dump":
+                    self._last_context = payload
                 elif kind == "topics_tree":
                     self._rebuild_topics(payload)
                 elif kind == "npc_tree":
@@ -294,7 +401,21 @@ class ThoughtsWindow:
         self._q.put(("npc_tree", chars))
 
     def set_stats(self, text: str) -> None:
-        self._q.put(("stats", text))
+        # Superseded by the labelled stats grid + tool-stats box. No-op kept
+        # for backward compatibility.
+        pass
+
+    def set_stats_kv(self, kv: dict) -> None:
+        self._q.put(("stats_kv", dict(kv)))
+
+    def set_tool_stats(self, text: str) -> None:
+        self._q.put(("tool_stats", text))
+
+    def set_resolved_quests(self, items: list) -> None:
+        self._q.put(("resolved", list(items)))
+
+    def set_context_dump(self, text: str) -> None:
+        self._q.put(("context_dump", text))
 
     # observation now folded into stats/dialog; keep for compatibility
     def set_observation(self, text: str) -> None:

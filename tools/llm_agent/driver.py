@@ -906,6 +906,14 @@ def _pursue_focus_quest(state: dict, kb: "KnowledgeBase"):
     return None, None
 
 
+def _grid_center(rows):
+    """Center (cx, cy) of an @-centered grid, derived from its actual size so it
+    works regardless of the rx/ry the engine chose for the visible window."""
+    cy = len(rows) // 2 if rows else 12
+    cx = (len(rows[0]) // 2) if rows and rows[0] else 12
+    return cx, cy
+
+
 def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
     """Pick a distant goto target in a direction that is actually OPEN on the
     grid (avoid heading into ocean/walls). When wedged, rotate to a brand-new
@@ -913,7 +921,7 @@ def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
     p = state.get("player") or {}
     tx, ty = p.get("tx", 0), p.get("ty", 0)
     rows = (state.get("grid") or "").split("\n")
-    cx = cy = 12
+    cx, cy = _grid_center(rows)
 
     def openness(dx, dy):
         score = 0
@@ -987,6 +995,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         try:
             nearby_names = [n.get("name") for n in (state.get("nearby") or []) if n.get("name")]
             window.set_quests(kb.quests_pretty())
+            window.set_resolved_quests(kb.resolved_quests_list())
             window.set_npc_tree(kb.npcs_tree_data())
             window.set_topics_tree(kb.topics_tree_data())
             window.set_plot(kb.episodic_summary or "(no plot summary yet - the LLM builds this)")
@@ -997,19 +1006,26 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 f"pos({p.get('tx')},{p.get('ty')})  hp {p.get('hp')}  food {p.get('food')}  "
                 f"str {p.get('str')} dex {p.get('dex')} int {p.get('int')}  "
                 f"{'IN COMBAT' if state.get('in_combat') else ''}")
-            stats = [
-                f"NPCs met: {len(kb.npcs)}   places: {len(kb.places)}   topics: {len(kb.topics)}",
-                f"quests: {len(kb.quests)} (resolved {sum(1 for q in kb.quests.values() if q.get('status')=='done')})",
-                f"dialogue mem: {len(kb.dialogue_history)}   actions mem: {len(kb.action_history)}",
-                f"hints: {len(kb.hints)}   observations: {len(kb.observations)}",
-                f"searched-empty: {len(kb.searched_empty)}   plot summary: {len(kb.episodic_summary)} chars",
-            ]
-            if session.get("last_ctx"):
-                stats.append(session["last_ctx"])
-            # Tool-call stats: turns, parse failures, and per-tool ok/err.
-            stats.append("--- tool calls ---")
-            stats.append(kb.tool_stats_pretty(top=10))
-            window.set_stats("\n".join(stats))
+            # Structured stats: labelled key/value pairs for distinct boxes.
+            _resolved = sum(1 for q in kb.quests.values() if q.get("status") == "done")
+            _ts = kb.tool_stats or {}
+            stats_kv = {
+                "NPCs met": len(kb.npcs),
+                "Places": len(kb.places),
+                "Topics": len(kb.topics),
+                "Quests": len(kb.quests),
+                "Quests resolved": _resolved,
+                "Dialogue mem": len(kb.dialogue_history),
+                "Actions mem": len(kb.action_history),
+                "Hints": len(kb.hints),
+                "Observations": len(kb.observations),
+                "Searched empty": len(kb.searched_empty),
+                "Plot summary (chars)": len(kb.episodic_summary),
+                "Turns": _ts.get("turns", 0),
+                "Parse fails": _ts.get("parse_fail", 0),
+            }
+            window.set_stats_kv(stats_kv)
+            window.set_tool_stats(kb.tool_stats_pretty(top=10))
         except Exception:
             pass
 
@@ -1242,6 +1258,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         res = ollama.chat_ex(SYSTEM_PROMPT, _user)
         reply = res["content"]
         reason, action = parse_reply(reply)
+        # Feed the FULL context to the GUI so the "Show context" button can
+        # display exactly what the model saw this turn (system + user + reply).
+        if window.available:
+            window.set_context_dump(
+                f"===== TURN {step} =====\n"
+                f"----- SYSTEM PROMPT -----\n{SYSTEM_PROMPT}\n\n"
+                f"----- USER (per-turn state) -----\n{_user}\n\n"
+                f"----- MODEL REPLY -----\n{reply}\n")
         # Tool-call stats: count this turn and whether the model's reply parsed
         # (a parse failure means we could not read an action and fell back to
         # wait - visible now as parse-fail in the stats panel).
@@ -1659,7 +1683,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         p = state.get("player") or {}
         px, py = p.get("tx", 0), p.get("ty", 0)
         rows = (state.get("grid") or "").split("\n")
-        cx = cy = 12
+        cx, cy = _grid_center(rows)
         def _cell(dx, dy):
             x, y = cx + dx, cy + dy
             if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
@@ -1677,7 +1701,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         q = _deque([(0, 0)])
         best = None
         best_d = -1
-        R = 12
+        R = max(cx, cy) if (cx or cy) else 12
         while q:
             dx, dy = q.popleft()
             d = abs(dx) + abs(dy)
@@ -2079,8 +2103,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if isinstance(action, dict) and action.get("type") == "move":
         grid = state.get("grid") or ""
         rows = grid.split("\n")
-        if len(rows) >= 25 and len(rows[0]) >= 25:
-            cx = cy = 12
+        if len(rows) >= 9 and rows[0] and len(rows[0]) >= 9:
+            cx, cy = _grid_center(rows)
             deltas = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0),
                       "ne": (1, -1), "nw": (-1, -1), "se": (1, 1), "sw": (-1, 1)}
             def cell(dx, dy):
@@ -2253,7 +2277,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             dx = (1 if tgt[0] > here[0] else -1 if tgt[0] < here[0] else 0)
             dy = (1 if tgt[1] > here[1] else -1 if tgt[1] < here[1] else 0)
             rows = (state.get("grid") or "").split("\n")
-            cx = cy = 12
+            cx, cy = _grid_center(rows)
             def _cell(ddx, ddy):
                 x, y = cx + ddx, cy + ddy
                 if 0 <= y < len(rows) and 0 <= x < len(rows[y]):

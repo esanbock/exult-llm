@@ -262,26 +262,27 @@ namespace {
 	//   *  a takeable/interactable object
 	//   #  a blocked/impassable tile (wall, gate, water, furniture)
 	//   .  open, walkable ground
-	std::string build_grid(Actor* av, int radius) {
+	std::string build_grid(Actor* av, int rx, int ry) {
 		Game_window* gwin = Game_window::get_instance();
 		Game_map*    gmap = gwin ? gwin->get_map() : nullptr;
 		if (!av || !gmap) {
 			return std::string();
 		}
-		const Tile_coord at  = av->get_tile();
-		const int        dim = 2 * radius + 1;
+		const Tile_coord at   = av->get_tile();
+		const int        dimx = 2 * rx + 1;
+		const int        dimy = 2 * ry + 1;
 
 		// Start from terrain/blocking, then overlay objects and NPCs.
-		std::vector<std::string> rows(dim, std::string(dim, '.'));
+		std::vector<std::string> rows(dimy, std::string(dimx, '.'));
 
 		// Blocking layer.
-		for (int dy = -radius; dy <= radius; ++dy) {
-			for (int dx = -radius; dx <= radius; ++dx) {
+		for (int dy = -ry; dy <= ry; ++dy) {
+			for (int dx = -rx; dx <= rx; ++dx) {
 				const int tx = (at.tx + dx + c_num_tiles) % c_num_tiles;
 				const int ty = (at.ty + dy + c_num_tiles) % c_num_tiles;
 				const Tile_coord probe(tx, ty, at.tz);
 				if (gmap->is_tile_occupied(probe)) {
-					rows[dy + radius][dx + radius] = '#';
+					rows[dy + ry][dx + rx] = '#';
 				}
 			}
 		}
@@ -300,16 +301,16 @@ namespace {
 			} else if (dy < -c_num_tiles / 2) {
 				dy += c_num_tiles;
 			}
-			if (dx < -radius || dx > radius || dy < -radius || dy > radius) {
+			if (dx < -rx || dx > rx || dy < -ry || dy > ry) {
 				return;
 			}
-			rows[dy + radius][dx + radius] = c;
+			rows[dy + ry][dx + rx] = c;
 		};
 
 		// Object layer.
 		{
 			Game_object_vector objs;
-			Game_object::find_nearby(objs, at, -1, radius, 128);
+			Game_object::find_nearby(objs, at, -1, (rx > ry ? rx : ry), 128);
 			for (Game_object* obj : objs) {
 				if (!obj || obj->as_actor()) {
 					continue;
@@ -394,12 +395,12 @@ namespace {
 		}
 
 		// Avatar at center.
-		rows[radius][radius] = '@';
+		rows[ry][rx] = '@';
 
 		// Join rows with \n.
 		std::string out;
-		out.reserve(dim * (dim + 1));
-		for (int i = 0; i < dim; ++i) {
+		out.reserve(dimy * (dimx + 1));
+		for (int i = 0; i < dimy; ++i) {
 			if (i) {
 				out += '\n';
 			}
@@ -773,20 +774,38 @@ namespace LLM_agent {
 		}
 		os << ']';
 
-		// Top-down ASCII map grid centered on the avatar.
+		// Top-down ASCII map grid centered on the avatar. Match the HUMAN-
+		// VISIBLE tile window so we show no more than a player sees: Exult
+		// renders (get_width()/c_tilesize) x (get_height()/c_tilesize) tiles
+		// (see gamerend.cc). The avatar is centered, so the half-extents are
+		// half of each. Cap to keep the prompt bounded on huge windows.
 		{
-			const int   radius = 12;
-			std::string grid   = build_grid(av, radius);
-			os << ',' << json_int("grid_radius", radius);
+			int vis_w = 25, vis_h = 25;
+			if (gwin && gwin->get_win()) {
+				vis_w = gwin->get_width() / c_tilesize;
+				vis_h = gwin->get_height() / c_tilesize;
+			}
+			// Half-extent so the full span (2*r+1) fits within the visible
+			// tiles; cap the radii so the map stays a reasonable prompt size.
+			int rx = (vis_w - 1) / 2;
+			int ry = (vis_h - 1) / 2;
+			if (rx > 20) rx = 20;
+			if (ry > 14) ry = 14;
+			if (rx < 4)  rx = 4;
+			if (ry < 4)  ry = 4;
+			std::string grid = build_grid(av, rx, ry);
+			os << ',' << json_int("grid_radius_x", rx);
+			os << ',' << json_int("grid_radius_y", ry);
 			// Top-left tile of the grid, so grid cell [row][col] maps to the
 			// absolute tile (origin_tx+col, origin_ty+row). Avatar is at center.
-			os << ',' << json_int("grid_origin_tx", av->get_tile().tx - radius);
-			os << ',' << json_int("grid_origin_ty", av->get_tile().ty - radius);
+			os << ',' << json_int("grid_origin_tx", av->get_tile().tx - rx);
+			os << ',' << json_int("grid_origin_ty", av->get_tile().ty - ry);
 			os << ',' << json_str("grid_legend",
-					"@=you C=companion &=npc x=body T=tree W=wall/building =~fence/gate "
-					"n=container H=furniture s=sign ~=water +=closed_door /=open_door "
-					"o=obstacle *=item .=open ground #=blocked; north=up east=right. "
-					"Cell [row][col] is tile (grid_origin_tx+col, grid_origin_ty+row).");
+					"@=you C=companion &=person b=lootable-body x=corpse(empty) "
+					"n=container *=item E=exit/route(gate/stairs) ~=water "
+					"==fence/barrier +=closed_door /=open_door .=walkable #=blocked; "
+					"north=up east=right. Cell [row][col] is tile "
+					"(grid_origin_tx+col, grid_origin_ty+row).");
 			os << ',' << json_str("grid", grid);
 		}
 

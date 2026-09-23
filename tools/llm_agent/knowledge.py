@@ -343,6 +343,16 @@ class KnowledgeBase:
         return any(q.get("status") != "done" for q in self.quests.values())
 
     # ----- human-readable summaries (for the inspector GUI) --------------
+    def resolved_quests_list(self) -> list:
+        """Finished quest titles (with the NPC, if any) as a list - for the GUI
+        to show as distinct rows rather than one comma-separated line."""
+        out = []
+        for q in self.quests.values():
+            if q.get("status") == "done":
+                npc = f" [{q['npc']}]" if q.get("npc") else ""
+                out.append(f"{q.get('title', '?')}{npc}")
+        return out
+
     def quests_pretty(self) -> str:
         qv = self.quest_view(max_open=30)
         lines = [f"resolved {qv.get('resolved',0)} / unresolved {qv.get('unresolved',0)}", ""]
