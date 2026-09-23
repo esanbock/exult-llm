@@ -282,3 +282,29 @@ in-context signals - i.e. they are model-planning limits. This validates the
 thesis: the framework is model-agnostic and sufficient; a stronger planner
 should progress further on the same surface. Next candidate model tests on the
 5090: qwen3.6, deepseek-r1:32b.
+
+
+
+## DEFINITIVE model-limitation finding (gpt-oss:20b) — stuck-in-place
+Late in the run the agent parked at a 2-tile pocket (1092<->1093,2212, near
+Johnson/a shopkeeper) and would not leave for 40+ turns. It cycled non-movement
+actions ("check bag for key", "exhaust shopkeeper topics", "check inventory")
+plus guard-forced 1-tile steps that it immediately undid. We escalated the
+framework's INFORMING (never steering) across 4 iterations:
+1. force a direct step after a same-tile stall,
+2. detect 2-tile oscillation and commit a far goto,
+3. route to a remembered far place via full-map A* when boxed,
+4. a robust position-based STUCK_WARNING ("you haven't moved in ~10 turns;
+   abandon this; walk away / talk to someone NEW").
+gpt-oss received all of these in-context and STILL chose to stay, re-trying
+variations of a HALLUCINATED goal (a "key in the bag" that doesn't exist; the
+bag was searched empty). The engine/driver stayed healthy throughout (no crash).
+
+Conclusion: this is a MODEL PLANNING failure, not a framework gap. The framework
+provides fair perception, durable+salient memory, a full action set, and strong
+advisory signals, and it refuses (by design) to puppeteer the agent. A model
+that won't act on an explicit "you are stuck, walk away" cannot be fixed by more
+guards without crossing into steering. The correct next step is a STRONGER model
+(qwen3.6 / deepseek-r1:32b on the 5090), NOT more driver patches. Adding forced
+movement here was explicitly rejected as it violates the self-sufficiency
+principle (Principle 1).
