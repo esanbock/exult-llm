@@ -930,14 +930,33 @@ def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
     dirs = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0),
             "ne": (1, -1), "nw": (-1, -1), "se": (1, 1), "sw": (-1, 1)}
     tried = session.setdefault("failed_dirs", set())
+    # Anti-oscillation: remember the last few explore targets and avoid picking
+    # a direction that lands ~back where we just were (this caused a two-tile
+    # A<->B ping-pong when the guard re-explored every turn).
+    recent_targets = session.setdefault("explore_recent", [])
     ranked = sorted(dirs.items(), key=lambda kv: -openness(*kv[1]))
+
+    def _lands_on_recent(dx, dy):
+        t = (tx + dx * 6, ty + dy * 6)
+        return any(abs(t[0] - rx) + abs(t[1] - ry) <= 3 for (rx, ry) in recent_targets)
+
     choice = None
     for name, (dx, dy) in ranked:
         if wedged and name in tried:
             continue
+        if _lands_on_recent(dx, dy):
+            continue
         if openness(dx, dy) >= 3:
             choice = (name, dx, dy)
             break
+    # Relax the recent-target filter if everything was filtered out.
+    if not choice:
+        for name, (dx, dy) in ranked:
+            if wedged and name in tried:
+                continue
+            if openness(dx, dy) >= 3:
+                choice = (name, dx, dy)
+                break
     if not choice and ranked:
         name, (dx, dy) = ranked[0]
         choice = (name, dx, dy)
@@ -948,10 +967,14 @@ def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
             tried.clear()
     else:
         tried.clear()
+    target = {"type": "goto", "tx": tx + dx * 6, "ty": ty + dy * 6}
+    recent_targets.append((target["tx"], target["ty"]))
+    if len(recent_targets) > 5:
+        del recent_targets[0]
     # Shorter hop (6 tiles): the engine A* has a bounded search budget, so far
     # targets often fail; a nearer target in the most-open direction routes
     # reliably, and the engine now single-steps toward it if A* still gives up.
-    return {"type": "goto", "tx": tx + dx * 6, "ty": ty + dy * 6}
+    return target
 
 
 def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -> None:
@@ -2125,26 +2148,45 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 session["last_bump"] = (
                     f"You tried to goto '{nm}', but that place is not on your map "
                     f"and you can't see it. Known places you CAN goto: {names}. "
-                    f"To find a PERSON (like a mayor), enter buildings: go through "
-                    f"doors ('+' closed / '/' open) and look inside. Explore to find "
-                    f"'{nm}', or annotate it once you reach it.")
+                    f"To find a PERSON, enter buildings (goto through doors '+'/'/' "
+                    f"and look inside). Pick a KNOWN place or a visible target, or "
+                    f"explore a NEW direction - don't repeat goto '{nm}'.")
                 print(f"[{step:03d}] goto unresolved: '{nm}' (known: {names})")
-                # If we're hunting a person, prefer entering a nearby building
-                # via an unvisited door rather than wandering outdoors.
-                door = None
-                for d in (state.get("doors") or []):
-                    key = (_pp.get("tx", 0) + d.get("dx", 0), _pp.get("ty", 0) + d.get("dy", 0))
-                    if key not in session.setdefault("entered_doors", set()):
-                        door = (key, d)
-                        break
-                if door is not None:
-                    (dtx, dty), _d = door
-                    session["entered_doors"].add((dtx, dty))
-                    action = {"type": "goto", "tx": dtx, "ty": dty}
-                    reason = f"(guard) '{nm}' unknown; entering a building via door @({dtx},{dty})"
+                # Self-sufficiency: INFORM (bump above) and let the model choose.
+                # Track how often it repeats an unresolvable goto for the SAME
+                # name; escalate the intervention only if it keeps doing it, and
+                # never ping-pong. First time: just 'look' (a no-move examine) so
+                # the model re-decides with the bump. Then try ONE fresh door.
+                # Only after persistent repeats fall back to explore-far.
+                _un = session.setdefault("unresolved_goto", {})
+                _un[nm] = _un.get(nm, 0) + 1
+                _cnt = _un[nm]
+                if _cnt <= 1:
+                    # Give the model the info and a no-op examine; it decides next.
+                    session["last_look"] = describe_scene(state, kb)
+                    action = {"type": "wait"}
+                    reason = f"(guard) '{nm}' unknown; informed, letting agent choose"
                 else:
-                    action = _explore_far(state, session, wedged)
-                    reason = f"(guard) '{nm}' unknown; exploring to find it"
+                    # It ignored the info and repeated. Try ONE unvisited door
+                    # (buildings hide people/chests), else a single explore step.
+                    door = None
+                    for d in (state.get("doors") or []):
+                        key = (_pp.get("tx", 0) + d.get("dx", 0),
+                               _pp.get("ty", 0) + d.get("dy", 0))
+                        if key not in session.setdefault("entered_doors", set()):
+                            door = (key, d)
+                            break
+                    if door is not None:
+                        (dtx, dty), _d = door
+                        session["entered_doors"].add((dtx, dty))
+                        action = {"type": "goto", "tx": dtx, "ty": dty}
+                        reason = f"(guard) '{nm}' unknown; trying a new door @({dtx},{dty})"
+                    else:
+                        action = _explore_far(state, session, wedged)
+                        reason = f"(guard) '{nm}' unknown; exploring new ground"
+                    # reset so we inform again next time rather than looping here
+                    if _cnt >= 4:
+                        _un[nm] = 0
 
     # --- Emptied-body magnet: the agent sometimes keeps issuing goto toward a
     #     spot it ALREADY searched empty. PRINCIPLE: make the agent self-
