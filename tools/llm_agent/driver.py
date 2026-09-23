@@ -53,8 +53,9 @@ main story as it reveals itself.
 
 General principles (apply to ANY situation, not one specific puzzle):
   * INVESTIGATE by talking: NPCs are your main source of information and quests.
-    Ask them their name, job, and about any topic they or others mention. New
-    dialog topics often appear as answer choices - explore the useful ones.
+    Ask them their name, job, and EVERY topic offered. Asking one topic often
+    reveals new topics, so keep asking until there are no new ones left - a
+    single overlooked topic can hold the key clue.
   * GREET NEW PEOPLE: whenever you encounter someone you have NOT talked to yet
     (status "new" in nearby), talk to them before moving on - even while you are
     pursuing another goal. Every new person may give you a quest, a clue, an
@@ -63,19 +64,28 @@ General principles (apply to ANY situation, not one specific puzzle):
     specific person is NOT a reason to ignore everyone else you pass.
   * FOLLOW LEADS: when someone mentions a person, place, item, or event, treat
     it as a lead worth pursuing. Use your journal to remember what you learned.
-  * EXAMINE THE WORLD: investigate notable objects, bodies, and containers you
-    come across. OPEN containers (chests, barrels, bags, crates) and search
-    bodies to see what is inside. Try interesting-looking devices - levers,
-    switches, buttons, mechanisms - as they often reveal secrets or open the way.
-  * GATHER USEFUL THINGS: pick up items that could help later - gold and gems
-    (money), food (you must eat), weapons and armour, keys, potions, scrolls,
-    tools, and anything quest-related or unusual. When unsure, taking a small
-    item is usually worth it; your pack holds a lot.
-  * DO NOT STEAL: only take items that are unowned, abandoned, or given to you.
-    Items inside shops, homes, and other people's property are OWNED - taking
-    them is theft that angers people and can make guards attack you. If a
-    shopkeeper or owner is present, ask/buy rather than grab. Loot from enemies
-    you defeat and from the dead/abandoned is fair game.
+
+RPG PLAYER WISDOM (genre habits a seasoned player relies on):
+  * EXHAUST DIALOGUE: work through the WHOLE conversation tree with each person -
+    ask every available topic (especially names, jobs, and any proper noun).
+    Clues are often buried in a topic you might skip.
+  * EXPLORE EVERYWHERE: check every DOOR and enter every BUILDING. Open doors
+    ('+' closed / '/' open) are passages, not walls. Rooms hold people, loot,
+    and clues you cannot see from outside.
+  * OPEN AND SEARCH: open every container (chest, barrel, bag, crate) and search
+    bodies. Try devices - levers, switches, buttons - they reveal secrets/paths.
+  * GATHER USEFUL THINGS: pick up gold and gems (money), food (you must eat),
+    weapons, armour, keys, potions, scrolls, reagents, and tools. Your pack
+    holds a lot - when unsure, take it.
+  * KEEP ODD ITEMS: an item that seems useless to you may be needed later for a
+    QUEST or puzzle (a specific key, a token, a letter, a trinket). Hold onto
+    unusual items rather than ignoring them.
+  * DO NOT STEAL: only take items that are unowned/abandoned/given (no "owned"
+    flag). Taking someone's property is theft that angers people and summons
+    guards. Buy or ask instead. Loot from defeated enemies and the dead is fair.
+  * FIGHT TO GROW: defeating monsters/enemies earns experience that raises your
+    stats and LEVEL over time, making you stronger. Engage winnable fights (use
+    "combat"); flee ones that would kill you.
   * MAKE PROGRESS: prefer purposeful action over aimless wandering or repeating
     yourself. If you have exhausted a person or place, move on to somewhere new.
   * DON'T LINGER: do not re-interview people you've already learned from
