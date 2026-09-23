@@ -220,3 +220,65 @@ menu (auto-loads the latest save), **`--llmagent` starts the TCP bridge on
   (not by its own planning). Candidate future capability: spellcasting (cast
   action + reagents) — still not implemented.
 - If testing self-sufficiency from scratch, do a full clean reset.
+
+
+
+## Long observation run (gpt-oss:20b, self-sufficiency hardening)
+Ran a multi-hour autonomous session with ~15-min check-ins, fixing driver
+issues live. Key work and findings:
+
+- MONITORING: added monitor.py (non-intrusive; reads agent_memory.json +
+  driver_log.txt) that snapshots turns/parse-fails/distinct-positions/quests and
+  flags likely loops. Used it as the check-in tool.
+
+- LOOP CAUSES were mostly MEMORY SALIENCE, not mechanics:
+  * Guard-generated filler ("looked around", waits) FLOODED recent_actions,
+    burying the meaningful outcomes ("search bag -> EMPTY") that break loops.
+    Fix: record_action dedupes consecutive duplicates + collapses filler, so
+    real outcomes stay visible. This was the single biggest anti-loop win - the
+    agent had literally been unable to see what it just did.
+  * already_searched_empty is now surfaced IMPERATIVELY
+    (already_searched_empty_DO_NOT_RETURN + an explicit note).
+  * The agent CONFLATES 'search X' with goto: it writes "search bag for key" but
+    emits a goto. Added an inform-only nudge when it gotos while reasoning
+    'search' next to a container ("arriving isn't searching; emit search").
+  * HALLUCINATED GOALS: the agent's own plot summary invented a "gate key" /
+    "key in the bag" (leaving Trinsic needs the PASSWORD, not a key). Per the
+    self-sufficiency principle we do NOT edit its summary; we surface turn
+    number + same_goal_streak + progress_note + a review nudge so it can notice
+    and drop the dead lead itself.
+
+- CAPABILITIES ADDED THIS RUN:
+  * search now LOOTS container/body contents (was only opening the gump).
+  * lootable body ('b') vs non-lootable corpse ('x') via as_container().
+  * read action: read signs/plaques (a human double-clicks them). Signs are
+    modal (usecode Get_click); display_runes stashes the rune-translated text
+    into a global, and read pre-injects a click to dismiss the modal, returning
+    the text. Verified: "THe / honorable / hound", no hang.
+
+- MAP FIDELITY: grid now matches the human-visible tile window (get_width/height
+  / c_tilesize) as a landscape rectangle (e.g. 39x25), not a 25x25 square;
+  glyphs trimmed to navigational-only (b/x/n/*/E/~/=/+//./#). Driver grid math
+  derives center from the actual grid size.
+
+- GUI: combined reasoning+action into one Turn log (last 12 turns); labelled
+  stats grid; finished-quests list; dedicated tool-calls table (tool|calls|ok|
+  err|err%, red error rows); "Show context" button (full prompt in a window).
+  tool_stats now RESET per run (were cumulative across runs).
+
+- COORDINATE MODEL documented once (absolute tx/ty, relative dx/dy, @-centered
+  map, goto takes absolute tiles) + a 'turn' counter for time-progression
+  awareness.
+
+## Honest model-behavior assessment (gpt-oss:20b)
+The framework informs clearly (searched-empty, streaks, conflation, review
+prompts) WITHOUT steering or editing memory. gpt-oss reaches NPCs (talked to
+Finnigan), reviews its quest log, maintains a plot summary, resolves ~50 quests,
+and explores 100+ distinct tiles per run. Its remaining weaknesses are PLANNING,
+not framework gaps: it (a) hallucinates sub-goals into its own summary and
+clings to them, (b) conflates 'search' with 'goto', and (c) re-opens an
+already-open door instead of walking through. These persist despite clear
+in-context signals - i.e. they are model-planning limits. This validates the
+thesis: the framework is model-agnostic and sufficient; a stronger planner
+should progress further on the same surface. Next candidate model tests on the
+5090: qwen3.6, deepseek-r1:32b.
