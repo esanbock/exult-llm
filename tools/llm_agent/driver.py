@@ -2023,6 +2023,29 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             action = _explore_far(state, session, wedged)
             reason = "(guard) repeated open with no door; moving on"
             print(f"[{step:03d}] open-guard: repeated no-door open")
+        elif _doors:
+            # A door IS here. If the agent keeps issuing 'open' from the SAME
+            # tile, the door is already open and standing there does nothing -
+            # the goal is to pass THROUGH. INFORM it (self-sufficiency: give the
+            # fact, let it act) to goto a tile on the far side of the door.
+            _pp = state.get("player") or {}
+            _here = (_pp.get("tx"), _pp.get("ty"))
+            if session.get("last_open_pos") == _here:
+                session["open_same"] = session.get("open_same", 0) + 1
+            else:
+                session["open_same"] = 0
+            session["last_open_pos"] = _here
+            if session.get("open_same", 0) >= 1:
+                # nearest door -> suggest the tile just beyond it as a goto
+                _d = min(_doors, key=lambda d: abs(d.get("dx", 9)) + abs(d.get("dy", 9)))
+                _bx = _here[0] + 2 * _d.get("dx", 0)
+                _by = _here[1] + 2 * _d.get("dy", 0)
+                session["last_bump"] = (
+                    "The door is already open - standing here re-opening it does "
+                    f"nothing. To ENTER, 'goto' a tile on the far SIDE of the door "
+                    f"(e.g. goto ({_bx},{_by})); goto walks you through an open or "
+                    "closed door. Don't repeat 'open'.")
+                print(f"[{step:03d}] open-info: door already open; suggested goto through")
 
     # --- Wall-aware move guard: never walk into a '#'. ------------------
     # The grid is centered on the avatar (radius 12 -> center [12][12]).
