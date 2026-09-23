@@ -164,6 +164,9 @@ periodically). For finer detail you have the recall/quests tools.
                                 gump_contents is empty, just "close".
   gump_contents (list)        - item names inside the currently OPEN container/
                                 body window (empty if it holds nothing).
+  turn (int)                  - the current turn number (increments each action).
+                                Time is passing - use it to notice when you have
+                                spent many turns on one thing without progress.
   player: {tx,ty (your absolute tile on the world map), hp, dead, food}
                                 COORDINATES: everything uses ONE consistent frame.
                                 Your tile is (tx,ty). Every object/person gives a
@@ -489,6 +492,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     # model isn't misled by stale npc_text into pressing space forever.
     in_convo = bool(state.get("conversation_in_progress"))
     view = {
+        "turn": state.get("turn"),
         "player": {
             "tx": p.get("tx"), "ty": p.get("ty"),
             "hp": p.get("hp"), "dead": p.get("dead"),
@@ -522,6 +526,16 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "grid_legend": state.get("grid_legend"),
         "grid": state.get("grid"),
     }
+    # Advisory: how many recent turns pursued the SAME goal. Surfacing this lets
+    # the model NOTICE a cycle and change tack on its own (no steering).
+    _streak = state.get("same_goal_streak")
+    if _streak and _streak >= 3:
+        view["same_goal_streak"] = _streak
+        view["progress_note"] = (
+            f"You have pursued the same goal ~{_streak} turns running. If it is "
+            "not producing progress, STOP repeating it: review your quests/notes "
+            "(quests/recall tools), question your assumptions (is this goal even "
+            "real?), and try a different lead.")
     doors = state.get("doors") or []
     if doors:
         view["doors"] = [
@@ -1253,6 +1267,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _qd = session.pop("quest_detail", None)
         if _qd is not None:
             state["quest_detail"] = _qd
+        # Time/progress awareness: give the model the turn number and how many
+        # recent turns it has pursued the SAME goal, so it can notice it is
+        # stuck in a cycle and change tack (self-sufficiency, not steering).
+        state["turn"] = step
+        _hist = session.get("reason_hist", [])
+        if _hist:
+            _head = " ".join(_hist[-1].split()[:3])
+            state["same_goal_streak"] = sum(
+                1 for r in _hist if " ".join(r.split()[:3]) == _head)
         # Tell summarize_state who we're talking to, so it can proactively show
         # which topics we've already asked this NPC and which we have NOT.
         if state.get("conversation_in_progress"):
