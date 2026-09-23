@@ -53,6 +53,31 @@ Working (validated by direct play):
 - FIXED: sleeping NPCs → condition field + guard.
 - NON-BUG CONTENT GATE: villain answer must be gathered in-game ("hook").
 
+## Real gaps found + fixed (methodical-search session)
+- FLICKERING NPC PERCEPTION (the big one): observe() used gwin->get_nearby_npcs
+  (proximity manager) which returned an INCONSISTENT NPC set turn-to-turn (8
+  npcs incl 40+ tiles away, then 1, then 0 at the same spot). Made systematic
+  NPC-finding nearly impossible. FIXED: find_nearby_actors within 24 tiles,
+  nearest-first. Verified stable across 5 consecutive observations.
+- POOR GOTO PATHFINDING through walls: goto no-op'd/"no path" when the exact
+  target was unreachable. FIXED: on A* failure, try A* to intermediate waypoints
+  along the line to the target (85/70/55/40/25/15%) with lateral nudges; go to
+  first reachable (partial:true). Verified: avatar now crosses the walled town
+  ~10 tiles/goto where it previously stuck. (Fair: mirrors a human seeing the
+  2D map and walking to the nearest reachable spot.)
+
+## Witness chain mapped (for the report villain clue)
+- Petre: footprints "lead out the back way"; Spark is Christopher's son.
+- Johnson (gate guard): has "Hook" topic ("a man with a hook").
+- Spark: KEY WITNESS. "key" = "the key to Father's chest" (I hold the key ->
+  there's an evidence CHEST to open). nightmare = "a big red-faced man". what he
+  saw = "a man and a wingless gargoyle running... toward the dock". => next
+  investigation site is the DOCK. The "hook" report answer likely unlocks from a
+  dock witness / confronting the dock lead.
+- STILL could not find Finnigan outdoors across a full stable-perception sweep
+  (9 NPCs censused, no Finnigan) - he is inside a building interior. Reaching
+  him needs entering the right building.
+
 ## OPEN GAP (next to implement)
 (none currently blocking — see Resolved below)
 
