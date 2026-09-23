@@ -540,6 +540,13 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             "not producing progress, STOP repeating it: review your quests/notes "
             "(quests/recall tools), question your assumptions (is this goal even "
             "real?), and try a different lead.")
+    if state.get("stuck_in_place"):
+        view["STUCK_WARNING"] = (
+            "You have NOT MOVED for ~10 turns - you are re-trying variations of "
+            "the same thing in one spot. This is a dead end. Do something "
+            "DIFFERENT now: walk AWAY to a new area (goto a distant known place "
+            "or explore), or talk to a NEW person. Whatever you keep trying here "
+            "is NOT working - abandon it.")
     doors = state.get("doors") or []
     if doors:
         view["doors"] = [
@@ -1284,6 +1291,19 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             _head = " ".join(_hist[-1].split()[:3])
             state["same_goal_streak"] = sum(
                 1 for r in _hist if " ".join(r.split()[:3]) == _head)
+        # Position-based stuck signal (robust to varied reasoning text and
+        # interleaved guard turns): if the last ~10 turns barely moved, tell the
+        # model plainly. This catches "standing in one spot re-trying variations"
+        # that the goal-head streak misses.
+        _ph = session.setdefault("pos_hist", [])
+        _ph.append((state.get("player") or {}).get("tx"))
+        _ph2 = session.setdefault("pos_hist2", [])
+        _ph2.append((state.get("player") or {}).get("ty"))
+        del _ph[:-10]
+        del _ph2[:-10]
+        _recent_tiles = set(zip(_ph, _ph2))
+        if len(_ph) >= 8 and len(_recent_tiles) <= 2:
+            state["stuck_in_place"] = True
         # Tell summarize_state who we're talking to, so it can proactively show
         # which topics we've already asked this NPC and which we have NOT.
         if state.get("conversation_in_progress"):
