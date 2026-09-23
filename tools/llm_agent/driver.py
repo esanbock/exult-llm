@@ -87,7 +87,10 @@ RPG PLAYER WISDOM (genre habits a seasoned player relies on):
     if it is worth the danger and you can avoid being caught.
   * FIGHT TO GROW: defeating monsters/enemies earns experience that raises your
     stats and LEVEL over time, making you stronger. Engage winnable fights (use
-    "combat"); flee ones that would kill you.
+    "combat"); flee ones that would kill you. (Per the game: you earn experience
+    by solving quests AND slaying monsters; gaining levels raises your primary
+    attributes - Strength, Dexterity, Intelligence - and your Hits/health.
+    Strength also governs how much you can carry and your melee damage.)
   * MAKE PROGRESS: prefer purposeful action over aimless wandering or repeating
     yourself. If you have exhausted a person or place, move on to somewhere new.
   * DON'T LINGER: do not re-interview people you've already learned from
