@@ -2264,6 +2264,30 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     if _cnt >= 4:
                         _un[nm] = 0
 
+    # --- Search/goto conflation informer: the agent often WRITES "search bag
+    #     for key" but EMITS a goto (it conflates arriving with searching). If
+    #     its reasoning mentions search/open/look and there is a searchable
+    #     container/body/bag adjacent RIGHT NOW, tell it to use the 'search'
+    #     action - arriving is not searching. Inform-only (self-sufficiency);
+    #     we do NOT convert the action for it. ---------------------------------
+    if (isinstance(action, dict) and action.get("type") == "goto"
+            and not state.get("conversation_in_progress")):
+        _rl = (reason or "").lower()
+        if any(w in _rl for w in ("search", "open", "look inside", "loot")):
+            _adj = [o for o in (state.get("objects") or [])
+                    if (o.get("body") or "bag" in (o.get("name") or "").lower()
+                        or "chest" in (o.get("name") or "").lower()
+                        or "barrel" in (o.get("name") or "").lower())
+                    and abs(o.get("dx", 9)) <= 1 and abs(o.get("dy", 9)) <= 1]
+            if _adj:
+                _nm = _adj[0].get("name", "it")
+                session["last_bump"] = (
+                    f"You are standing next to the {_nm}. Arriving there is NOT "
+                    "searching it. To look inside, emit the 'search' action now "
+                    "(not goto). If you already searched it and it was empty, stop "
+                    "returning - update your plot_summary and try another lead.")
+                print(f"[{step:03d}] conflation-info: adjacent {_nm}; suggested search")
+
     # --- Emptied-body magnet: the agent sometimes keeps issuing goto toward a
     #     spot it ALREADY searched empty. PRINCIPLE: make the agent self-
     #     sufficient - INFORM it (don't seize its action) so it can decide, and
