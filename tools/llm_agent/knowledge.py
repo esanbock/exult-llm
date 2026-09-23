@@ -731,6 +731,8 @@ class KnowledgeBase:
         "gold", "gem", "ring", "sword", "shield", "armor", "potion", "wand",
         "lever", "switch", "grave", "coffin", "altar", "shrine", "cauldron",
         "skeleton", "blood", "trap", "locked", "magic", "rune",
+        "jewel", "jewelry", "necklace", "amulet", "crown", "coin", "treasure",
+        "deed", "medallion", "map", "reagent",
     )
 
     def note_observation(self, text: str, kind: str = "seen", step: int = 0) -> bool:

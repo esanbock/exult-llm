@@ -1822,19 +1822,50 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             and not state.get("conversation_in_progress")):
         _pp = state.get("player") or {}
         _here = (_pp.get("tx"), _pp.get("ty"))
+        # Consider "already looted here" if we're within 2 tiles of any spot we
+        # emptied (the agent re-searches slightly different adjacent tiles).
+        _looted = session.get("looted_spots", set())
+        _near_looted = any(abs(_here[0]-lx) + abs(_here[1]-ly) <= 2
+                           for (lx, ly) in _looted)
         # Already looted from this exact spot? Don't re-search - the body is
         # empty. Move on to the next objective instead of looping.
-        if _here in session.get("looted_spots", set()):
+        if _near_looted:
             session["last_bump"] = ("You already searched and emptied the body here - "
-                                    "there is nothing left to take. Move on: pursue your "
-                                    "other goals (e.g. find and talk to the person you need).")
-            qa, qr = _pursue_focus_quest(state, kb)
-            if qa and qa.get("type") != "search":
-                action, reason = qa, qr
+                                    "there is nothing left to take. Move on: grab any "
+                                    "loose items you can see, or pursue your other goals.")
+            # First, if there is notable UNOWNED loot visible nearby, grab it -
+            # the body being empty doesn't mean the SCENE is empty (e.g. the
+            # Gargoyle jewelry lying next to the body). This breaks the fruitless
+            # re-search loop by doing something productive.
+            _pp2 = state.get("player") or {}
+            _NOT_LOOT = ("blood", "trap", "lever", "switch", "grave", "coffin",
+                         "altar", "shrine", "cauldron", "skeleton", "locked",
+                         "rune", "chest", "body", "corpse")  # scenery/containers
+            _loot = [o for o in (state.get("objects") or [])
+                     if o.get("name") and not o.get("owned") and not o.get("body")
+                     and kb.is_notable_object(o.get("name"))
+                     and not any(w in o.get("name", "").lower() for w in _NOT_LOOT)
+                     and o.get("name") not in session.get("picked", set())
+                     and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 10]
+            if _loot:
+                _it = min(_loot, key=lambda o: abs(o["dx"]) + abs(o["dy"]))
+                if abs(_it["dx"]) <= 1 and abs(_it["dy"]) <= 1:
+                    action = {"type": "pickup", "name": _it["name"]}
+                    session.setdefault("picked", set()).add(_it["name"])
+                    reason = f"(guard) body empty; grabbing nearby {_it['name']}"
+                else:
+                    action = {"type": "goto", "tx": _pp2.get("tx", 0) + _it["dx"],
+                              "ty": _pp2.get("ty", 0) + _it["dy"]}
+                    reason = f"(guard) body empty; going to loot {_it['name']}"
+                print(f"[{step:03d}] search-guard: body empty; loot '{_it['name']}'")
             else:
-                action = _explore_far(state, session, wedged)
-                reason = "(guard) body already looted; moving on to explore"
-            print(f"[{step:03d}] search-guard: body at {_here} already looted; moving on")
+                qa, qr = _pursue_focus_quest(state, kb)
+                if qa and qa.get("type") != "search":
+                    action, reason = qa, qr
+                else:
+                    action = _explore_far(state, session, wedged)
+                    reason = "(guard) body already looted; moving on to explore"
+                print(f"[{step:03d}] search-guard: body at {_here} already looted; moving on")
         else:
             _here_close = lambda dx, dy: abs(dx) <= 1 and abs(dy) <= 1
             # Anything searchable right next to us? then let the search run.
