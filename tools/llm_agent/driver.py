@@ -1284,7 +1284,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # --- Driver-side guards to keep behavior sane ------------------------
     MAX_TALKS = 3              # re-talk limit *since last progress* (resets on
                                # meaningful progress so NPCs can be revisited)
-    MAX_CONVO_TURNS = 12       # force-end a conversation that drags on
+    MAX_CONVO_TURNS = 30       # hard cap; a thorough NPC (ask every topic, each
+                               # = answer+space) needs many turns. The topic-
+                               # aware end-guard closes sooner when topics are
+                               # exhausted, so this is just a runaway backstop.
     def talked(nm):
         return kb.talked_recently(nm)
 
@@ -1451,7 +1454,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         picked = session.setdefault("picked_answers", set())
         chosen_idx = action.get("index") if isinstance(action, dict) and action.get("type") == "answer" else None
         too_long = session.get("convo_turns", 0) >= MAX_CONVO_TURNS
-        repeating = chosen_idx is not None and chosen_idx in picked and len(picked) >= max(1, len(answers) - 1)
+        # Are there still useful (non-generic, unasked) topics on the CURRENT
+        # menu? If so, don't force-end - let the agent exhaust the tree first.
+        _generic0 = {"name", "job", "bye", "yes", "no", "leave", "farewell",
+                     "goodbye", "nothing", "hello"}
+        _cnpc0 = session.get("current_npc", "?")
+        _asked0 = set((kb.recall_npc(_cnpc0) or {}).get("topics_asked", []))
+        _useful_left = [a for a in answers
+                        if a.lower() not in _generic0 and a not in _asked0]
+        # Only treat "repeating" as done if there's nothing useful left to ask.
+        repeating = (chosen_idx is not None and chosen_idx in picked
+                     and len(picked) >= max(1, len(answers) - 1)
+                     and not _useful_left)
         if too_long or repeating:
             # Engage the leaving latch so we drive to a clean close, not just
             # a single bye that may re-open choices.
