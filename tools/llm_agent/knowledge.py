@@ -74,6 +74,9 @@ class KnowledgeBase:
         #   {"turns":int, "parse_fail":int,
         #    "tools": {name: {"calls":int, "ok":int, "err":int}}}
         self.tool_stats: dict = {"turns": 0, "parse_fail": 0, "tools": {}}
+        # Spots the agent already searched and found EMPTY, so it doesn't keep
+        # returning to the same looted body/container. name -> {tx,ty}.
+        self.searched_empty: dict = {}
 
     # ----- persistence ---------------------------------------------------
     def to_dict(self) -> dict:
@@ -85,7 +88,8 @@ class KnowledgeBase:
                 "observations": self.observations,
                 "episodic_summary": self.episodic_summary,
                 "tool_stats": self.tool_stats,
-                "topics": self.topics}
+                "topics": self.topics,
+                "searched_empty": self.searched_empty}
 
     @classmethod
     def load(cls, path: Optional[str]) -> "KnowledgeBase":
@@ -98,6 +102,7 @@ class KnowledgeBase:
             kb.quests = dict(data.get("quests", {}))
             kb.npcs = dict(data.get("npcs", {}))
             kb.topics = dict(data.get("topics", {}))
+            kb.searched_empty = dict(data.get("searched_empty", {}))
             kb.journal = list(data.get("journal", []))
             kb.dialogue_history = list(data.get("dialogue_history", []))
             kb.action_history = list(data.get("action_history", []))
@@ -838,6 +843,22 @@ class KnowledgeBase:
         return n
 
     # ----- mental map / places -------------------------------------------
+    def mark_searched_empty(self, tx: int, ty: int, name: str = "body") -> None:
+        """Remember a spot searched and found EMPTY so the agent stops returning
+        to the same looted body/container (short-term-memory aid)."""
+        key = f"{name}@{int(tx)},{int(ty)}"
+        self.searched_empty[key] = {"name": name, "tx": int(tx), "ty": int(ty)}
+        # Keep a bounded, recent set.
+        if len(self.searched_empty) > 20:
+            for k in list(self.searched_empty)[:-20]:
+                del self.searched_empty[k]
+
+    def searched_empty_view(self, limit: int = 8) -> list:
+        """Recent already-searched-empty spots for the prompt, so the agent
+        knows 'I already checked there, it was empty - don't go back'."""
+        items = list(self.searched_empty.values())[-limit:]
+        return [f"{r.get('name')} at ({r.get('tx')},{r.get('ty')})" for r in items]
+
     def record_place(self, name: str, tx: int, ty: int,
                      kind: str = "place", note: str = "") -> None:
         """Remember a discovered location so it can be navigated to later."""

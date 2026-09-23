@@ -236,8 +236,11 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
   recent_dialogue: a running transcript of the last conversation exchanges
       ({"npc":name,"said":...} for NPC lines, {"me":...} for your replies).
       Use this to remember what you have learned and what was said earlier.
-  recent_actions: your last few meaningful actions (talk/open/pickup/etc).
-      Use this to avoid repeating something you just did.
+  recent_actions: your last few meaningful actions WITH OUTCOMES (e.g. "search
+      body @(x,y) -> EMPTY"). Use this to avoid repeating something that already
+      failed or found nothing.
+  already_searched_empty (list) - bodies/containers you ALREADY searched and
+      found empty. Do NOT return to search these again - move on.
   story_so_far: a compact running summary of OLDER events/clues that have
       scrolled out of recent_dialogue. Older detail is compressed here (not
       lost) so you can still recall earlier story and leads on a long journey.
@@ -497,6 +500,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         topics = kb.topics_view(8 if lvl >= 2 else 16)
         if topics:
             view["known_topics"] = topics
+        # Spots already searched and empty - so the agent stops returning to the
+        # same looted body/container.
+        se = kb.searched_empty_view(8)
+        if se:
+            view["already_searched_empty"] = se
         # If we're in a conversation, proactively show what we've already asked
         # THIS person and what we have NOT asked yet, so the agent doesn't
         # re-ask covered topics or forget an important one (e.g. "key").
@@ -1975,13 +1983,35 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         session.pop("last_bump", None)
 
     # Log meaningful actions (not routine moves/waits) to the short action
-    # history so the agent can avoid repeating itself.
+    # history so the agent can avoid repeating itself. Record the OUTCOME, not
+    # just the action - a bare list of gotos taught the model nothing (it kept
+    # re-searching the same empty body because it never recorded "empty"). Skip
+    # routine goto/move so meaningful events (searches, talks, findings) aren't
+    # crowded out.
     atype = action.get("type") if isinstance(action, dict) else None
-    if atype in ("talk", "open", "pickup", "search", "goto", "combat", "feed"):
+    _ok = result.get("ok") if isinstance(result, dict) else None
+    if atype in ("talk", "open", "pickup", "search", "combat", "feed", "take"):
         p0 = state.get("player") or {}
         detail = action.get("name") or action.get("dir") or ""
+        outcome = ""
+        if atype == "search":
+            if _ok:
+                gc = state.get("gump_contents")
+                outcome = " -> EMPTY (nothing to take)" if not gc else f" -> found {gc}"
+                # Remember this exact spot as already-searched-and-empty so the
+                # agent doesn't keep coming back to it (short-term memory).
+                if not gc:
+                    pp = state.get("player") or {}
+                    kb.mark_searched_empty(pp.get("tx", 0), pp.get("ty", 0),
+                                           action.get("name") or "body")
+            else:
+                outcome = " -> nothing to search here"
+        elif atype in ("pickup", "take"):
+            outcome = f" -> got {result.get('item')}" if _ok else " -> could not take"
+        elif atype == "talk":
+            outcome = " (conversed)" if _ok else " -> could not talk"
         kb.record_action(f"{atype} {detail}".strip()
-                         + f" @({p0.get('tx')},{p0.get('ty')})")
+                         + f" @({p0.get('tx')},{p0.get('ty')})" + outcome)
     # A successful pickup/search changes the world -> NPCs may now have new
     # dialogue, so allow revisiting them.
     if atype in ("pickup", "search") and isinstance(result, dict) and result.get("ok"):
