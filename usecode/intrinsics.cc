@@ -89,6 +89,12 @@ using std::strchr;
 
 extern Usecode_value no_ret;
 
+#ifdef USE_LLM_AGENT
+// Defined in llm/agent.cc - stashes the most recent sign text for the "read"
+// agent action.
+void LLM_agent_set_last_sign_text(const std::string& text);
+#endif
+
 static Game_object* sailor = nullptr;    // The current barge captain.  Maybe
 //   this needs to be saved/restored.
 
@@ -1026,6 +1032,7 @@ USECODE_INTRINSIC(display_runes) {
 	}
 	{
 		Sign_gump sign(parms[0].get_int_value(), cnt);
+		std::string _agent_sign_all;    // capture for the LLM agent bridge
 		for (int i = 0; i < cnt; i++) {
 			// Paint each line.
 			const Usecode_value& lval = !i ? parms[1].get_elem0() : parms[1].get_elem(i);
@@ -1034,10 +1041,33 @@ USECODE_INTRINSIC(display_runes) {
 				std::string translated(str);
 				translate_usecode_text(translated);
 				sign.add_text(i, translated.c_str());
+				// Capture a HUMAN-READABLE form for the agent: apply the same
+				// rune->letter substitution Sign_gump uses so the agent doesn't
+				// see raw rune codes like '(' or '*'.
+				std::string readable;
+				for (char ch : translated) {
+					switch (ch) {
+					case '(': readable += "TH"; break;
+					case ')': readable += "EE"; break;
+					case '*': readable += "NG"; break;
+					case '+': readable += "EA"; break;
+					case ',': readable += "ST"; break;
+					case '|': readable += ' '; break;
+					default:  readable += ch; break;
+					}
+				}
+				if (!_agent_sign_all.empty()) {
+					_agent_sign_all += " / ";
+				}
+				_agent_sign_all += readable;
 			} else {
 				sign.add_text(i, std::string());
 			}
 		}
+#ifdef USE_LLM_AGENT
+		// Expose the most recent sign text to the agent bridge (read action).
+		LLM_agent_set_last_sign_text(_agent_sign_all);
+#endif
 		int x;
 		int y;    // Paint it, and wait for click.
 		Get_click(x, y, Mouse::hand, nullptr, false, &sign);

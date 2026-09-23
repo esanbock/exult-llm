@@ -332,6 +332,10 @@ periodically). For finer detail you have the recall/quests tools.
             searching, use "take" to grab items, then "close" it.
   close   - Close an open container/body gump (like pressing the checkmark).
             params: none. Do this when done looting so you can move again.
+  read    - Read a nearby SIGN or readable object (a human double-clicks it).
+            Returns its "text". params: omit to read the nearest sign, or
+            {"name":"<obj>"} to read a specific object. Signs give shop names,
+            directions, and place names - useful when you goto a sign.
   take    - Take an item OUT of a nearby body/container (searches inside bags
             too) into your pack. params: {"name":"<item>"} for a specific item,
             or omit to take the first. Use this to loot bodies/chests.
@@ -2413,7 +2417,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # crowded out.
     atype = action.get("type") if isinstance(action, dict) else None
     _ok = result.get("ok") if isinstance(result, dict) else None
-    if atype in ("talk", "open", "pickup", "search", "combat", "feed", "take"):
+    if atype in ("talk", "open", "pickup", "search", "combat", "feed", "take", "read"):
         p0 = state.get("player") or {}
         detail = action.get("name") or action.get("dir") or ""
         outcome = ""
@@ -2442,6 +2446,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             outcome = f" -> got {result.get('item')}" if _ok else " -> could not take"
         elif atype == "talk":
             outcome = " (conversed)" if _ok else " -> could not talk"
+        elif atype == "read":
+            if _ok:
+                _txt = (result.get("text") or "").strip() if isinstance(result, dict) else ""
+                _tgt = result.get("target", "sign") if isinstance(result, dict) else "sign"
+                if _txt:
+                    outcome = f" -> reads: \"{_txt[:120]}\""
+                    # Durable: record the sign's text as an observation and show
+                    # it to the model this turn via last_look.
+                    kb.note_observation(f'read {_tgt}: "{_txt[:160]}"', kind="read",
+                                        step=step)
+                    session["last_look"] = f'The {_tgt} reads: "{_txt}"'
+                else:
+                    outcome = " -> (sign had no readable text)"
+            else:
+                outcome = " -> nothing to read here"
         kb.record_action(f"{atype} {detail}".strip()
                          + f" @({p0.get('tx')},{p0.get('ty')})" + outcome)
     # A successful pickup/search changes the world -> NPCs may now have new

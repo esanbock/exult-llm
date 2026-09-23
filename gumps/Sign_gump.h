@@ -37,6 +37,20 @@ public:
 	~Sign_gump() override;
 	// Set a line of text.
 	void add_text(int line, const std::string& txt);
+	// Concatenate all lines (for the LLM agent to read a sign's contents).
+	std::string get_text() const {
+		std::string out;
+		for (int i = 0; i < num_lines; ++i) {
+			if (lines[i].empty()) {
+				continue;
+			}
+			if (!out.empty()) {
+				out += " / ";
+			}
+			out += lines[i];
+		}
+		return out;
+	}
 	// Paint it and its contents.
 	void paint() override;
 };

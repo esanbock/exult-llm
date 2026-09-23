@@ -40,6 +40,7 @@
 #include "exult_constants.h"
 #include "party.h"
 #include "Gump_manager.h"
+#include "Sign_gump.h"
 #include "Slider_gump.h"
 #include "contain.h"
 #include "objiter.h"
@@ -445,6 +446,12 @@ namespace {
 }    // namespace
 
 namespace LLM_agent {
+
+	// Most recent sign/plaque text, populated by the usecode display_runes
+	// intrinsic (via LLM_agent_set_last_sign_text) when a sign is shown, so the
+	// "read" action can return it even though the sign gump is modal and
+	// auto-dismissed.
+	std::string g_llm_last_sign_text;
 
 	string screenshot();    // fwd decl (defined after handle_request)
 
@@ -1363,6 +1370,84 @@ namespace LLM_agent {
 				   + json_escape(nm) + "\",\"looted\":\"\",\"empty\":true}";
 		}
 
+		if (type == "read") {
+			// Read the nearest SIGN / readable object (a human double-clicks it).
+			// Activating a sign fires its usecode, which shows floating text; we
+			// capture that text and return it. Optional "name" to disambiguate.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			string want;
+			get_string(action_json, "name", want);
+			std::string wlow = want;
+			std::transform(wlow.begin(), wlow.end(), wlow.begin(), ::tolower);
+			const Tile_coord   at = av->get_tile();
+			Game_object_vector objs;
+			Game_object::find_nearby(objs, at, -1, 4, 128);
+			Game_object* best   = nullptr;
+			int          best_d = 1 << 30;
+			for (Game_object* obj : objs) {
+				if (!obj || obj->as_actor()) {
+					continue;
+				}
+				std::string nm = obj->get_name();
+				if (nm.empty()) {
+					continue;
+				}
+				std::string nlow = nm;
+				std::transform(nlow.begin(), nlow.end(), nlow.begin(), ::tolower);
+				// A "read" target is a sign/plaque/marker by default, or any
+				// object matching the requested name.
+				const bool is_signish = nlow.find("sign") != std::string::npos
+						|| nlow.find("plaque") != std::string::npos
+						|| nlow.find("placard") != std::string::npos
+						|| nlow.find("marker") != std::string::npos
+						|| nlow.find("tombstone") != std::string::npos
+						|| nlow.find("grave") != std::string::npos;
+				if (!wlow.empty()) {
+					if (nlow.find(wlow) == std::string::npos) {
+						continue;
+					}
+				} else if (!is_signish) {
+					continue;
+				}
+				const Tile_coord ot = obj->get_tile();
+				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+				if (d < best_d) {
+					best_d = d;
+					best   = obj;
+				}
+			}
+			if (!best) {
+				return "{\"ok\":false,\"error\":\"no sign/readable object nearby\"}";
+			}
+			const std::string nm = best->get_name();
+			// Reading a sign runs usecode that shows a MODAL text gump and waits
+			// for a click (Get_click). We (a) clear the captured-text global,
+			// (b) pre-inject a click so the modal dismisses itself immediately,
+			// then (c) activate the sign. display_runes fills the global with
+			// the sign's text as it builds the gump, so we can return it even
+			// though the gump auto-closes. (A sign is a modal you click off.)
+			extern std::string g_llm_last_sign_text;
+			g_llm_last_sign_text.clear();
+			// Inject a left mouse click so the modal Get_click returns at once.
+			{
+				SDL_Event ev = {};
+				ev.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+				ev.button.button = SDL_BUTTON_LEFT;
+				ev.button.x = 10;
+				ev.button.y = 10;
+				SDL_PushEvent(&ev);
+				ev.type = SDL_EVENT_MOUSE_BUTTON_UP;
+				SDL_PushEvent(&ev);
+			}
+			best->activate();    // shows the sign, caches text, click dismisses it
+			const std::string text = g_llm_last_sign_text;
+			return "{\"ok\":true,\"did\":\"read\",\"target\":\""
+				   + json_escape(nm) + "\",\"text\":\"" + json_escape(text) + "\"}";
+		}
+
 		if (type == "pickup") {
 			// Take the nearest takeable world object (optionally matching a
 			// name) into the avatar's inventory.
@@ -1888,5 +1973,11 @@ namespace LLM_agent {
 	}
 
 }    // namespace LLM_agent
+
+// Global-scope shim so usecode (intrinsics.cc) can stash the most recent sign
+// text without needing the LLM_agent namespace.
+void LLM_agent_set_last_sign_text(const std::string& text) {
+	LLM_agent::g_llm_last_sign_text = text;
+}
 
 #endif /* USE_LLM_AGENT */
