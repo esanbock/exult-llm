@@ -2474,6 +2474,10 @@ def run_loop(args, window: ThoughtsWindow, ollama, exult_proc=None) -> None:
     recent_positions: list = []
     session = {"picked": set(), "searched_body": False}
     kb = KnowledgeBase.load(args.memory_file) if args.memory_file else KnowledgeBase()
+    # Tool-call stats are per-RUN health metrics: reset them so a run's error
+    # rates (e.g. 'open') reflect THIS run, not all history. Durable memory
+    # (quests, notes, places, plot summary) is preserved by load().
+    kb.reset_tool_stats()
     if args.memory_file:
         print(f"[+] Loaded journal: {len(kb.quests)} quests, "
               f"{len(kb.npcs)} NPCs, {len(kb.journal)} notes")

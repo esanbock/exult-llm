@@ -777,6 +777,13 @@ class KnowledgeBase:
 
     # ----- episodic summary + context budget -----------------------------
     # ----- tool-call stats (turn accounting / health) --------------------
+    def reset_tool_stats(self) -> None:
+        """Zero the tool-call counters for a NEW run. Durable memory (quests,
+        notes, places, summary) is kept; only the per-run health metrics
+        (turns, parse-fail, per-tool ok/err) start fresh so a run's error rates
+        (e.g. 'open') reflect THIS run, not all history."""
+        self.tool_stats = {"turns": 0, "parse_fail": 0, "tools": {}}
+
     def record_turn(self, parse_ok: bool) -> None:
         """Count one agent turn; note whether the model's reply parsed."""
         self.tool_stats["turns"] = self.tool_stats.get("turns", 0) + 1

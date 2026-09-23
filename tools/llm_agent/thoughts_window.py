@@ -31,13 +31,14 @@ class ThoughtsWindow:
         self._panes = {}
         # Hints the user types are queued here for the driver to consume.
         self._hints: "queue.Queue[str]" = queue.Queue()
-        # Rolling logs (last N turns) for reasoning and action/result.
+        # Rolling combined turn log (last N turns). Each entry pairs the
+        # reasoning with the action/result it produced.
         self._MAX_TURNS = 12
         self._cur_turn = 0
-        self._think_log: list = []   # [(turn, text)]
-        self._action_log: list = []  # [(turn, text)]
-        self._last_context = ""      # full prompt for the Show-context window
-        self._stat_labels = {}       # key -> value Label widget
+        self._turn_log: list = []       # [(turn, reason, action_result)]
+        self._pending_reason = ""       # reason awaiting its action this turn
+        self._last_context = ""         # full prompt for the Show-context window
+        self._stat_labels = {}          # key -> value Label widget
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -91,10 +92,11 @@ class ThoughtsWindow:
               "Map (@ you  C companion  & person  b lootable-body  x corpse  "
               "n container  * item  E exit  ~ water  = barrier  +/ doors  # wall)",
               14, mono=True, wrap="none")
-        # Rolling reasoning + action panes (show last N turns, newest at bottom).
-        _pane(left, "think", f"LLM reasoning (last {self._MAX_TURNS} turns)", 8)
-        _pane(left, "action", f"Action -> result (last {self._MAX_TURNS} turns)", 6, mono=True)
-        _pane(left, "dialog", "Dialog / characters / objects on screen", 7)
+        # Rolling COMBINED turn log: reasoning and the action/result it led to
+        # are two halves of one thought, so they live together per turn.
+        _pane(left, "turnlog", f"Turn log - reasoning -> action -> result (last {self._MAX_TURNS})",
+              14, mono=False, wrap="word")
+        _pane(left, "dialog", "Dialog / characters / objects on screen", 8)
 
         # RIGHT: inspector
         _pane(right, "plot", "Story so far (LLM's running plot summary)", 4)
@@ -215,13 +217,46 @@ class ThoughtsWindow:
                  font=("Segoe UI", 8)).pack(side="left", padx=6)
         tk.Button(btnrow, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
 
-    def _render_rolling(self, key, log) -> None:
-        w = self._panes.get(key)
+    def _append_turn_entry(self, action_result=None) -> None:
+        """Merge reasoning + action/result into ONE entry per turn. Reasoning
+        (think) usually arrives first and creates/updates the entry; the action
+        arrives next and completes it. If they land out of order we still pair
+        them by the current turn number."""
+        log = self._turn_log
+        # Find an existing entry for this turn to complete, else make one.
+        entry = None
+        if log and log[-1][0] == self._cur_turn:
+            entry = log[-1]
+        if entry is None:
+            entry = [self._cur_turn, self._pending_reason, ""]
+            log.append(entry)
+            del log[:-self._MAX_TURNS]
+        else:
+            # update reason if we just got one
+            if self._pending_reason:
+                entry[1] = self._pending_reason
+        if action_result is not None:
+            entry[2] = action_result
+            self._pending_reason = ""
+        self._render_turn_log()
+
+    def _render_turn_log(self) -> None:
+        w = self._panes.get("turnlog")
         if w is None:
             return
         w.delete("1.0", "end")
-        for turn, text in log:
-            w.insert("end", f"[{turn}] {text}\n")
+        for turn, reason, act in self._turn_log:
+            w.insert("end", f"[{turn}] ", ("turnnum",))
+            w.insert("end", f"{reason}\n" if reason else "(no reasoning)\n")
+            if act:
+                w.insert("end", f"      \u2192 {act}\n", ("act",))
+            w.insert("end", "\n")
+        # Style tags (configure once).
+        try:
+            w.tag_configure("turnnum", foreground="#2c3e50", font=("Segoe UI", 10, "bold"))
+            w.tag_configure("act", foreground="#2e7d32", font=("Consolas", 9))
+        except Exception:
+            pass
         w.see("end")
 
     def _rebuild_stats_grid(self, kv: dict) -> None:
@@ -290,13 +325,12 @@ class ThoughtsWindow:
                 elif kind == "gstatus":
                     self._gstatus.config(text=payload)
                 elif kind == "think":
-                    self._think_log.append((self._cur_turn, payload))
-                    self._think_log = self._think_log[-self._MAX_TURNS:]
-                    self._render_rolling("think", self._think_log)
+                    # Reasoning arrives first; hold it until its action lands.
+                    self._pending_reason = payload
+                    self._append_turn_entry()
                 elif kind == "action":
-                    self._action_log.append((self._cur_turn, payload))
-                    self._action_log = self._action_log[-self._MAX_TURNS:]
-                    self._render_rolling("action", self._action_log)
+                    # Pair the action/result with the reasoning from this turn.
+                    self._append_turn_entry(action_result=payload)
                 elif kind == "stats_kv":
                     self._rebuild_stats_grid(payload)
                 elif kind == "tool_stats":
