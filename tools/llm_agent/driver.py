@@ -918,14 +918,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     for _n in (state.get("nearby") or []):
         if _n.get("name") and not _n.get("dead"):
             kb.see_npc(_n["name"], _ptx + _n.get("dx", 0), _pty + _n.get("dy", 0))
-    # Build the mental map: record notable named places (signs and building-
-    # like objects) so the agent can navigate a growing multi-region world.
-    _PLACE_WORDS = ("sign", "gate", "door", "stairs", "ladder", "bridge",
-                    "well", "shrine", "altar", "chest", "bed", "counter",
-                    "stables", "inn", "tavern", "shop", "temple")
+    # Build the mental map: record only genuine NAVIGATION landmarks a human
+    # would note (buildings/purpose, gates, signs, stairs, wells, bridges) - not
+    # furniture/clutter (bed, chest, door, inkwell) which added noise without
+    # helping navigation. Purpose-y words get a "building" kind so the agent can
+    # reason about where things are (e.g. an inn/smithy/temple).
+    _BUILDING_WORDS = ("inn", "tavern", "shop", "temple", "smithy", "forge",
+                       "stables", "church", "shrine", "guild", "bank", "market")
+    _LANDMARK_WORDS = ("sign", "gate", "gateway", "stairs", "ladder", "bridge",
+                       "well", "fountain", "statue", "fortress")
     for _o in (state.get("objects") or []):
         nm = (_o.get("name") or "").lower()
-        if any(w in nm for w in _PLACE_WORDS):
+        if any(w in nm for w in _BUILDING_WORDS):
+            kb.record_place(_o["name"], _ptx + _o.get("dx", 0),
+                            _pty + _o.get("dy", 0), kind="building")
+        elif any(w in nm for w in _LANDMARK_WORDS):
             kb.record_place(_o["name"], _ptx + _o.get("dx", 0),
                             _pty + _o.get("dy", 0), kind="landmark")
 
