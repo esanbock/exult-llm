@@ -254,13 +254,17 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
             place>"} to go to the nearest thing with that name OR a remembered
             place/NPC from known_places/npc memory (even if off-screen), OR
             {"tx":<int>,"ty":<int>} for an absolute tile. PREFER "goto" over many
-            "move" steps to reach an NPC, item, building, or known place.
+            "move" steps to reach an NPC, item, building, or known place. If the
+            exact spot can't be reached (walls), goto still walks you as far
+            toward it as it can (result "partial":true) - so repeating goto to a
+            far target makes steady progress; you do NOT need a clear line.
   stop    - Stop walking. params: none.
   talk    - START a conversation with a nearby NPC. params: {"name": "<NPC name>"}
             This is the ONLY way to begin dialog. Walking next to an NPC does
             NOT start dialog. You do NOT need to be adjacent - it finds the
-            named NPC in your view and opens the conversation. Works for both
-            townspeople and party companions (in_party:true).
+            named NPC in your view and opens the conversation. The NPC must be
+            AWAKE (a "sleeping" condition NPC won't respond - wait_until morning).
+            Works for townspeople; your own party is in "party" (nothing new).
   open    - Open (or close) the nearest door within a few tiles. params: none.
             Doors show as '+' (closed) or '/' (open) on the grid and in "doors".
             A closed door '+' is NOT a wall - it is a passage you can use. To go
