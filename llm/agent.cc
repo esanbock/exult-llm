@@ -325,37 +325,49 @@ namespace {
 				if (obj->get_name().empty()) {
 					continue;
 				}
-				// Semantic glyph so the LLM can tell terrain/features apart.
+				// Glyphs earn their place ONLY if they add navigational value
+				// the "objects" list can't: walkability, routes, and loot/exit
+				// locations. Item IDENTITY lives in the objects list, so we do
+				// NOT spend glyphs distinguishing tree/wall/furniture/sign - they
+				// are all just BLOCKED tiles for movement and already show as '#'
+				// from the blocking layer. We only override '#' when the glyph
+				// tells the agent something actionable about that tile.
 				const std::string nm  = obj->get_name();
 				std::string        low = nm;
 				std::transform(low.begin(), low.end(), low.begin(), ::tolower);
-				char g = '*';    // default: a named item
-				if (info.is_body_shape()) {
-					g = 'x';    // body/remains
+				const bool is_exit =
+						(low.find("portcullis") != std::string::npos
+						 || low.find("gateway") != std::string::npos
+						 || low.find("stair") != std::string::npos
+						 || low.find("ladder") != std::string::npos
+						 || low.find("trapdoor") != std::string::npos
+						 || (low.find("gate") != std::string::npos
+							 && low.find("fence") == std::string::npos));
+				char g = 0;    // 0 => leave the underlying terrain/'#' as-is
+				if (is_exit) {
+					g = 'E';    // an EXIT/route: town gate, stairs, ladder
+				} else if (info.is_body_shape()) {
+					// Lootable (container) body vs a corpse with nothing to take.
+					g = obj->as_container() ? 'b' : 'x';
 				} else if (info.is_water()) {
-					g = '~';    // water
-				} else if (low.find("tree") != std::string::npos
-						   || info.get_shape_class() == Shape_info::unusable) {
-					g = 'T';    // tree / scenery you cannot use
-				} else if (low.find("fence") != std::string::npos
-						   || low.find("gate") != std::string::npos
-						   || low.find("rail") != std::string::npos) {
-					g = '=';    // fence / railing / gate frame
-				} else if (info.get_shape_class() == Shape_info::building) {
-					g = 'W';    // wall / roof / window / mountain (structure)
+					g = '~';    // water (blocks walking)
 				} else if (info.get_shape_class() == Shape_info::container) {
-					g = 'n';    // container (chest, barrel, etc.)
-				} else if (low.find("bed") != std::string::npos
-						   || low.find("table") != std::string::npos
-						   || low.find("chair") != std::string::npos
-						   || low.find("counter") != std::string::npos) {
-					g = 'H';    // furniture
-				} else if (low.find("sign") != std::string::npos) {
-					g = 's';    // readable sign
-				} else if (info.is_solid()) {
-					g = 'o';    // some other solid obstacle
+					g = 'n';    // container you can search for loot
+				} else if (low.find("fence") != std::string::npos
+						   || low.find("rail") != std::string::npos) {
+					g = '=';    // linear barrier (look for a gap/gate)
+				} else if (info.get_shape_class() == Shape_info::building
+						   || low.find("tree") != std::string::npos
+						   || info.is_solid()) {
+					// Blocking structure/scenery reads as a wall so the map is
+					// about walkability; identity (if notable) is in objects[].
+					g = '#';
+				} else {
+					g = '*';    // a loose named item on the ground (pickup-able)
 				}
-				plot(ot.tx, ot.ty, g);
+				if (g) {
+					plot(ot.tx, ot.ty, g);
+				}
 			}
 		}
 
@@ -370,7 +382,8 @@ namespace {
 				const Tile_coord nt = npc->get_tile();
 				char glyph;
 				if (npc->is_dead()) {
-					glyph = 'x';                       // body
+					// Lootable corpse (container) vs one with nothing to take.
+					glyph = npc->as_container() ? 'b' : 'x';
 				} else if (npc->get_party_id() >= 0) {
 					glyph = 'C';                       // party companion
 				} else {

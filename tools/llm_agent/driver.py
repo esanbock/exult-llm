@@ -222,12 +222,17 @@ periodically). For finer detail you have the recall/quests tools.
                                 gate/portcullis - the way OUT of town to the
                                 wider world (goto it to leave, once any gate
                                 password/lock is dealt with).
-  grid (string)               - top-down ASCII map centered on you (@):
-                                  @ you   C companion   & other NPC   x body
-                                  T tree   W wall/building   = fence/gate
-                                  n container   H furniture   s sign   ~ water
-                                  + closed door (PASSAGE-openable)  / open door
-                                  o obstacle   * item   . open ground   # blocked
+  grid (string)               - top-down ASCII map centered on you (@). Its job
+                                is WALKABILITY and ROUTES; item identity is in
+                                the objects list. Glyphs:
+                                  @ you   C companion   & person
+                                  b lootable body/container-corpse (search it)
+                                  x corpse (nothing to take)   n container
+                                  * loose item (pickup)   E exit/route (gate,
+                                    stairs, ladder - the way through/out)
+                                  ~ water   = fence/barrier (find a gap or gate)
+                                  + closed door (goto opens it)   / open door
+                                  . walkable ground   # blocked
                                 north=up, south=down, east=right, west=left.
                                 Walk only on '.', items '*', or open door '/';
                                 everything else (T W = n H ~ o #) blocks you.
@@ -907,9 +912,9 @@ def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
             x, y = cx + dx * r, cy + dy * r
             if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
                 ch = rows[y][x]
-                if ch in ".&C*x/":
+                if ch in ".&C*xb/nE+":
                     score += 1
-                elif ch == "#":
+                elif ch in "#~=":
                     break
         return score
 
@@ -1616,7 +1621,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
                 return rows[y][x]
             return "#"
-        WALK = ".*&C/xno~+"  # walkable-ish glyphs (incl. open/closed door, items)
+        WALK = ".*&C/xbnE+"  # walkable-ish: open, items, actors, doors, bodies,
+        #                      containers, exits. NOT '~' water, '=' barrier, '#'.
         # Flood-fill from the avatar over walkable cells to find reachable open
         # tiles, then pick the FARTHEST reachable one as a concrete goto target.
         # This escapes tight enclosures (e.g. a fenced murder scene with one
