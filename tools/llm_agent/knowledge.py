@@ -795,6 +795,24 @@ class KnowledgeBase:
         elif ok is False:
             rec["err"] += 1
 
+    def tool_stats_data(self, top: int = 20) -> dict:
+        """Structured tool-call stats for the GUI (turns, parse-fail, per-tool
+        rows) so it can render a proper table with its own controls."""
+        ts = self.tool_stats
+        turns = ts.get("turns", 0)
+        pf = ts.get("parse_fail", 0)
+        tools = ts.get("tools", {})
+        rows = []
+        for name, r in sorted(tools.items(), key=lambda kv: -kv[1].get("calls", 0))[:top]:
+            c = r.get("calls", 0)
+            ok = r.get("ok", 0)
+            err = r.get("err", 0)
+            rows.append({"tool": name, "calls": c, "ok": ok, "err": err,
+                         "err_pct": (100 * err / c) if c else 0})
+        return {"turns": turns, "parse_fail": pf,
+                "parse_fail_pct": (100 * pf / turns) if turns else 0,
+                "rows": rows}
+
     def tool_stats_pretty(self, top: int = 12) -> str:
         ts = self.tool_stats
         turns = ts.get("turns", 0)

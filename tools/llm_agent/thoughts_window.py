@@ -145,12 +145,33 @@ class ThoughtsWindow:
         stats_frame.pack(fill="x", padx=4, pady=3)
         self._stats_grid = tk.Frame(stats_frame)
         self._stats_grid.pack(fill="x", padx=4, pady=2)
-        # Tool-call stats stay as a small monospace block (tabular by nature).
-        tk.Label(stats_frame, text="Tool calls:", font=("Segoe UI", 9, "bold"),
-                 anchor="w").pack(fill="x", padx=4)
-        self._tool_stats = scrolledtext.ScrolledText(stats_frame, height=6,
-                                                      wrap="none", font=("Consolas", 9))
-        self._tool_stats.pack(fill="x", padx=4, pady=(0, 4))
+
+        # Tool calls: a DEDICATED section with a summary line and a sortable
+        # table (tool | calls | ok | err | err%).
+        tool_frame = tk.LabelFrame(right, text="Tool calls",
+                                   font=("Segoe UI", 10, "bold"))
+        tool_frame.pack(fill="both", expand=True, padx=4, pady=3)
+        tsum = tk.Frame(tool_frame)
+        tsum.pack(fill="x", padx=4, pady=(2, 0))
+        self._tool_turns = tk.Label(tsum, text="turns: -", font=("Consolas", 9, "bold"))
+        self._tool_turns.pack(side="left", padx=(0, 12))
+        self._tool_pfail = tk.Label(tsum, text="parse-fail: -", font=("Consolas", 9, "bold"))
+        self._tool_pfail.pack(side="left")
+        cols = ("calls", "ok", "err", "errpct")
+        self._tool_tree = ttk.Treeview(tool_frame, columns=cols, show="tree headings",
+                                       height=8)
+        self._tool_tree.heading("#0", text="tool")
+        self._tool_tree.column("#0", width=110, anchor="w")
+        for c, txt, w in (("calls", "calls", 60), ("ok", "ok", 50),
+                          ("err", "err", 50), ("errpct", "err%", 60)):
+            self._tool_tree.heading(c, text=txt)
+            self._tool_tree.column(c, width=w, anchor="e")
+        _ttsb = ttk.Scrollbar(tool_frame, orient="vertical", command=self._tool_tree.yview)
+        self._tool_tree.configure(yscrollcommand=_ttsb.set)
+        self._tool_tree.pack(side="left", fill="both", expand=True, padx=(4, 0), pady=2)
+        _ttsb.pack(side="right", fill="y")
+        # Tag error rows red so problem tools stand out.
+        self._tool_tree.tag_configure("err", foreground="#c0392b")
 
         # Hint bar: type a hint and Send it to the agent for the next turn(s).
         hintrow = tk.Frame(self._root)
@@ -231,6 +252,20 @@ class ThoughtsWindow:
         for it in items or []:
             lb.insert("end", "\u2713 " + str(it))
 
+    def _rebuild_tool_stats(self, data: dict) -> None:
+        """data: {turns, parse_fail, parse_fail_pct, rows:[{tool,calls,ok,err,err_pct}]}"""
+        self._tool_turns.config(text=f"turns: {data.get('turns', 0)}")
+        pf = data.get("parse_fail", 0)
+        self._tool_pfail.config(text=f"parse-fail: {pf} ({data.get('parse_fail_pct', 0):.0f}%)")
+        tree = self._tool_tree
+        tree.delete(*tree.get_children(""))
+        for r in data.get("rows", []):
+            err = r.get("err", 0)
+            tags = ("err",) if err else ()
+            tree.insert("", "end", text=r.get("tool", "?"),
+                        values=(r.get("calls", 0), r.get("ok", 0), err,
+                                f"{r.get('err_pct', 0):.0f}%"), tags=tags)
+
     def get_hint(self) -> Optional[str]:
         """Return the next queued user hint (or None). Called by the driver."""
         try:
@@ -265,8 +300,7 @@ class ThoughtsWindow:
                 elif kind == "stats_kv":
                     self._rebuild_stats_grid(payload)
                 elif kind == "tool_stats":
-                    self._tool_stats.delete("1.0", "end")
-                    self._tool_stats.insert("end", payload)
+                    self._rebuild_tool_stats(payload)
                 elif kind == "resolved":
                     self._rebuild_resolved(payload)
                 elif kind == "context_dump":

@@ -1025,7 +1025,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 "Parse fails": _ts.get("parse_fail", 0),
             }
             window.set_stats_kv(stats_kv)
-            window.set_tool_stats(kb.tool_stats_pretty(top=10))
+            window.set_tool_stats(kb.tool_stats_data(top=20))
         except Exception:
             pass
 
@@ -1182,6 +1182,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             kb.record_hint(h, step)
             print(f"[{step:03d}] USER HINT: {h}")
         alert_parts = []
+        _rn = session.pop("review_nudge", None)
+        if _rn:
+            alert_parts.append(_rn)
         if session.get("hint") and session.get("hint_ttl", 0) > 0:
             alert_parts.append("HINT from your operator (follow it): " + session["hint"])
             session["hint_ttl"] -= 1
@@ -1258,6 +1261,28 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         res = ollama.chat_ex(SYSTEM_PROMPT, _user)
         reply = res["content"]
         reason, action = parse_reply(reply)
+        # Repeated-goal detector: if the model keeps stating the SAME short goal
+        # turn after turn, it is likely re-deriving a goal instead of consulting
+        # what it already knows. Set an advisory review-nudge for NEXT turn
+        # (self-sufficiency: point it at its own quests/recall tools; let it
+        # decide). Normalise the reason to a short key.
+        _rkey = re.sub(r"[^a-z ]", "", (reason or "").lower()).strip()[:40]
+        _rkey = re.sub(r"\s+", " ", _rkey)
+        if _rkey and not _rkey.startswith("guard"):
+            _hist = session.setdefault("reason_hist", [])
+            _hist.append(_rkey)
+            del _hist[:-6]
+            # Count near-identical recent goals (share the first 3 words).
+            _head = " ".join(_rkey.split()[:3])
+            _reps = sum(1 for r in _hist if " ".join(r.split()[:3]) == _head)
+            if _reps >= 3:
+                session["review_nudge"] = (
+                    f"You have repeated the goal '{reason[:40]}' several turns. If "
+                    "it's not working, you may have already done it or be missing "
+                    "info: use the 'quests' tool to review your quest log, or "
+                    "'recall' to check your notes on an NPC/topic, then pick a "
+                    "DIFFERENT approach. Consulting your own memory is a valid move.")
+                session["reason_hist"] = []
         # Feed the FULL context to the GUI so the "Show context" button can
         # display exactly what the model saw this turn (system + user + reply).
         if window.available:
