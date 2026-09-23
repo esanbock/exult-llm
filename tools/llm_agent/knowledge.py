@@ -244,6 +244,43 @@ class KnowledgeBase:
             "resolved": len(done),
         }
 
+    def orientation_summary(self, max_len: int = 500) -> str:
+        """A brief 'where you left off' seed built from durable memory, injected
+        on load so the agent resumes with continuity (top open quests, a few
+        known places, and the story-so-far gist) rather than re-discovering
+        everything. Kept short to not bloat context."""
+        parts = []
+        active = sorted([q for q in self.quests.values() if q.get("status") != "done"],
+                        key=lambda q: q.get("priority", 5))
+        if active:
+            top = "; ".join(f"{q.get('title')}(P{q.get('priority',5)})" for q in active[:4])
+            parts.append("Your open goals: " + top + ".")
+        if self.episodic_summary:
+            parts.append("Story so far: " + self.episodic_summary[-260:])
+        if self.places:
+            named = [p.get("name") for p in list(self.places.values())[:6] if p.get("name")]
+            if named:
+                parts.append("Known places: " + ", ".join(named) + ".")
+        s = " ".join(parts).strip()
+        return ("RESUMING - " + s)[:max_len] if s else ""
+
+    def quest_summary(self, max_open: int = 10) -> dict:
+        """COMPACT quest view for the always-on per-turn state: id/title/priority
+        only, NO notes (notes bloated the context ~1000 tok/turn). The agent can
+        pull full detail (notes, prereqs) on demand via the 'quests' tool."""
+        active = [q for q in self.quests.values() if q.get("status") not in ("done",)]
+        active.sort(key=lambda q: q.get("priority", 5))
+        done_n = sum(1 for q in self.quests.values() if q.get("status") == "done")
+        return {
+            "open": [{"id": q["id"], "title": q.get("title"),
+                      "priority": q.get("priority", 5),
+                      **({"npc": q["npc"]} if q.get("npc") else {})}
+                     for q in active[:max_open]],
+            "unresolved": len(active),
+            "resolved": done_n,
+            "hint": "use the 'quests' tool for full details (notes/prereqs)",
+        }
+
     def resolve_quest(self, qid: str) -> bool:
         """Mark a quest resolved (done). Accepts id or fuzzy title."""
         return self.update_quest(qid, status="done")

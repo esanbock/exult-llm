@@ -307,6 +307,10 @@ accumulates over time. Use "recall" with a topic name to review all your notes.
             next turn as "recalled". Use it to remember instructions (e.g. the
             Mayor telling you to find someone) and to understand recurring themes
             before deciding what to do.
+  quests  - Review your FULL quest log with notes and prerequisites. params:
+            none. The always-on "quests" field is a COMPACT list (titles only);
+            use this tool when planning to see each quest's notes/details.
+            Result appears next turn as "quest_detail".
   answer  - Choose a reply during a conversation. params: {"index": <int>} (0-based
             into the "answers" list) OR {"text": "<answer text>"}.
             Only valid when conversation_active is true.
@@ -465,7 +469,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             for d in doors[:6]
         ]
     if kb is not None:
-        view["quests"] = kb.quest_view()
+        view["quests"] = kb.quest_summary()
         # Names of NPCs already met (helps avoid re-greeting). Cap it under
         # context pressure - a long playthrough meets many NPCs and this list
         # can bloat the prompt.
@@ -507,7 +511,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         # NPC notes: focus on those currently nearby. Fewer notes each under
         # context pressure to keep the prompt within budget.
         nearby_names = [n.get("name") for n in nearby[:near_n] if n.get("name")]
-        notes = kb.npc_view(nearby_names, note_limit=(4 if lvl >= 2 else 12))
+        notes = kb.npc_view(nearby_names, note_limit=(2 if lvl >= 2 else 4))
         if notes:
             view["npc_notes"] = notes
         # Growing window of recent CONVERSATION (story/clues live here) and a
@@ -527,6 +531,9 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     if state.get("recalled") is not None:
         # The full saved dialogue tree the agent asked to recall this turn.
         view["recalled"] = state["recalled"]
+    if state.get("quest_detail") is not None:
+        # Full quest log the agent asked to review this turn (notes/prereqs).
+        view["quest_detail"] = state["quest_detail"]
     return json.dumps(view)
 
 def format_dialog(state: dict) -> str:
@@ -1085,6 +1092,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _recalled = session.pop("recalled", None)
         if _recalled is not None:
             state["recalled"] = _recalled
+        _qd = session.pop("quest_detail", None)
+        if _qd is not None:
+            state["quest_detail"] = _qd
         # Tell summarize_state who we're talking to, so it can proactively show
         # which topics we've already asked this NPC and which we have NOT.
         if state.get("conversation_in_progress"):
@@ -1170,6 +1180,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     #     topics still unasked. Does not advance the game; the result is shown
     #     in next turn's observation as "recalled" so the agent can remember,
     #     e.g., the Mayor's instructions from a past run.
+    if isinstance(action, dict) and action.get("type") == "quests":
+        # Pull the FULL quest log (with notes/prereqs) on demand - it's kept
+        # compact in the always-on state to save context, so this lets the
+        # agent review details when planning. Shown next turn as "quest_detail".
+        session["quest_detail"] = kb.quest_view(max_open=20)
+        kb.record_action("reviewed quest log")
+        if window.available:
+            window.set_action("[quests] reviewed full quest log")
+        print(f"[{step:03d}] quests: reviewed full log")
+        action = {"type": "wait"}
+        reason = "(reviewed my quest log)"
+
     if isinstance(action, dict) and action.get("type") == "recall":
         who = str(action.get("name") or action.get("npc") or action.get("topic") or "").strip()
         rec = kb.recall_npc(who) if who else {"known": False, "name": who}
@@ -1984,6 +2006,15 @@ def run_loop(args, window: ThoughtsWindow, ollama, exult_proc=None) -> None:
     if args.memory_file:
         print(f"[+] Loaded journal: {len(kb.quests)} quests, "
               f"{len(kb.npcs)} NPCs, {len(kb.journal)} notes")
+        # Seed the agent's context on load with a brief orientation of where it
+        # left off (open quests, known places, what it's learned), so it resumes
+        # with continuity instead of re-discovering everything. Shown as the
+        # first alert; cleared after a few turns.
+        _orient = kb.orientation_summary()
+        if _orient:
+            session["hint"] = _orient
+            session["hint_ttl"] = 3
+            print("[+] Seeded orientation summary into context")
     exult = ExultClient(args.host, args.port)
     saved_this_run = False
     try:
