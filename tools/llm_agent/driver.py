@@ -944,15 +944,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             window.set_quests(kb.quests_pretty())
             window.set_npc_tree(kb.npcs_tree_data())
             window.set_topics_tree(kb.topics_tree_data())
+            window.set_plot(kb.episodic_summary or "(no plot summary yet - the LLM builds this)")
             p = state.get("player") or {}
+            # Always-visible game status line.
+            window.set_gstatus(
+                f"{state.get('time_of_day','?')} (h{state.get('hour','?')})  "
+                f"pos({p.get('tx')},{p.get('ty')})  hp {p.get('hp')}  food {p.get('food')}  "
+                f"str {p.get('str')} dex {p.get('dex')} int {p.get('int')}  "
+                f"{'IN COMBAT' if state.get('in_combat') else ''}")
             stats = [
-                f"pos: ({p.get('tx')},{p.get('ty')})  hp:{p.get('hp')}  food:{p.get('food')}",
-                f"in_combat:{state.get('in_combat')}  conv:{state.get('conversation_in_progress')}",
-                f"NPCs met: {len(kb.npcs)}   places mapped: {len(kb.places)}",
-                f"quests: {len(kb.quests)}   journal: {len(kb.journal)}",
+                f"NPCs met: {len(kb.npcs)}   places: {len(kb.places)}   topics: {len(kb.topics)}",
+                f"quests: {len(kb.quests)} (resolved {sum(1 for q in kb.quests.values() if q.get('status')=='done')})",
                 f"dialogue mem: {len(kb.dialogue_history)}   actions mem: {len(kb.action_history)}",
                 f"hints: {len(kb.hints)}   observations: {len(kb.observations)}",
-                f"story_so_far: {len(kb.episodic_summary)} chars",
+                f"searched-empty: {len(kb.searched_empty)}   plot summary: {len(kb.episodic_summary)} chars",
             ]
             if session.get("last_ctx"):
                 stats.append(session["last_ctx"])

@@ -58,6 +58,12 @@ class ThoughtsWindow:
         self._ctx_lbl = tk.Label(ctxrow, text="- tok", font=("Consolas", 9))
         self._ctx_lbl.pack(side="left")
 
+        # Game-status row: time of day, position, hp/food - always visible.
+        statusrow = tk.Frame(self._root)
+        statusrow.pack(fill="x", padx=8, pady=(0, 4))
+        self._gstatus = tk.Label(statusrow, text="", font=("Consolas", 9), anchor="w")
+        self._gstatus.pack(side="left", fill="x", expand=True)
+
         body = tk.Frame(self._root)
         body.pack(fill="both", expand=True, padx=8, pady=4)
         left = tk.Frame(body)
@@ -81,7 +87,8 @@ class ThoughtsWindow:
         _pane(left, "dialog", "Dialog / characters / objects on screen", 8)
 
         # RIGHT: inspector
-        _pane(right, "quests", "Quest log (priority-sorted; prereqs shown)", 12, mono=True)
+        _pane(right, "plot", "Story so far (LLM's running plot summary)", 5)
+        _pane(right, "quests", "Quest log (priority-sorted; prereqs shown)", 10, mono=True)
 
         # Knowledge notebook: expandable trees for Topics and Characters.
         nb = ttk.Notebook(right)
@@ -155,6 +162,8 @@ class ThoughtsWindow:
                     except Exception:
                         pass
                     self._ctx_lbl.config(text=label)
+                elif kind == "gstatus":
+                    self._gstatus.config(text=payload)
                 elif kind == "topics_tree":
                     self._rebuild_topics(payload)
                 elif kind == "npc_tree":
@@ -249,6 +258,12 @@ class ThoughtsWindow:
 
     def set_context(self, pct: int, label: str) -> None:
         self._q.put(("ctx", (pct, label)))
+
+    def set_gstatus(self, text: str) -> None:
+        self._q.put(("gstatus", text))
+
+    def set_plot(self, text: str) -> None:
+        self._q.put(("plot", text))
 
     def set_map(self, text: str) -> None:
         self._q.put(("map", text))
