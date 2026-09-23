@@ -1774,18 +1774,24 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # open it first; otherwise goto the farthest reachable open tile.
         has_door = any(_cell(dx, dy) == "+"
                        for dx in range(-3, 4) for dy in range(-3, 4))
-        # Track how long we've been wedged AND not actually moving, so that if
-        # the flood-fill goto keeps stalling (a far tile that's grid-connected
-        # but not A*-reachable, e.g. via diagonal-only gaps), we FORCE a direct
-        # single-tile step that is guaranteed to move.
+        # Detect a SMALL-AREA oscillation trap: track recent positions; if the
+        # last several turns span only 1-2 distinct tiles, we're bouncing in a
+        # pocket even though position "changes" each turn (so a same-tile stall
+        # counter would never fire). Force a committed escape then.
         _pp_now = (px, py)
-        if _pp_now == session.get("wedge_last_pos"):
-            session["wedge_stall"] = session.get("wedge_stall", 0) + 1
-        else:
-            session["wedge_stall"] = 0
-        session["wedge_last_pos"] = _pp_now
-        _force_step = session.get("wedge_stall", 0) >= 3
-        if best and best_d >= 2 and not _force_step:
+        _wr = session.setdefault("wedge_recent", [])
+        _wr.append(_pp_now)
+        del _wr[:-8]
+        _oscillating = len(_wr) >= 6 and len(set(_wr)) <= 2
+        _force_step = _oscillating
+        if best and best_d >= 3 and _force_step:
+            # We're trapped in a tiny pocket but the flood-fill sees a far open
+            # tile: commit a goto straight to it and clear the recent buffer so
+            # we don't immediately re-trigger.
+            session["wedge_recent"] = []
+            action = {"type": "goto", "tx": px + best[0], "ty": py + best[1]}
+            reason = f"(guard) oscillation trap; committing to far tile ({px+best[0]},{py+best[1]})"
+        elif best and best_d >= 2 and not _force_step:
             action = {"type": "goto", "tx": px + best[0], "ty": py + best[1]}
             reason = f"(guard) wedged; flood-fill escape to open tile ({px+best[0]},{py+best[1]})"
         elif (has_door or (state.get("doors") or [])) and not _force_step:
@@ -1797,14 +1803,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             deltas = {"n": (0,-1),"s": (0,1),"e": (1,0),"w": (-1,0),
                       "ne": (1,-1),"nw": (-1,-1),"se": (1,1),"sw": (-1,1)}
             pref = list(deltas.keys())
-            # Rotate by wedge-stall count so repeated forced steps try DIFFERENT
-            # directions instead of re-picking the same blocked one.
-            off = (n + session.get("wedge_stall", 0)) % len(pref)
+            # Rotate by recent-oscillation size so repeated forced steps try
+            # DIFFERENT directions instead of re-picking the same blocked one.
+            off = (n + len(session.get("wedge_recent", []))) % len(pref)
             pref = pref[off:] + pref[:off]
             # Prefer a truly walkable neighbor; fall back to the rotated first.
             picked = next((d for d in pref if _cell(*deltas[d]) in WALK), pref[0])
             action = {"type": "move", "dir": picked, "speed": 120}
-            reason = f"(guard) wedged {session.get('wedge_stall',0)}t; forcing step {picked}"
+            reason = f"(guard) wedged; forcing step {picked}"
     else:
         # 1b) A "space"/"key" press outside a conversation does nothing.
         if (isinstance(action, dict) and action.get("type") == "key"
