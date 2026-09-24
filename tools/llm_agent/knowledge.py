@@ -52,7 +52,10 @@ class KnowledgeBase:
         # {"me":str} for the answer the agent chose.
         self.dialogue_history: list[dict] = []
         # Short rolling window of meaningful actions taken (open/pickup/etc).
-        self.action_history: list[str] = []
+        self.action_history: list = []
+        # The quest the agent has declared it is currently working on (via the
+        # set_current_quest tool). Tagged onto action-log entries.
+        self.current_quest: "str | None" = None
         # Persistent HINT history: every operator hint ever given, with the
         # step it was given at. Hints are guidance from the human and are high
         # value - we keep them all (cheap) so the agent can recall earlier
@@ -83,6 +86,7 @@ class KnowledgeBase:
         return {"quests": self.quests, "npcs": self.npcs, "journal": self.journal,
                 "dialogue_history": self.dialogue_history,
                 "action_history": self.action_history,
+                "current_quest": self.current_quest,
                 "places": self.places,
                 "hints": self.hints,
                 "observations": self.observations,
@@ -106,6 +110,7 @@ class KnowledgeBase:
             kb.journal = list(data.get("journal", []))
             kb.dialogue_history = list(data.get("dialogue_history", []))
             kb.action_history = list(data.get("action_history", []))
+            kb.current_quest = data.get("current_quest") or None
             kb.places = dict(data.get("places", {}))
             kb.hints = list(data.get("hints", []))
             kb.observations = list(data.get("observations", []))
@@ -718,30 +723,57 @@ class KnowledgeBase:
     def dialogue_view(self, limit: int = 30) -> list:
         return self.dialogue_history[-limit:]
 
-    # ----- action history (short window - avoid repetition) --------------
-    ACTION_WINDOW = 10
+    # ----- action history (temporal memory - one entry per action) -------
+    # Wider window than before: this is the agent's TEMPORAL MEMORY of what it
+    # has been doing. A generous window (we have context to spare) + a turn
+    # number + the quest it was working on per entry lets the agent SEE a
+    # fruitless loop over time and switch strategy itself.
+    ACTION_WINDOW = 40
 
-    def record_action(self, text: str) -> None:
+    def record_action(self, text: str, turn: int = -1) -> None:
         if not text:
             return
-        # Suppress consecutive duplicates and low-value filler ("looked around",
-        # bare gotos) so the recent_actions window keeps MEANINGFUL outcomes
-        # (e.g. "search bag -> EMPTY") visible instead of being flooded by
-        # guard-generated noise. This is what lets the agent SEE what it just
-        # did and stop re-deriving a dead goal.
+        if turn < 0:
+            turn = getattr(self, "current_turn", 0)
+        # Suppress consecutive exact duplicates and consecutive low-value filler
+        # so the log keeps MEANINGFUL outcomes visible.
         _low = ("looked around", "examined", "waited")
         if self.action_history:
             prev = self.action_history[-1]
-            if prev == text:
-                return                       # exact repeat -> skip
-            if any(text.startswith(w) for w in _low) and \
-               any(prev.startswith(w) for w in _low):
-                return                       # consecutive filler -> skip
-        self.action_history.append(text)
+            prev_text = prev.get("text", "") if isinstance(prev, dict) else str(prev)
+            if prev_text == text:
+                return
+            if (any(text.startswith(w) for w in _low)
+                    and any(prev_text.startswith(w) for w in _low)):
+                return
+        self.action_history.append(
+            {"turn": int(turn), "quest": self.current_quest, "text": text})
         self.action_history = self.action_history[-self.ACTION_WINDOW:]
 
-    def action_view(self, limit: int = 10) -> list:
-        return self.action_history[-limit:]
+    def action_view(self, limit: int = 40) -> list:
+        """Return the action log as formatted one-per-line strings with the game
+        turn and the quest being worked, so the agent has a clean temporal
+        record. Marks quest SWITCHES with a '>>> now working:' line so a change
+        of focus is visible in the timeline."""
+        out = []
+        last_quest = None
+        for e in self.action_history[-limit:]:
+            if isinstance(e, dict):
+                q = e.get("quest")
+                if q and q != last_quest:
+                    out.append(f">>> now working: {q}")
+                    last_quest = q
+                t = e.get("turn", 0)
+                out.append(f"[T{t}] {e.get('text','')}")
+            else:  # legacy plain-string entries
+                out.append(str(e))
+        return out
+
+    def set_current_quest(self, title: str) -> None:
+        """The agent declares which quest it is currently working on (via the
+        set_current_quest tool). Surfaced as 'Current quest' and tagged onto
+        each action-log entry so quest switches are visible over time."""
+        self.current_quest = (title or "").strip()[:80] or None
 
     # ----- hint history (operator guidance - persistent, high value) -----
     def record_hint(self, text: str, step: int = 0) -> None:

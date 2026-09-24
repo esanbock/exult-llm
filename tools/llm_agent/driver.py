@@ -127,6 +127,13 @@ lower-cased with underscores). To mark a goal finished, add "resolve_quest":
 "<quest id or title>". Capture a quest whenever your reasoning names something
 you intend to do - keep your quest log current and prioritized.
 
+DECLARE YOUR FOCUS: add "set_current_quest": "<quest title>" whenever you START
+or SWITCH the quest you are actively working on. This is shown back to you as
+"current_quest" and tagged onto your action_log so you can SEE, over time,
+whether the quest you're on is actually making progress or looping. If your
+action_log shows many turns on the same current_quest with no result, SWITCH to
+a different quest.
+
 You may ALSO add an optional "topic" field in the same reply to build your own
 understanding of recurring subjects (people, groups, places, mysteries) as you
 reason - this is YOUR notebook of insights, and it does not use your turn:
@@ -307,9 +314,14 @@ periodically). For finer detail you have the recall/quests tools.
   recent_dialogue: a running transcript of the last conversation exchanges
       ({"npc":name,"said":...} for NPC lines, {"me":...} for your replies).
       Use this to remember what you have learned and what was said earlier.
-  recent_actions: your last few meaningful actions WITH OUTCOMES (e.g. "search
-      body @(x,y) -> EMPTY"). Use this to avoid repeating something that already
-      failed or found nothing.
+  action_log: YOUR TEMPORAL MEMORY - a turn-by-turn log of your recent actions
+      with OUTCOMES, one per line as "[T<turn>] <action> -> <result>", and
+      ">>> now working: <quest>" markers where you switched quests. READ THIS to
+      see what you've been doing OVER TIME: if you see the same action/goal
+      repeated across many turns with no useful result, you are in a FRUITLESS
+      LOOP - stop and do something different.
+  current_quest: the quest you told me you are working on (via set_current_quest).
+      Shown so you stay focused; if it's stalling across many log lines, switch.
   already_searched_empty (list) - bodies/containers you ALREADY searched and
       found empty. Do NOT return to search these again - move on.
   story_so_far: YOUR running plot summary (you maintain it via "plot_summary").
@@ -712,9 +724,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         dh = kb.dialogue_view(dlg_n)
         if dh:
             view["recent_dialogue"] = dh
-        ah = kb.action_view(act_n)
+        ah = kb.action_view(max(act_n, 24))   # temporal memory: keep it generous
         if ah:
-            view["recent_actions"] = ah
+            view["action_log"] = ah
+        if kb.current_quest:
+            view["current_quest"] = kb.current_quest
     if last_look:
         view["look_description"] = last_look
     if alert:
@@ -1117,6 +1131,7 @@ def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
 
 def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -> None:
     state = exult.observe()
+    kb.current_turn = step   # so record_action tags each entry with the game turn
     if window.available:
         window.update_turn(step)
         window.set_map(state.get("grid") or "(no map)")
@@ -1586,6 +1601,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             if isinstance(_ps, str) and _ps.strip():
                 kb.set_plot_summary(_ps)
                 print(f"[{step:03d}] plot summary updated ({len(_ps)} chars)")
+            # Inline current-quest declaration: the agent tells us which quest it
+            # is working on. Tagged onto the action log (shows quest switches).
+            _cq = _obj.get("set_current_quest") or _obj.get("current_quest")
+            if isinstance(_cq, str) and _cq.strip():
+                if _cq.strip() != (kb.current_quest or ""):
+                    kb.set_current_quest(_cq)
+                    print(f"[{step:03d}] current quest -> {_cq}")
         # Track context usage so we can see if the prompt is bloating/truncating.
         pt = res.get("prompt_tokens", 0)
         session["last_prompt_tokens"] = pt
