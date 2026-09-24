@@ -2572,7 +2572,58 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     #     it plainly and, after a couple of repeats, redirect to explore so it
     #     stops the loop. (Purely correcting a false belief about a physical
     #     fact - not choosing content for it.)
+    # --- Fortress-wall escape LATCH: the descend/ground guards can ping-pong
+    #     the avatar around the wall (down->explore->reclimb->down...) because
+    #     the wall is right there and the LLM keeps re-targeting it. When we
+    #     detect a tight confined loop with heavy descend churn, LATCH a
+    #     committed journey to a far ground destination and honor it for several
+    #     turns REGARDLESS of the LLM, physically pulling the avatar away from
+    #     the wall's pull. This is a last-resort anti-stall, not content steering.
     _cur_tz_now = (state.get("player") or {}).get("tz", 0) or 0
+    if session.get("escape_latch", 0) > 0:
+        session["escape_latch"] -= 1
+        _et = session.get("escape_target", (1065, 2180))
+        # If we've arrived (near target, ground level), drop the latch.
+        _pp = state.get("player") or {}
+        if (abs(_pp.get("tx", 0) - _et[0]) + abs(_pp.get("ty", 0) - _et[1]) <= 3
+                and (_pp.get("tz", 0) or 0) == 0):
+            session["escape_latch"] = 0
+        else:
+            action = {"type": "goto", "tx": _et[0], "ty": _et[1], "tz": 0}
+            reason = f"(latch) escaping to ({_et[0]},{_et[1]}) - leaving the wall area"
+            print(f"[{step:03d}] escape-latch: committed goto {_et} ({session['escape_latch']} left)")
+            # skip the rest of the guards this turn; execute the latched move
+            _atype = action.get("type")
+            result = exult.act(action)
+            kb.record_tool(_atype, result.get("ok") if isinstance(result, dict) else None)
+            session["last_action_type"] = _atype
+            if window.available:
+                window.update_turn(step)
+                window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
+                window.set_thinking(reason)
+            return
+    # Arm the latch on a confined + descend-heavy loop.
+    _recent_pos = session.get("wedge_recent", [])
+    if (len(_recent_pos) >= 6
+            and (max(t[0] for t in _recent_pos) - min(t[0] for t in _recent_pos)) <= 6
+            and (max(t[1] for t in _recent_pos) - min(t[1] for t in _recent_pos)) <= 6):
+        _descend_recent = sum(1 for r in (session.get("reason_hist") or [])[-6:]
+                              if "descend" in r or "fortress" in r or "stairs" in r)
+        if _descend_recent >= 3 and session.get("escape_latch", 0) == 0:
+            # Head to a far GROUND destination (a known place far away, else the
+            # murder-scene/start area to the NW of the fortress).
+            _pp = state.get("player") or {}
+            _far = None
+            for _pl in (kb.places_view(_pp.get("tx", 0), _pp.get("ty", 0), limit=12) if kb else []):
+                if abs(_pl.get("dx", 0)) + abs(_pl.get("dy", 0)) >= 14:
+                    _far = (_pp.get("tx", 0) + _pl.get("dx", 0), _pp.get("ty", 0) + _pl.get("dy", 0))
+                    break
+            session["escape_target"] = _far or (1065, 2180)
+            session["escape_latch"] = 10
+            # also demote the fortress cluster now
+            kb.deprioritize_matching_quest("fortress descend stairs wall ground")
+            print(f"[{step:03d}] escape-latch: ARMED -> {session['escape_target']}")
+
     _at_ground = _cur_tz_now == 0
     _wants_descend = any(w in (reason or "").lower()
                          for w in ("descend", "climb down", "go down", "down to ground",
