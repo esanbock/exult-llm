@@ -722,14 +722,19 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     if kb is not None and (p.get("tz", 0) or 0) == 0:
         _sl = (kb.episodic_summary or "").lower()
         if any(w in _sl for w in ("on the wall", "on fortress wall", "on the fortress wall",
-                                  "elev 1", "elev 2", "elev 3", "elevated", "descend to ground",
-                                  "find stairs down", "stairs down", "descend to the ground")):
+                                  "on fortress roof", "on the roof", "fortress roof",
+                                  "on the wall", "rooftop", "upper floor",
+                                  "elev 1", "elev 2", "elev 3", "elev 4", "elev 5",
+                                  "elevated", "descend to ground", "must descend",
+                                  "find stairs down", "stairs down", "stairs down are",
+                                  "descend to the ground", "get down", "climb down")):
             view["ELEVATION_CORRECTION"] = (
-                "IMPORTANT: your plot summary says you are ON THE WALL / need to "
-                "DESCEND - but you are ALREADY at GROUND LEVEL (tz 0) now. That "
-                "part of your summary is STALE. Update your plot_summary to drop "
-                "'on the wall / find stairs down', and pursue your goal at ground "
-                "level directly (e.g. go to the fortress gateway to use the deed).")
+                "IMPORTANT: your plot summary says you are UP HIGH (on a wall/"
+                "roof/upper floor) and need to DESCEND - but you are ALREADY at "
+                "GROUND LEVEL (tz 0) now. That part of your summary is STALE and "
+                "is making you waste turns 'descending'. REWRITE your plot_summary "
+                "to remove any 'on the roof/wall / must descend / stairs down' "
+                "text, and pursue your goal at ground level directly.")
     doors = state.get("doors") or []
     if doors:
         view["doors"] = [
