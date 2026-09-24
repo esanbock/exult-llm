@@ -355,17 +355,16 @@ class KnowledgeBase:
 
     def quests_pretty(self) -> str:
         qv = self.quest_view(max_open=30)
-        lines = [f"resolved {qv.get('resolved',0)} / unresolved {qv.get('unresolved',0)}", ""]
+        lines = [f"{qv.get('unresolved',0)} open  ({qv.get('resolved',0)} finished - see below)", ""]
         for q in qv.get("open", []):
             npc = f" [{q['npc']}]" if q.get("npc") else ""
             prereq = ""
             if q.get("prereqs_unmet"):
                 prereq = "  (needs: " + ",".join(q["prereqs_unmet"]) + ")"
             lines.append(f"  P{q.get('priority',5)} {q['title']}{npc}{prereq}")
-        rr = qv.get("recently_resolved") or []
-        if rr:
-            lines.append("")
-            lines.append("DONE: " + "; ".join(rr))
+        # NOTE: completed quests are shown in the GUI's separate "Finished
+        # quests" box (fed by resolved_quests_list), so we do NOT append a
+        # "DONE:" line here - that would duplicate them in the Open-quests box.
         return "\n".join(lines)
 
     def npcs_pretty(self, nearby_names=None) -> str:
