@@ -93,6 +93,12 @@ RPG PLAYER WISDOM (genre habits a seasoned player relies on):
     lockpicking; Intelligence = magic skill + max mana.)
   * MAKE PROGRESS: prefer purposeful action over aimless wandering or repeating
     yourself. If you have exhausted a person or place, move on to somewhere new.
+  * IF A QUEST STALLS, SWITCH: if you've spent MANY turns on one quest with NO
+    meaningful progress (check your action_log and turns_since_progress), STOP
+    working it and switch to a DIFFERENT quest. The goal may be blocked, out of
+    reach right now, or based on a wrong assumption - you often make progress on
+    it later, indirectly, by advancing OTHER quests first. Don't grind a dead
+    end; a seasoned player parks a stuck quest and comes back to it.
   * DON'T LINGER: do not re-interview people you've already learned from
     (especially your own party companions - they have nothing new). When you
     have gathered the local leads, LEAVE the area: travel to the town gate/edge
