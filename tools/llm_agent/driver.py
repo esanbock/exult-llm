@@ -848,7 +848,7 @@ def format_dialog(state: dict) -> str:
     nearby = state.get("nearby") or []
     if nearby:
         lines.append("")
-        lines.append(f"Characters nearby (absolute tile; you at z={_pz}):")
+        lines.append("Characters nearby (absolute tile):")
         for n in nearby[:12]:
             _ax = n.get("tx") if n.get("tx") is not None else _px + n.get("dx", 0)
             _ay = n.get("ty") if n.get("ty") is not None else _py + n.get("dy", 0)
