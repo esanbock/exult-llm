@@ -2560,12 +2560,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # the climb - use goto with an explicit ground Z rather than poking the
         # stairs tile.
         _pp0 = state.get("player") or {}
+        _here0 = (_pp0.get("tx", 0), _pp0.get("ty", 0))
         _gp = None
-        _places = kb.places_view(_pp0.get("tx", 0), _pp0.get("ty", 0), limit=10) if kb else []
-        for _pl in _places:  # nearest remembered place; assume ground
-            _gp = (_pp0.get("tx", 0) + _pl.get("dx", 0),
-                   _pp0.get("ty", 0) + _pl.get("dy", 0))
-            break
+        for _pl in (kb.places_view(_here0[0], _here0[1], limit=12) if kb else []):
+            if abs(_pl.get("dx", 0)) + abs(_pl.get("dy", 0)) >= 12:  # must be FAR
+                _gp = (_here0[0] + _pl.get("dx", 0), _here0[1] + _pl.get("dy", 0))
+                break
         if _gp is None:
             _gp = (1079, 2214)   # Trinsic start / murder-scene area (ground)
         action = {"type": "goto", "tx": _gp[0], "ty": _gp[1], "tz": 0}
