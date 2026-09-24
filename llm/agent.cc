@@ -1648,7 +1648,14 @@ namespace LLM_agent {
 			Tile_coord dest(0, 0, at.tz);
 			bool have_dest = false;
 			if (get_int(action_json, "tx", tx) && get_int(action_json, "ty", ty)) {
-				dest      = Tile_coord(static_cast<int>(tx), static_cast<int>(ty), at.tz);
+				// Accept an explicit target elevation (tz) if given, so the LLM
+				// can disambiguate levels (ground vs wall-top vs underground).
+				// Falls back to the avatar's current elevation, then the Z-layer
+				// resolution below finds the standable surface.
+				long tz_in = at.tz;
+				get_int(action_json, "tz", tz_in);
+				dest      = Tile_coord(static_cast<int>(tx), static_cast<int>(ty),
+									   static_cast<int>(tz_in));
 				have_dest = true;
 			} else {
 				string want;

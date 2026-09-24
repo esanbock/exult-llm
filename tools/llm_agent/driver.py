@@ -330,11 +330,15 @@ periodically). For finer detail you have the recall/quests tools.
             around walls and THROUGH doorways. params: {"name": "<NPC/object/
             place>"} to go to the nearest thing with that name OR a remembered
             place/NPC from known_places/npc memory (even if off-screen), OR
-            {"tx":<int>,"ty":<int>} for an absolute tile. PREFER "goto" over many
-            "move" steps to reach an NPC, item, building, or known place. If the
-            exact spot can't be reached (walls), goto still walks you as far
-            toward it as it can (result "partial":true) - so repeating goto to a
-            far target makes steady progress; you do NOT need a clear line.
+            {"tx":<int>,"ty":<int>} for an absolute tile. You may also add
+            {"tz":<int>} to target a specific ELEVATION (0=ground, >0=up a
+            wall/floor, <0=underground); omit tz to target your current level.
+            To reach a person/item on a DIFFERENT level, goto with their tz.
+            PREFER "goto" over many "move" steps to reach an NPC, item, building,
+            or known place. If the exact spot can't be reached (walls), goto
+            still walks you as far toward it as it can (result "partial":true) -
+            so repeating goto to a far target makes steady progress; you do NOT
+            need a clear line.
   stop    - Stop walking. params: none.
   talk    - START a conversation with a nearby NPC. params: {"name": "<NPC name>"}
             This is the ONLY way to begin dialog. Walking next to an NPC does
