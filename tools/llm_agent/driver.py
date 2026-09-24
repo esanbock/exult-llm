@@ -1130,8 +1130,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             _resolved = sum(1 for q in kb.quests.values() if q.get("status") == "done")
             _ts = kb.tool_stats or {}
             stats_kv = {
-                "Position": f"({p.get('tx')},{p.get('ty')})",
-                "Elevation": p.get("tz", 0),
+                "Position (abs x,y,z)": f"({p.get('tx')},{p.get('ty')},{p.get('tz',0)})",
                 "HP": f"{p.get('hp')}/{p.get('max_hp')}",
                 "Str/Dex/Int": f"{p.get('str')}/{p.get('dex')}/{p.get('int')}",
                 "Food": p.get("food"),
