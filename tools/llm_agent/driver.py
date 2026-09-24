@@ -555,7 +555,8 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "nearby": [
             {"name": n.get("name"), "dx": n.get("dx"), "dy": n.get("dy"),
              "status": (kb.talk_status(n.get("name")) if kb and n.get("name") else "new"),
-             **({"condition": n["condition"]} if n.get("condition") else {})}
+             **({"condition": n["condition"]} if n.get("condition") else {}),
+             **({"different_level": True} if n.get("same_level") is False else {})}
             for n in nearby[:near_n] if not n.get("in_party")
         ],
         # Party companions are shown separately - they follow you and have no
@@ -566,7 +567,8 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
              **({"body": True} if o.get("body") else {}),
              **({"corpse_not_lootable": True} if o.get("corpse") else {}),
              **({"owned": True} if o.get("owned") else {}),
-             **({"town_exit": True} if o.get("town_exit") else {})}
+             **({"town_exit": True} if o.get("town_exit") else {}),
+             **({"different_level": True} if o.get("same_level") is False else {})}
             for o in objects[:obj_n]
         ],
         "grid_legend": state.get("grid_legend"),
@@ -582,6 +584,12 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             "not producing progress, STOP repeating it: review your quests/notes "
             "(quests/recall tools), question your assumptions (is this goal even "
             "real?), and try a different lead.")
+    if state.get("last_move_failed"):
+        view["MOVE_FAILED"] = (
+            "Your LAST move did NOT change your position - it was BLOCKED (a wall, "
+            "water, a barrier, or stairs from the wrong side). Do not just repeat "
+            "the same move. Try a DIFFERENT direction, go around, or pick another "
+            "route/target.")
     if state.get("stuck_in_place"):
         view["STUCK_WARNING"] = (
             "You have NOT MOVED for ~10 turns - you are re-trying variations of "
@@ -1350,6 +1358,17 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # recent turns it has pursued the SAME goal, so it can notice it is
         # stuck in a cycle and change tack (self-sufficiency, not steering).
         state["turn"] = step
+        # Did-not-move signal: if the LAST action was a move/goto but our
+        # position is unchanged, the move was blocked/failed. The LLM often
+        # doesn't notice this on its own, so flag it EXPLICITLY.
+        _cur_xy = ((state.get("player") or {}).get("tx"),
+                   (state.get("player") or {}).get("ty"))
+        _last_at = session.get("last_action_type")
+        if (_last_at in ("move", "goto")
+                and _cur_xy == session.get("xy_before_last_action")
+                and _cur_xy[0] is not None):
+            state["last_move_failed"] = True
+        session["xy_before_last_action"] = _cur_xy
         _hist = session.get("reason_hist", [])
         if _hist:
             _head = " ".join(_hist[-1].split()[:3])

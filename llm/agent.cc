@@ -630,6 +630,11 @@ namespace LLM_agent {
 				os << ',' << json_int("ty", nt.ty);
 				os << ',' << json_int("dx", nt.tx - at.tx);
 				os << ',' << json_int("dy", nt.ty - at.ty);
+				// Relative elevation: dz>0 = higher than you, dz<0 = lower.
+				// same_level=false means this NPC is on a different floor/level
+				// and is NOT directly reachable without changing elevation.
+				os << ',' << json_int("dz", nt.tz - at.tz);
+				os << ',' << json_bool("same_level", nt.tz == at.tz);
 				os << ',' << json_bool("in_party", npc->get_party_id() >= 0);
 				os << ',' << json_bool("dead", npc->is_dead());
 				// Status the agent should know before trying to interact - most
@@ -759,6 +764,10 @@ namespace LLM_agent {
 				os << json_str("name", nm);
 				os << ',' << json_int("dx", ot.tx - at.tx);
 				os << ',' << json_int("dy", ot.ty - at.ty);
+				os << ',' << json_int("dz", ot.tz - at.tz);
+				if (ot.tz != at.tz) {
+					os << ',' << json_bool("same_level", false);
+				}
 				if (is_lootable_body) {
 					os << ',' << json_bool("body", true);    // searchable/lootable
 				} else if (is_body) {
