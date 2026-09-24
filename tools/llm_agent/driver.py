@@ -2534,10 +2534,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         #     step (verified: walking east across the ramp took tz 0->5 onto the
         #     wall). goto stalls at tz1 and oscillates, so we drive MOVEs. We
         #     learn the ascending direction from feedback: remember our last tz;
-        #     if the last climb-move RAISED tz, keep going that direction; else
-        #     try the next direction toward the stairs 'E' cells.
-        _reason_stairs = any(w in (reason or "").lower()
-                             for w in ("stair", "climb", "up to", "fortress", "tower"))
+        # NOTE: the special-case stairs guards below are DISABLED. Testing showed
+        # Exult's own pathfinder climbs multi-level ramps correctly when goto is
+        # given a destination at the right elevation (the engine steps up 1 level
+        # per tile via is_blocked's max_rise). Our goto Z-resolution now sets the
+        # destination to the standable height, so 'goto a wall-top/upper tile'
+        # climbs the whole staircase (verified tz 0->5 in 2 gotos). The guards
+        # were solving the wrong problem (targeting the stairs TILE, where goto
+        # arrives at tz1 and stops) and fought the agent, so we let goto do it.
+        _reason_stairs = False
         rows = (state.get("grid") or "").split("\n")
         cx, cy = _grid_center(rows)
         _e_cells = [(x - cx, y - cy)
