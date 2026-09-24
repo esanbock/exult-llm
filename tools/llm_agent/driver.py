@@ -885,7 +885,7 @@ def format_dialog(state: dict) -> str:
             _ax = n.get("tx") if n.get("tx") is not None else _px + n.get("dx", 0)
             _ay = n.get("ty") if n.get("ty") is not None else _py + n.get("dy", 0)
             _az = _pz + (n.get("dz", 0) or 0)
-            _lvl = "" if _az == _pz else f" [z={_az}!]"
+            _lvl = "" if _az == _pz else (" !UP" if _az > _pz else " !DOWN")
             lines.append(f"  {n.get('name')}  ({_ax},{_ay},{_az})  {_compass(n.get('dx',0), n.get('dy',0))}{_lvl}")
     objects = state.get("objects") or []
     if objects:
@@ -895,7 +895,7 @@ def format_dialog(state: dict) -> str:
             _ax = _px + o.get("dx", 0)
             _ay = _py + o.get("dy", 0)
             _az = _pz + (o.get("dz", 0) or 0)
-            _lvl = "" if _az == _pz else f" [z={_az}!]"
+            _lvl = "" if _az == _pz else (" !UP" if _az > _pz else " !DOWN")
             lines.append(f"  {o.get('name')}  ({_ax},{_ay},{_az})  {_compass(o.get('dx',0), o.get('dy',0))}{_lvl}")
     return "\n".join(lines) if lines else "(nothing notable on screen)"
 
