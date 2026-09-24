@@ -2473,6 +2473,33 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # Did we move at all since the previous turn?
         moved = here != session.get("prev_pos_for_goto")
         session["prev_pos_for_goto"] = here
+        # --- Stairs/exit step: goto WON'T land on a stairs/level-transition tile
+        #     (it stops adjacent), so a "climb stairs" goto oscillates forever.
+        #     If the target is within 2 tiles and is a stairs/exit ('E') tile,
+        #     issue a DIRECT move onto it (climbing stairs is just movement).
+        _dxt = tgt[0] - here[0]
+        _dyt = tgt[1] - here[1]
+        if abs(_dxt) <= 2 and abs(_dyt) <= 2 and (_dxt or _dyt):
+            rows = (state.get("grid") or "").split("\n")
+            cx, cy = _grid_center(rows)
+            def _cellz(ddx, ddy):
+                x, y = cx + ddx, cy + ddy
+                if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
+                    return rows[y][x]
+                return "#"
+            # Is the target (or a tile toward it) a stairs/exit marker?
+            _sdx = (1 if _dxt > 0 else -1 if _dxt < 0 else 0)
+            _sdy = (1 if _dyt > 0 else -1 if _dyt < 0 else 0)
+            _tgt_glyph = _cellz(_dxt, _dyt)
+            _step_glyph = _cellz(_sdx, _sdy)
+            if _tgt_glyph == "E" or _step_glyph == "E":
+                _nm = {(0,-1):"n",(0,1):"s",(1,0):"e",(-1,0):"w",
+                       (1,-1):"ne",(1,1):"se",(-1,1):"sw",(-1,-1):"nw"}
+                _sc = session.get("stairs_step", 0) + 1
+                session["stairs_step"] = _sc
+                action = {"type": "move", "dir": _nm.get((_sdx, _sdy), "n"), "speed": 120}
+                reason = f"(guard) stepping onto stairs/exit (climb = move) {_nm.get((_sdx,_sdy))}"
+                print(f"[{step:03d}] stairs-step: direct move onto E tile")
         near_here = abs(tgt[0]-here[0]) + abs(tgt[1]-here[1]) <= 1
         last_was_goto = session.get("last_action_type") == "goto"
         if near_here:
