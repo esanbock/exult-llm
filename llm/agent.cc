@@ -1032,7 +1032,7 @@ namespace LLM_agent {
 			return "{\"ok\":true,\"did\":\"stop\"}";
 		}
 
-		if (type == "key") {
+		if (type == "key" || type == "press_key") {
 			string keyname;
 			if (!get_string(action_json, "key", keyname)) {
 				return "{\"ok\":false,\"error\":\"missing key\"}";

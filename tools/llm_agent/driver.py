@@ -399,8 +399,10 @@ periodically). For finer detail you have the recall/quests tools.
   set_number - Answer a numeric slider prompt. params: {"value": <int>}. Only
             valid when number_prompt is true; value is clamped to
             [number_min, number_max]. Use this to pick a quantity/amount.
-  key     - Press a key. params: {"key": "space"|"escape"|"a".."z"|"0".."9"}.
-            Use "space" to advance NPC text when there is npc_text but no answers.
+  press_key - Press a KEYBOARD key (NOT a game key-item). params:
+            {"key": "space"|"escape"|"a".."z"|"0".."9"}. Mainly used to press
+            "space" to advance an NPC's text when there is npc_text but no
+            answer choices yet, or "escape" to close a menu.
   combat  - Toggle combat/attack mode on or off. params: none.
   set_combat_mode - Set how you and your party fight in combat. params:
             {"mode": one of "nearest"|"weakest"|"strongest"|"berserk"|"defend"|
@@ -802,6 +804,11 @@ def parse_reply(text: str) -> tuple[str, dict]:
             for k, v in nested.items():
                 action.setdefault(k, v)
             action.pop(key, None)
+    # Normalize the clearer 'press_key' alias to the internal canonical 'key'
+    # so all existing type=="key" logic keeps working. (The prompt now presents
+    # it as press_key to avoid confusion with a game key-ITEM.)
+    if action.get("type") == "press_key":
+        action["type"] = "key"
     return (reason, action)
 
 
