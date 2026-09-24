@@ -89,6 +89,11 @@ class KnowledgeBase:
         # Spots the agent already searched and found EMPTY, so it doesn't keep
         # returning to the same looted body/container. name -> {tx,ty}.
         self.searched_empty: dict = {}
+        # DURABLE lifetime activity tally (survives runs) so the agent can see
+        # what KINDS of actions it has actually done - notably whether it has
+        # ever physically SEARCHED a container or PICKED UP an item, vs only
+        # talking. verb -> count.
+        self.lifetime_activity: dict = {}
 
     # ----- persistence ---------------------------------------------------
     def to_dict(self) -> dict:
@@ -104,7 +109,8 @@ class KnowledgeBase:
                 "episodic_summary": self.episodic_summary,
                 "tool_stats": self.tool_stats,
                 "topics": self.topics,
-                "searched_empty": self.searched_empty}
+                "searched_empty": self.searched_empty,
+                "lifetime_activity": self.lifetime_activity}
 
     @classmethod
     def load(cls, path: Optional[str]) -> "KnowledgeBase":
@@ -118,6 +124,7 @@ class KnowledgeBase:
             kb.npcs = dict(data.get("npcs", {}))
             kb.topics = dict(data.get("topics", {}))
             kb.searched_empty = dict(data.get("searched_empty", {}))
+            kb.lifetime_activity = dict(data.get("lifetime_activity", {}) or {})
             kb.journal = list(data.get("journal", []))
             kb.dialogue_history = list(data.get("dialogue_history", []))
             kb.action_history = list(data.get("action_history", []))
@@ -1019,6 +1026,32 @@ class KnowledgeBase:
             rec["ok"] += 1
         elif ok is False:
             rec["err"] += 1
+
+    # ----- durable lifetime activity (survives runs) ---------------------
+    def record_activity(self, verb: str) -> None:
+        """Tally a DURABLE lifetime count of a kind of action (search, pickup,
+        take, open, talk, move, ...). Persists across runs so the agent can see
+        whether it has EVER physically investigated the world (searched a
+        container, picked something up) rather than only talking."""
+        if not verb:
+            return
+        self.lifetime_activity[verb] = int(self.lifetime_activity.get(verb, 0)) + 1
+
+    def activity_scorecard(self) -> dict:
+        """Compact view of lifetime physical-investigation activity, for the
+        always-on context. Highlights whether the agent has ever searched a
+        container or picked up an item - the difference between guessing at
+        quests and actually investigating."""
+        la = self.lifetime_activity or {}
+        searched = int(la.get("search", 0))
+        picked = int(la.get("pickup", 0)) + int(la.get("take", 0))
+        opened = int(la.get("open", 0))
+        read = int(la.get("read", 0))
+        return {"containers/things searched": searched,
+                "items picked up / taken": picked,
+                "things opened": opened,
+                "signs/books read": read,
+                "talked to people": int(la.get("talk", 0))}
 
     def tool_stats_data(self, top: int = 20) -> dict:
         """Structured tool-call stats for the GUI (turns, parse-fail, per-tool

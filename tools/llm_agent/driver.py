@@ -74,6 +74,11 @@ RPG PLAYER WISDOM (genre habits a seasoned player relies on):
     and clues you cannot see from outside.
   * OPEN AND SEARCH: open every container (chest, barrel, bag, crate) and search
     bodies. Try devices - levers, switches, buttons - they reveal secrets/paths.
+    SELF-CHECK: the state shows "what_i_have_actually_done" (lifetime counts). If
+    "containers/things searched" and "items picked up" are LOW or ZERO while you
+    keep talking, you are NOT investigating - a quest answer you are missing is
+    very likely a physical thing to FIND (search/open/take), not another
+    conversation. Go search and open things.
   * GATHER USEFUL THINGS: pick up gold and gems (money), food (you must eat),
     weapons, armour, keys, potions, scrolls, reagents, and tools. Your pack
     holds a lot - when unsure, take it.
@@ -822,6 +827,15 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             view["action_log"] = ah
         if kb.current_quest:
             view["current_quest"] = kb.current_quest
+        # ALWAYS-ON activity scorecard: shows lifetime counts of physical
+        # investigation (searched / picked up / opened / read) vs talking, so a
+        # stateless model can NOTICE if it has been talking without ever
+        # searching the world for clues or items. This is fair self-knowledge a
+        # human player has, and it does NOT reveal any puzzle solution.
+        try:
+            view["what_i_have_actually_done"] = kb.activity_scorecard()
+        except Exception:
+            pass
     if last_look:
         view["look_description"] = last_look
     if alert:
@@ -1739,11 +1753,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                                        notes=str(q.get("notes", "")),
                                        depends_on=q.get("depends_on"),
                                        status=q.get("status", "active"))
+                    kb.record_tool("new_quest", True)
                     print(f"[{step:03d}] inline add_quest: {q['title']!r} -> {qid}")
             _rq = _obj.get("resolve_quest")
             if isinstance(_rq, str) and _rq:
                 kb.resolve_quest(_rq)
                 kb.reset_talk_gate()
+                kb.record_tool("resolve_quest", True)
                 print(f"[{step:03d}] inline resolve_quest: {_rq}")
             # Inline drop_quest: REMOVE a redundant/obsolete quest (not the same
             # as resolving - use this to consolidate duplicates or discard a goal
@@ -1753,6 +1769,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             for _d in _dq_items:
                 if isinstance(_d, str) and _d.strip():
                     if kb.drop_quest(_d):
+                        kb.record_tool("drop_quest", True)
                         print(f"[{step:03d}] inline drop_quest: {_d}")
             # Inline consolidate_notes: the LLM rewrites an NPC's notes to a
             # pruned/merged version. {"consolidate_notes": {"npc": "...",
@@ -1763,6 +1780,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             for _c in _cn_items:
                 if isinstance(_c, dict) and _c.get("npc"):
                     if kb.consolidate_notes(str(_c["npc"]), _c.get("notes", "")):
+                        kb.record_tool("consolidate_notes", True)
                         print(f"[{step:03d}] inline consolidate_notes: {_c['npc']}")
             # Inline LLM-authored TOPICS: {"topic":"Fellowship","note":"..."} or a
             # list. Topics now come ONLY from the LLM, so the topic list shows
@@ -1773,15 +1791,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 if isinstance(t, dict) and (t.get("name") or t.get("topic")):
                     tname = str(t.get("name") or t.get("topic"))
                     tkey = kb.add_topic(tname, str(t.get("note", "")), step)
+                    kb.record_tool("topic", True)
                     print(f"[{step:03d}] inline add_topic: {tname!r} -> {tkey}")
                 elif isinstance(t, str) and t.strip():
                     kb.add_topic(t.strip(), "", step)
+                    kb.record_tool("topic", True)
             # Inline PLOT SUMMARY: the LLM maintains a running "story so far" it
             # keeps updated. Replaces the bounded summary that's always in
             # context (for detail it uses recall/quests). Accept a few key names.
             _ps = _obj.get("plot_summary") or _obj.get("story_so_far") or _obj.get("summary")
             if isinstance(_ps, str) and _ps.strip():
                 kb.set_plot_summary(_ps)
+                kb.record_tool("plot_summary", True)
                 print(f"[{step:03d}] plot summary updated ({len(_ps)} chars)")
             # Inline current-quest declaration: the agent tells us which quest it
             # is working on. Tagged onto the action log (shows quest switches).
@@ -1789,6 +1810,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             if isinstance(_cq, str) and _cq.strip():
                 if _cq.strip() != (kb.current_quest or ""):
                     kb.set_current_quest(_cq)
+                    kb.record_tool("set_current_quest", True)
                     print(f"[{step:03d}] current quest -> {_cq}")
         # Track context usage so we can see if the prompt is bloating/truncating.
         pt = res.get("prompt_tokens", 0)
@@ -1829,7 +1851,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if window.available:
             window.set_action(_lbl)
         print(f"[{step:03d}] quests: reviewed ({'finished' if action.get('finished') else 'open'})")
-        action = {"type": "wait"}
+        kb.record_tool("quests", True)
+        action = {"type": "wait", "_counted": True}
 
     # MAP tool: a town-scale overview of where you are and what you've explored,
     # with labeled landmarks - for orientation relative to the whole town/area
@@ -1843,7 +1866,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if window.available:
             window.set_action("[map] reviewed the area map")
         print(f"[{step:03d}] map: rendered area overview")
-        action = {"type": "wait"}
+        kb.record_tool("map", True)
+        action = {"type": "wait", "_counted": True}
         reason = "(checked the area map to orient myself)"
 
     if isinstance(action, dict) and action.get("type") == "recall":
@@ -1860,7 +1884,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if window.available:
             window.set_action(f"[recall] {who}: {rec}")
         print(f"[{step:03d}] recall {who}: known={rec.get('known')}")
-        action = {"type": "wait"}
+        kb.record_tool("recall", True)
+        action = {"type": "wait", "_counted": True}
         reason = f"(recalled {who})"
 
     # --- "annotate": mark a location on the mental map so the agent can find
@@ -1877,7 +1902,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             if window.available:
                 window.set_action(f"[annotate] {label} @ ({tx},{ty})")
             print(f"[{step:03d}] annotate: {label} @ ({tx},{ty})")
-        action = {"type": "wait"}
+        kb.record_tool("annotate", True)
+        action = {"type": "wait", "_counted": True}
         reason = f"(marked '{label}' on the map)"
 
     # --- "look": produce a detailed description of the surroundings. It does
@@ -1901,18 +1927,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 window.set_action("[look]\n" + desc[:1500])
             print(f"[{step:03d}] look:\n{desc}")
             # Fall through to a light action so the turn still progresses.
-            action = {"type": "wait"}
+            kb.record_tool("look", True)
+            action = {"type": "wait", "_counted": True}
             reason = "(looked around; see description)"
 
     # --- Journal meta-tools: update the KB, then take a game action too. ---
     if isinstance(action, dict) and action.get("type") in META_TOOLS:
         note = _apply_meta(action, kb)
+        kb.record_tool(str(action.get("type")), True)
         if window.available:
             window.set_action(f"[journal] {note}\n{json.dumps(action)}")
         print(f"[{step:03d}] journal: {note} :: {reason!r}")
         # Meta-tools don't advance the game; fall through with a light game
         # action so the turn still does something useful.
-        action = {"type": "wait"}
+        action = {"type": "wait", "_counted": True}
         reason = f"(after {note})"
 
     # --- Driver-side guards to keep behavior sane ------------------------
@@ -3155,7 +3183,17 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # Tool-call stats: count the action type and its outcome (ok/err).
     _atype = action.get("type") if isinstance(action, dict) else "?"
     _ok = result.get("ok") if isinstance(result, dict) else None
-    kb.record_tool(_atype, _ok)
+    # Skip if this was a memory/info tool (recall/quests/map/look/annotate) that
+    # was already recorded under its real name before being converted to a wait.
+    if not (isinstance(action, dict) and action.get("_counted")):
+        kb.record_tool(_atype, _ok)
+        # DURABLE lifetime tally of physical-investigation actions (survives
+        # runs) so the agent can see whether it ever actually searches the world
+        # vs only talking. Only count genuine (ok) engine actions.
+        if _ok is not False and _atype in (
+                "search", "pickup", "take", "open", "read", "talk",
+                "close", "equip", "unequip", "drop"):
+            kb.record_activity(_atype)
     session["last_action_type"] = _atype
     # Blocked-move / unreachable-target breaker: a move that comes back
     # blocked:true (e.g. stairs that can't be climbed from this angle) means the
