@@ -442,9 +442,11 @@ periodically). For finer detail you have the recall/quests tools.
             offer NEW topics as quests progress, so re-visiting someone can still
             be worthwhile - use your judgement.)
   quests  - Review your FULL quest log with notes and prerequisites. params:
-            none. The always-on "quests" field is a COMPACT list (titles only);
-            use this tool when planning to see each quest's notes/details.
-            Result appears next turn as "quest_detail".
+            none. The always-on "quests" field lists your OPEN quests; use this
+            tool when planning to see each quest's notes/details. Add
+            {"finished": true} to instead review your COMPLETED quests - so you
+            can see what you've already ACCOMPLISHED, avoid re-adding done goals,
+            and curate your log. Result appears next turn as "quest_detail".
   answer  - Choose a reply during a conversation. params: {"index": <int>} (0-based
             into the "answers" list) OR {"text": "<answer text>"}.
             Only valid when conversation_active is true.
@@ -1763,16 +1765,25 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     #     in next turn's observation as "recalled" so the agent can remember,
     #     e.g., the Mayor's instructions from a past run.
     if isinstance(action, dict) and action.get("type") == "quests":
-        # Pull the FULL quest log (with notes/prereqs) on demand - it's kept
-        # compact in the always-on state to save context, so this lets the
-        # agent review details when planning. Shown next turn as "quest_detail".
-        session["quest_detail"] = kb.quest_view(max_open=20)
-        kb.record_action("reviewed quest log")
+        # Pull the FULL quest log on demand (kept compact in the always-on
+        # state). With {"finished": true} review COMPLETED quests instead of
+        # open ones - so you can see what you've already accomplished, avoid
+        # re-adding done goals, and curate your log. Shown next turn as
+        # "quest_detail".
+        if action.get("finished") or action.get("done"):
+            session["quest_detail"] = {"finished": kb.finished_quests_detail(40)}
+            kb.record_action("reviewed FINISHED quests")
+            _lbl = "[quests] reviewed finished quests"
+            reason = "(reviewed my finished quests)"
+        else:
+            session["quest_detail"] = kb.quest_view(max_open=20)
+            kb.record_action("reviewed quest log")
+            _lbl = "[quests] reviewed full quest log"
+            reason = "(reviewed my quest log)"
         if window.available:
-            window.set_action("[quests] reviewed full quest log")
-        print(f"[{step:03d}] quests: reviewed full log")
+            window.set_action(_lbl)
+        print(f"[{step:03d}] quests: reviewed ({'finished' if action.get('finished') else 'open'})")
         action = {"type": "wait"}
-        reason = "(reviewed my quest log)"
 
     # MAP tool: a town-scale overview of where you are and what you've explored,
     # with labeled landmarks - for orientation relative to the whole town/area

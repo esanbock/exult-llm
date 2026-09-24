@@ -419,6 +419,22 @@ class KnowledgeBase:
                 out.append(f"{q.get('title', '?')}{npc}")
         return out
 
+    def finished_quests_detail(self, limit: int = 40) -> list:
+        """Detailed FINISHED quests for the LLM to review on demand (via the
+        quests tool with finished=true) - so it can see what it has ALREADY
+        accomplished, avoid re-adding done goals, and curate its log. Each:
+        {title, npc, notes}."""
+        out = []
+        for q in self.quests.values():
+            if q.get("status") == "done":
+                d = {"title": q.get("title", "?")}
+                if q.get("npc"):
+                    d["npc"] = q["npc"]
+                if q.get("notes"):
+                    d["notes"] = q["notes"][-160:]
+                out.append(d)
+        return out[-limit:]
+
     def quests_pretty(self) -> str:
         qv = self.quest_view(max_open=30)
         lines = [f"{qv.get('unresolved',0)} open  ({qv.get('resolved',0)} finished - see below)", ""]
