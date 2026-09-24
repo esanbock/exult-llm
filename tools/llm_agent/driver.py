@@ -196,14 +196,16 @@ periodically). For finer detail you have the recall/quests tools.
                                 health - you do NOT need healing. Only seek a
                                 healer/rest when hp is well below max_hp (hp_pct
                                 low). food is hunger (eat when it gets low).
-                                COORDINATES: everything uses ONE ABSOLUTE frame.
-                                Your tile is (tx,ty). Every nearby person/object
-                                also gives its ABSOLUTE (tx,ty) plus a short
-                                "dir" hint (e.g. "NE 5" = northeast, 5 tiles). To
-                                walk to something, "goto" its (tx,ty) DIRECTLY -
-                                no conversion needed (e.g. a person at tx=1070,
-                                ty=2207 -> goto (1070,2207)). The ASCII map is
-                                centered on you (@); north=up, east=right.
+                                COORDINATES: everything uses ONE ABSOLUTE frame,
+                                in 3D. Your tile is (tx,ty,tz). Every nearby
+                                person/object also gives ABSOLUTE (tx,ty,tz) plus
+                                a short "dir" hint (e.g. "NE 5"). tz is the LEVEL
+                                (0=ground, >0=up, <0=underground): something with
+                                the SAME tz as you is on your level and reachable;
+                                a different tz means you must change levels first.
+                                To walk to something on your level, "goto" its
+                                (tx,ty) directly. The ASCII map is centered on you
+                                (@); north=up, east=right.
   time_of_day (string)        - morning/afternoon/evening/night, plus hour (0-23)
                                 and is_night. At night most townsfolk are asleep
                                 (see condition:"sleeping"); use "wait_until" to
@@ -580,7 +582,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "turn": state.get("turn"),
         "turns_since_progress": state.get("turns_since_progress"),
         "player": {
-            "tx": p.get("tx"), "ty": p.get("ty"),
+            "tx": p.get("tx"), "ty": p.get("ty"), "tz": p.get("tz", 0),
             "elevation": p.get("tz", 0),
             "level": (
                 "GROUND LEVEL (elevation 0 - you are NOT up high and NOT "
@@ -620,6 +622,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
                     else (p.get("tx", 0) + n.get("dx", 0))),
              "ty": (n.get("ty") if n.get("ty") is not None
                     else (p.get("ty", 0) + n.get("dy", 0))),
+             "tz": (p.get("tz", 0) or 0) + (n.get("dz", 0) or 0),
              "dir": _compass(n.get("dx", 0), n.get("dy", 0)),
              "status": (kb.talk_status(n.get("name")) if kb and n.get("name") else "new"),
              **({"condition": n["condition"]} if n.get("condition") else {}),
@@ -633,6 +636,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             {"name": o.get("name"),
              "tx": p.get("tx", 0) + o.get("dx", 0),
              "ty": p.get("ty", 0) + o.get("dy", 0),
+             "tz": (p.get("tz", 0) or 0) + (o.get("dz", 0) or 0),
              "dir": _compass(o.get("dx", 0), o.get("dy", 0)),
              **({"body": True} if o.get("body") else {}),
              **({"corpse_not_lootable": True} if o.get("corpse") else {}),
@@ -802,15 +806,17 @@ def format_dialog(state: dict) -> str:
         for i, a in enumerate(answers):
             lines.append(f"  [{i}] {a}")
     _pp = state.get("player") or {}
-    _px, _py = _pp.get("tx", 0), _pp.get("ty", 0)
+    _px, _py, _pz = _pp.get("tx", 0), _pp.get("ty", 0), (_pp.get("tz", 0) or 0)
     nearby = state.get("nearby") or []
     if nearby:
         lines.append("")
-        lines.append("Characters nearby (absolute tile):")
+        lines.append(f"Characters nearby (absolute tile; you at z={_pz}):")
         for n in nearby[:12]:
             _ax = n.get("tx") if n.get("tx") is not None else _px + n.get("dx", 0)
             _ay = n.get("ty") if n.get("ty") is not None else _py + n.get("dy", 0)
-            lines.append(f"  {n.get('name')}  ({_ax},{_ay})  {_compass(n.get('dx',0), n.get('dy',0))}")
+            _az = _pz + (n.get("dz", 0) or 0)
+            _lvl = "" if _az == _pz else f" [z={_az}!]"
+            lines.append(f"  {n.get('name')}  ({_ax},{_ay},{_az})  {_compass(n.get('dx',0), n.get('dy',0))}{_lvl}")
     objects = state.get("objects") or []
     if objects:
         lines.append("")
@@ -818,7 +824,9 @@ def format_dialog(state: dict) -> str:
         for o in objects[:12]:
             _ax = _px + o.get("dx", 0)
             _ay = _py + o.get("dy", 0)
-            lines.append(f"  {o.get('name')}  ({_ax},{_ay})  {_compass(o.get('dx',0), o.get('dy',0))}")
+            _az = _pz + (o.get("dz", 0) or 0)
+            _lvl = "" if _az == _pz else f" [z={_az}!]"
+            lines.append(f"  {o.get('name')}  ({_ax},{_ay},{_az})  {_compass(o.get('dx',0), o.get('dy',0))}{_lvl}")
     return "\n".join(lines) if lines else "(nothing notable on screen)"
 
 
