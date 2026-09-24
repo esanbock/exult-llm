@@ -743,7 +743,7 @@ class KnowledgeBase:
     # of turns) and switch strategy itself.
     ACTION_WINDOW = 300
 
-    def record_action(self, text: str, turn: int = -1) -> None:
+    def record_action(self, text: str, turn: int = -1, reason: str = "") -> None:
         if not text:
             return
         if turn < 0:
@@ -759,8 +759,11 @@ class KnowledgeBase:
             if (any(text.startswith(w) for w in _low)
                     and any(prev_text.startswith(w) for w in _low)):
                 return
-        self.action_history.append(
-            {"turn": int(turn), "quest": self.current_quest, "text": text})
+        _e = {"turn": int(turn), "quest": self.current_quest, "text": text}
+        _r = (reason or "").strip()
+        if _r and not _r.startswith("(guard"):   # skip guard-generated pseudo-reasons
+            _e["reason"] = _r[:80]
+        self.action_history.append(_e)
         self.action_history = self.action_history[-self.ACTION_WINDOW:]
 
     def action_view(self, limit: int = 300) -> list:
@@ -781,7 +784,8 @@ class KnowledgeBase:
                 if e.get("kind") == "move":
                     out.append(e.get("text", ""))
                 else:
-                    out.append(f"[T{e.get('turn', 0)}] {e.get('text','')}")
+                    _why = f'  ["{e["reason"]}"]' if e.get("reason") else ""
+                    out.append(f"[T{e.get('turn', 0)}] {e.get('text','')}{_why}")
             else:  # legacy plain-string entries
                 out.append(str(e))
         return out
@@ -792,7 +796,8 @@ class KnowledgeBase:
         each action-log entry so quest switches are visible over time."""
         self.current_quest = (title or "").strip()[:80] or None
 
-    def record_move(self, target: str, turn: int = -1, moved: bool = True) -> None:
+    def record_move(self, target: str, turn: int = -1, moved: bool = True,
+                    reason: str = "") -> None:
         """Record a movement (goto/move) toward a target, COLLAPSING a run of
         moves toward the SAME target into one line with a COUNT and turn span,
         e.g. '[T88-T130] goto stairs x22 (no progress)'. This makes a movement
@@ -801,6 +806,9 @@ class KnowledgeBase:
         if turn < 0:
             turn = getattr(self, "current_turn", 0)
         target = (target or "somewhere").strip()[:40]
+        _r = (reason or "").strip()
+        if _r.startswith("(guard"):
+            _r = ""
         last = self.action_history[-1] if self.action_history else None
         # Extend a same-target movement run in progress.
         if (isinstance(last, dict) and last.get("kind") == "move"
@@ -812,6 +820,8 @@ class KnowledgeBase:
             return
         entry = {"turn": int(turn), "turn_to": int(turn), "quest": self.current_quest,
                  "kind": "move", "target": target, "count": 1, "progressed": moved}
+        if _r:
+            entry["reason"] = _r[:80]
         entry["text"] = self._fmt_move(entry)
         self.action_history.append(entry)
         self.action_history = self.action_history[-self.ACTION_WINDOW:]
@@ -823,7 +833,8 @@ class KnowledgeBase:
         n = e.get("count", 1)
         prog = "" if e.get("progressed") else " (NO progress - blocked/looping)"
         cnt = f" x{n}" if n > 1 else ""
-        return f"[{span}] move toward {e.get('target')}{cnt}{prog}"
+        why = f'  ["{e["reason"]}"]' if e.get("reason") else ""
+        return f"[{span}] move toward {e.get('target')}{cnt}{prog}{why}"
 
     # ----- hint history (operator guidance - persistent, high value) -----
     def record_hint(self, text: str, step: int = 0) -> None:

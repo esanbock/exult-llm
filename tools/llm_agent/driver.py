@@ -320,11 +320,13 @@ periodically). For finer detail you have the recall/quests tools.
       ({"npc":name,"said":...} for NPC lines, {"me":...} for your replies).
       Use this to remember what you have learned and what was said earlier.
   action_log: YOUR TEMPORAL MEMORY - a turn-by-turn log of your recent actions
-      with OUTCOMES, one per line as "[T<turn>] <action> -> <result>", and
+      with OUTCOMES and the REASON you gave, one per line as
+      "[T<turn>] <action> -> <outcome>  [\"<your reason>\"]", plus repeated moves
+      collapsed as "[T88-T130] move toward X x22 (NO progress)" and
       ">>> now working: <quest>" markers where you switched quests. READ THIS to
-      see what you've been doing OVER TIME: if you see the same action/goal
-      repeated across many turns with no useful result, you are in a FRUITLESS
-      LOOP - stop and do something different.
+      see what you've been doing AND WHY over time: if the same action/reason
+      repeats across many turns with no useful result, you are in a FRUITLESS
+      LOOP - stop and do something different (that rationale is not working).
   current_quest: the quest you told me you are working on (via set_current_quest).
       Shown so you stay focused; if it's stalling across many log lines, switch.
   already_searched_empty (list) - bodies/containers you ALREADY searched and
@@ -3088,7 +3090,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             else:
                 outcome = " -> nothing to read here"
         kb.record_action(f"{atype} {detail}".strip()
-                         + f" @({p0.get('tx')},{p0.get('ty')})" + outcome)
+                         + f" @({p0.get('tx')},{p0.get('ty')})" + outcome,
+                         reason=reason)
     elif atype in ("goto", "move"):
         # Log movement too, but COLLAPSED per target so a movement LOOP shows as
         # a single counted line (e.g. 'move toward stairs x22 (NO progress)')
@@ -3103,7 +3106,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # progressed only if position actually changed since last turn
         _progressed = (_p1.get("tx"), _p1.get("ty")) != session.get("prev_xy_for_log")
         session["prev_xy_for_log"] = (_p1.get("tx"), _p1.get("ty"))
-        kb.record_move(str(_tgt), moved=(_movedok and _progressed))
+        kb.record_move(str(_tgt), moved=(_movedok and _progressed), reason=reason)
     # A successful pickup/search changes the world -> NPCs may now have new
     # dialogue, so allow revisiting them.
     if atype in ("pickup", "search") and isinstance(result, dict) and result.get("ok"):
