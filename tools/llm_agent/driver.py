@@ -673,6 +673,8 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
              "tz": (p.get("tz", 0) or 0) + (o.get("dz", 0) or 0),
              "dir": _compass(o.get("dx", 0), o.get("dy", 0)),
              **({"body": True} if o.get("body") else {}),
+             **({"searchable_container": True} if o.get("container") else {}),
+             **({"contents": o.get("contents")} if o.get("contents") else {}),
              **({"corpse_not_lootable": True} if o.get("corpse") else {}),
              **({"owned": True} if o.get("owned") else {}),
              **({"town_exit": True} if o.get("town_exit") else {}),
@@ -2646,27 +2648,31 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         else:
             _here_close = lambda dx, dy: abs(dx) <= 1 and abs(dy) <= 1
             # Anything searchable right next to us? then let the search run.
+            # Searchable = a dead body, a body-flagged object, OR any container
+            # (chest, desk, drawer, bag, barrel, crate - flagged container:true
+            # by the engine).
             adjacent = any(_here_close(n.get("dx", 9), n.get("dy", 9))
                            for n in (state.get("nearby") or []) if n.get("dead"))
             adjacent = adjacent or any(_here_close(o.get("dx", 9), o.get("dy", 9))
                                        for o in (state.get("objects") or [])
-                                       if o.get("body"))
+                                       if o.get("body") or o.get("container"))
             if not adjacent:
-                # Nearest dead body (from NPC list) or body-flagged object.
+                # Nearest dead body (from NPC list) or body/container object.
                 cands = [(abs(n.get("dx", 99)) + abs(n.get("dy", 99)),
                           _pp.get("tx", 0) + n.get("dx", 0),
                           _pp.get("ty", 0) + n.get("dy", 0), n.get("name", "body"))
                          for n in (state.get("nearby") or []) if n.get("dead")]
                 cands += [(abs(o.get("dx", 99)) + abs(o.get("dy", 99)),
                            _pp.get("tx", 0) + o.get("dx", 0),
-                           _pp.get("ty", 0) + o.get("dy", 0), o.get("name", "body"))
-                          for o in (state.get("objects") or []) if o.get("body")]
+                           _pp.get("ty", 0) + o.get("dy", 0), o.get("name", "container"))
+                          for o in (state.get("objects") or [])
+                          if o.get("body") or o.get("container")]
                 if cands:
                     cands.sort(key=lambda c: c[0])
                     _, btx, bty, bnm = cands[0]
                     action = {"type": "goto", "tx": btx, "ty": bty}
                     reason = f"(guard) walking to '{bnm}' @({btx},{bty}) before searching"
-                    print(f"[{step:03d}] search-guard: goto body '{bnm}' @({btx},{bty})")
+                    print(f"[{step:03d}] search-guard: goto '{bnm}' @({btx},{bty})")
                 else:
                     # Nothing searchable anywhere (the agent tried to 'search the
                     # garbage' etc). search only opens BODIES/CONTAINERS. The
@@ -2679,10 +2685,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = {"type": "wait"}
                     reason = "(guard) nothing to search here; examined instead"
                     session["last_bump"] = (
-                        "'search' only opens a nearby BODY or CONTAINER (chest, "
-                        "barrel, bag). There is none within reach, so it does "
-                        "nothing on scenery like garbage/tables. To inspect the "
-                        "area use 'look'; to grab a loose item use 'pickup'.")
+                        "'search' only opens a nearby BODY or CONTAINER. "
+                        "Containers include chests, desks, drawers, cabinets, "
+                        "bags, backpacks, barrels, crates, and sacks - the state "
+                        "flags them 'searchable_container' and lists their "
+                        "'contents'. There is none within reach right now, so "
+                        "search does nothing on plain scenery (tables, floors, "
+                        "garbage). Walk up to a searchable_container or body "
+                        "first; to grab a loose item use 'pickup'; to inspect "
+                        "the area use 'look'.")
                     print(f"[{step:03d}] search-guard: no searchable target; examined instead")
 
     # --- Repeat-failed-pickup guard: if the agent keeps trying to pick up an

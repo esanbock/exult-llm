@@ -776,6 +776,12 @@ namespace LLM_agent {
 				} else if (is_body) {
 					// A corpse with nothing to loot - searching does nothing.
 					os << ',' << json_bool("corpse", true);
+				} else if (obj->as_container()) {
+					// A non-body CONTAINER (chest, desk, drawer, bag, barrel,
+					// crate, backpack, ...). It is searchable/openable/lootable -
+					// flag it so the agent (and the driver's search guard) treat
+					// it like a body for looting, not as inert scenery.
+					os << ',' << json_bool("container", true);
 				}
 				// Town EXIT: a portcullis / town gate / gateway is how you leave
 				// the town to the outside world. Flag it so the agent knows this
