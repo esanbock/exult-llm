@@ -523,6 +523,9 @@ namespace LLM_agent {
 			os << ',' << json_int("int", av->get_property(Actor::intelligence));
 			os << ',' << json_int("mana", av->get_property(Actor::mana));
 			os << ',' << json_int("food", av->get_property(Actor::food_level));
+			// Party gold (shape 644). The agent needs to know what it can AFFORD.
+			os << ',' << json_int("gold",
+					av->count_objects(644, c_any_qual, c_any_framenum));
 			os << ',' << json_bool("dead", av->is_dead());
 			os << '}';
 		}

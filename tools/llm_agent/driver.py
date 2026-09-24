@@ -177,7 +177,12 @@ periodically). For finer detail you have the recall/quests tools.
   turns_since_progress (int)  - turns since you last made REAL progress (resolved
                                 a quest or met a new person). If this grows large,
                                 what you're doing ISN'T working - change strategy.
-  player: {tx,ty (your absolute tile on the world map), elevation, hp, max_hp, hp_pct, food}
+  player: {tx,ty (your absolute tile on the world map), elevation, hp, max_hp, hp_pct, gold, food}
+                                GOLD: how much money you have. Check it before
+                                agreeing to BUY something - you cannot afford a
+                                price higher than your gold (e.g. a 600-gold ship
+                                if you have 50). Don't commit to purchases you
+                                can't pay for.
                                 ELEVATION: 0 = GROUND level. >0 = UP (on a wall
                                 walkway / upper floor / rooftop). <0 = UNDERGROUND
                                 (cave/cellar/dungeon). The "level" field states
@@ -591,6 +596,8 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             "hp": p.get("hp"), "max_hp": p.get("max_hp"),
             "hp_pct": (round(100 * p.get("hp", 0) / p["max_hp"])
                        if p.get("max_hp") else None),
+            "gold": p.get("gold"),
+            "food": p.get("food"),
             "dead": p.get("dead"),
         },
         "time_of_day": state.get("time_of_day"),
@@ -1168,7 +1175,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             # Always-visible game status line.
             window.set_gstatus(
                 f"{state.get('time_of_day','?')} (h{state.get('hour','?')})  "
-                f"pos({p.get('tx')},{p.get('ty')})  hp {p.get('hp')}/{p.get('max_hp')}  food {p.get('food')}  "
+                f"pos({p.get('tx')},{p.get('ty')})  hp {p.get('hp')}/{p.get('max_hp')}  gold {p.get('gold')}  food {p.get('food')}  "
                 f"str {p.get('str')} dex {p.get('dex')} int {p.get('int')}  "
                 f"{'IN COMBAT' if state.get('in_combat') else ''}")
             # Structured stats: labelled key/value pairs for distinct boxes.
@@ -1177,6 +1184,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             stats_kv = {
                 "Position (abs x,y,z)": f"({p.get('tx')},{p.get('ty')},{p.get('tz',0)})",
                 "HP": f"{p.get('hp')}/{p.get('max_hp')}",
+                "Gold": p.get("gold"),
                 "Str/Dex/Int": f"{p.get('str')}/{p.get('dex')}/{p.get('int')}",
                 "Food": p.get("food"),
                 "NPCs met": len(kb.npcs),
@@ -2687,9 +2695,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
                 window.set_thinking(reason)
             return
-    # Arm the latch on a confined + descend-heavy loop.
+    # Arm the latch on a confined + descend-heavy loop.  (DISABLED: the latch
+    # fired excessively (~94x/run) and re-armed, creating its own churn that
+    # made the stairs loop WORSE rather than better. We rely instead on the
+    # temporal action log + full quest log + explicit GROUND-LEVEL label to let
+    # the agent self-correct, and on the lighter descend/ground guards.)
     _recent_pos = session.get("wedge_recent", [])
-    if (len(_recent_pos) >= 6
+    if (False and len(_recent_pos) >= 6
             and (max(t[0] for t in _recent_pos) - min(t[0] for t in _recent_pos)) <= 6
             and (max(t[1] for t in _recent_pos) - min(t[1] for t in _recent_pos)) <= 6):
         _descend_recent = sum(1 for r in (session.get("reason_hist") or [])[-6:]
@@ -2715,7 +2727,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     _rh6 = (session.get("reason_hist") or [])[-6:]
     _fixate = sum(1 for r in _rh6
                   if "descend" in r or "fortress" in r or "stairs" in r or "climb" in r)
-    if _fixate >= 4 and session.get("escape_latch", 0) == 0:
+    if False and _fixate >= 4 and session.get("escape_latch", 0) == 0:
         _pp = state.get("player") or {}
         _far = None
         for _pl in (kb.places_view(_pp.get("tx", 0), _pp.get("ty", 0), limit=12) if kb else []):
