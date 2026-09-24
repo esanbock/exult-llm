@@ -1644,10 +1644,27 @@ namespace LLM_agent {
 				return "{\"ok\":false,\"error\":\"no such item in a nearby container\"}";
 			}
 			const std::string nm = found->get_name();
+			// Ownership: an item NOT flagged okay_to_take is someone's property;
+			// taking it is THEFT (a human sees goods in a shop/home and knows
+			// they belong to someone). Report it so the agent can weigh the
+			// consequence - we do NOT block it (consequences, not prohibitions).
+			const bool stolen = !found->get_flag(Obj_flags::okay_to_take);
 			Game_object_shared keep;
 			found->remove_this(&keep);
 			if (av->add(found, false, true)) {
-				return "{\"ok\":true,\"did\":\"take\",\"item\":\"" + json_escape(nm) + "\"}";
+				std::string r = "{\"ok\":true,\"did\":\"take\",\"item\":\""
+								+ json_escape(nm) + "\"";
+				if (stolen) {
+					r += ",\"stolen\":true,\"owned\":true";
+					r += ",\"warning\":\"You TOOK someone's property (it was not "
+						 "free to take) - this is theft. If a nearby owner/guard "
+						 "witnessed it they may confront or attack you. Some items "
+						 "are also needed for quests or navigation; consider "
+						 "whether you actually need this before parting with it. "
+						 "You may drop it to return it.\"";
+				}
+				r += "}";
+				return r;
 			}
 			// Couldn't carry it - drop at feet so it isn't lost.
 			found->set_invalid();

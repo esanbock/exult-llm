@@ -3334,7 +3334,19 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             else:
                 outcome = " -> nothing to search here"
         elif atype in ("pickup", "take"):
-            outcome = f" -> got {result.get('item')}" if _ok else " -> could not take"
+            if _ok:
+                outcome = f" -> got {result.get('item')}"
+                # THEFT signal from the engine: the item was someone's property.
+                # Surface it prominently so the agent can weigh the consequence
+                # (angered owners/guards; possible quest/nav item). We do NOT
+                # block or undo it - the agent owns the decision.
+                if isinstance(result, dict) and result.get("stolen"):
+                    outcome += " (STOLEN - owned property!)"
+                    _w = result.get("warning") or (
+                        "That item was someone's property - taking it is theft.")
+                    session["last_bump"] = _w
+            else:
+                outcome = " -> could not take"
         elif atype == "equip":
             outcome = (f" -> equipped {result.get('item') or action.get('name')}"
                        if _ok else " -> could not equip")
