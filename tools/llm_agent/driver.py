@@ -674,7 +674,12 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             for d in doors[:6]
         ]
     if kb is not None:
-        view["quests"] = kb.quest_summary()
+        # FULL quest log always in context (with notes + prereqs), not just
+        # titles: it's the stateless agent's to-do list / plan and drives every
+        # decision - it shouldn't have to remember to call the quests tool to
+        # see its own plan. Bounded (top open quests + notes) and we have ample
+        # context headroom. NPC/topic transcripts stay on-demand via recall.
+        view["quests"] = kb.quest_view(max_open=(10 if lvl >= 2 else 18))
         # Names of NPCs already met (helps avoid re-greeting). Cap it under
         # context pressure - a long playthrough meets many NPCs and this list
         # can bloat the prompt.
@@ -1785,6 +1790,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     else:
         session["convo_turns"] = 0
         session["picked_answers"] = set()
+        session["same_answer_n"] = 0
+        session["last_answer_idx"] = None
 
     def _bye_action():
         """Choose the answer that ends the conversation ('bye'/'leave'/last)."""
@@ -1905,6 +1912,39 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if state.get("conversation_active") and answers:
         picked = session.setdefault("picked_answers", set())
         chosen_idx = action.get("index") if isinstance(action, dict) and action.get("type") == "answer" else None
+        # SAME-ANSWER-REPEAT breaker: if the model keeps picking the SAME index
+        # and the conversation isn't progressing (menu keeps re-appearing), it's
+        # stuck (e.g. re-'accept'ing an offer that loops). After a few repeats,
+        # pick a DIFFERENT available answer - prefer an unasked non-generic
+        # topic, else the bye/leave option to exit cleanly.
+        if chosen_idx is not None:
+            if chosen_idx == session.get("last_answer_idx"):
+                session["same_answer_n"] = session.get("same_answer_n", 0) + 1
+            else:
+                session["same_answer_n"] = 0
+            session["last_answer_idx"] = chosen_idx
+            if session.get("same_answer_n", 0) >= 2 and answers:
+                _gen = {"name", "job", "bye", "yes", "no", "leave", "farewell",
+                        "goodbye", "nothing", "hello"}
+                _cn = session.get("current_npc", "?")
+                _ask = set((kb.recall_npc(_cn) or {}).get("topics_asked", []))
+                _alt = [(i, a) for i, a in enumerate(answers)
+                        if i != chosen_idx and a.lower() not in _gen and a not in _ask]
+                if _alt:
+                    action = {"type": "answer", "index": _alt[0][0]}
+                    reason = f"(guard) same answer looping; trying '{_alt[0][1]}' instead"
+                    session["same_answer_n"] = 0
+                    chosen_idx = _alt[0][0]
+                    print(f"[{step:03d}] answer-loop: switch to idx {_alt[0][0]} '{_alt[0][1]}'")
+                else:
+                    _bye = next((i for i, a in enumerate(answers)
+                                 if a.lower() in ("bye", "leave", "farewell", "goodbye", "nothing")), None)
+                    if _bye is not None:
+                        action = {"type": "answer", "index": _bye}
+                        reason = "(guard) same answer looping; exiting conversation"
+                        session["same_answer_n"] = 0
+                        chosen_idx = _bye
+                        print(f"[{step:03d}] answer-loop: no new topics; leaving via idx {_bye}")
         too_long = session.get("convo_turns", 0) >= MAX_CONVO_TURNS
         # Are there still useful (non-generic, unasked) topics on the CURRENT
         # menu? If so, don't force-end - let the agent exhaust the tree first.
