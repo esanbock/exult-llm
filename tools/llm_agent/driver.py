@@ -801,18 +801,24 @@ def format_dialog(state: dict) -> str:
         lines.append("Answers:")
         for i, a in enumerate(answers):
             lines.append(f"  [{i}] {a}")
+    _pp = state.get("player") or {}
+    _px, _py = _pp.get("tx", 0), _pp.get("ty", 0)
     nearby = state.get("nearby") or []
     if nearby:
         lines.append("")
-        lines.append("Characters nearby:")
+        lines.append("Characters nearby (absolute tile):")
         for n in nearby[:12]:
-            lines.append(f"  {n.get('name')}  (dx={n.get('dx')}, dy={n.get('dy')})")
+            _ax = n.get("tx") if n.get("tx") is not None else _px + n.get("dx", 0)
+            _ay = n.get("ty") if n.get("ty") is not None else _py + n.get("dy", 0)
+            lines.append(f"  {n.get('name')}  ({_ax},{_ay})  {_compass(n.get('dx',0), n.get('dy',0))}")
     objects = state.get("objects") or []
     if objects:
         lines.append("")
-        lines.append("Objects nearby:")
+        lines.append("Objects nearby (absolute tile):")
         for o in objects[:12]:
-            lines.append(f"  {o.get('name')}  (dx={o.get('dx')}, dy={o.get('dy')})")
+            _ax = _px + o.get("dx", 0)
+            _ay = _py + o.get("dy", 0)
+            lines.append(f"  {o.get('name')}  ({_ax},{_ay})  {_compass(o.get('dx',0), o.get('dy',0))}")
     return "\n".join(lines) if lines else "(nothing notable on screen)"
 
 
