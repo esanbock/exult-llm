@@ -531,10 +531,15 @@ periodically). For finer detail you have the recall/quests tools.
        that even after a quest is closed, what you learned about people, groups,
        and mysteries persists.
   3a. Talking to NEW people is how you discover quests. Prefer nearby NPCs with
-     status "new", then "talked". For an "exhausted" NPC, check their npc_notes
-     first: re-talk them ONLY if you now have a new reason (new topic/lead/item
-     or quest progress). If their notes show you already learned what they know,
-     move on rather than repeating the same conversation.
+     status "new", then "talked". BEFORE re-approaching someone you have talked
+     to, use the "recall" tool ({"type":"recall","name":"<who>"}) to re-read
+     their full transcript and see which topics you already asked vs. still
+     have OPEN - don't waste turns re-having a conversation you already had.
+     For an "exhausted" NPC, check their npc_notes / recall first: re-talk them
+     ONLY if you now have a new reason (new topic/lead/item or quest progress).
+     If their notes show you already learned what they know, move on rather than
+     repeating the same conversation. (While IN a conversation, each option is
+     also tagged "[asked - branch explored]" vs open - pick open ones.)
   4. Only if you have NO actionable quest and no new NPC to meet -> explore to a
      NEW area to find fresh people/places. To travel anywhere more than a step
      or two (an NPC, item, building, or new part of town) ALWAYS use "goto" - it
