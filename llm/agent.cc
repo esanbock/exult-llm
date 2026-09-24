@@ -1573,12 +1573,25 @@ namespace LLM_agent {
 				return "{\"ok\":false,\"error\":\"no takeable object nearby\"}";
 			}
 			const std::string nm = best->get_name();
+			// Ownership: report theft if the loose item is someone's property,
+			// same as 'take' (consequences, not prohibitions).
+			const bool stolen = !best->get_flag(Obj_flags::okay_to_take);
 			// Detach from the world, keeping a shared ref alive, then add to
 			// the avatar's inventory.
 			Game_object_shared keep;
 			best->remove_this(&keep);
 			if (av->add(best, false, true)) {
-				return "{\"ok\":true,\"did\":\"pickup\",\"item\":\"" + json_escape(nm) + "\"}";
+				std::string r = "{\"ok\":true,\"did\":\"pickup\",\"item\":\""
+								+ json_escape(nm) + "\"";
+				if (stolen) {
+					r += ",\"stolen\":true,\"owned\":true";
+					r += ",\"warning\":\"You picked up someone's property - this "
+						 "is theft. A nearby owner/guard who saw it may confront "
+						 "you. It may also be a needed quest/nav item; you may "
+						 "drop it to return it.\"";
+				}
+				r += "}";
+				return r;
 			}
 			// Couldn't carry it - drop it back where the avatar stands.
 			best->set_invalid();
@@ -1641,7 +1654,44 @@ namespace LLM_agent {
 				}
 			}
 			if (!found) {
-				return "{\"ok\":false,\"error\":\"no such item in a nearby container\"}";
+				// FALLBACK: the item isn't inside a container - it may be a
+				// LOOSE object lying on the ground or on a table/shelf (e.g. a
+				// key, a coin, a book). Scan nearby world objects the same way
+				// 'pickup' does, so 'take' works for loose items too and the
+				// agent needn't know which verb to use.
+				Game_object_vector wobjs;
+				Game_object::find_nearby(wobjs, at, -1, 6, 128);
+				int wbest_d = 1 << 30;
+				for (Game_object* obj : wobjs) {
+					if (!obj || obj->as_actor()) {
+						continue;
+					}
+					const Shape_info& info = obj->get_info();
+					if (info.is_door() || obj->as_container()) {
+						continue;    // doors/containers handled elsewhere
+					}
+					const std::string inm = obj->get_name();
+					if (inm.empty()) {
+						continue;
+					}
+					if (!wlow.empty()) {
+						std::string l = inm;
+						std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+						if (l.find(wlow) == std::string::npos) {
+							continue;
+						}
+					}
+					const Tile_coord ot = obj->get_tile();
+					const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+					if (d < wbest_d) {
+						wbest_d = d;
+						found   = obj;
+					}
+				}
+			}
+			if (!found) {
+				return "{\"ok\":false,\"error\":\"no such item in a nearby "
+					   "container or on the ground within reach\"}";
 			}
 			const std::string nm = found->get_name();
 			// Ownership: an item NOT flagged okay_to_take is someone's property;

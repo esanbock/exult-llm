@@ -408,10 +408,15 @@ periodically). For finer detail you have the recall/quests tools.
             directions, and place names - useful when you goto a sign.
   take    - Take an item OUT of a nearby body/container (searches inside bags
             too) into your pack. params: {"name":"<item>"} for a specific item,
-            or omit to take the first. Use this to loot bodies/chests.
-  pickup  - Take an item off the GROUND (a loose world tile) into your pack.
-            params: {"name":"<item name>"} (optional). For items inside a
-            body/container use "take" instead.
+            or omit to take the first. Use this to loot bodies/chests. If the
+            named item is NOT in a container, "take" also grabs it if it is
+            lying LOOSE nearby (on the ground, a table, or a shelf) - so you can
+            use "take" for either case.
+  pickup  - Take a LOOSE item nearby (on the GROUND, a table, or a shelf - e.g.
+            a key, coin, book) into your pack. params: {"name":"<item name>"}
+            (optional). Both "pickup" and "take" work for loose items; "take"
+            additionally reaches inside bodies/containers. Keys, notes and small
+            items often sit loose on furniture - grab them with either verb.
   inventory - Report what you are WEARING (per slot) and CARRYING. params: none.
   annotate - Mark the current location (or a given tile) on your map with a
             label so you can return later. params: {"label":"<name>"} (uses your
