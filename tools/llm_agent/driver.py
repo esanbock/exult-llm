@@ -836,6 +836,43 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             view["what_i_have_actually_done"] = kb.activity_scorecard()
         except Exception:
             pass
+        # CONVERSATION FOCUS: tag each answer option as already-explored vs open,
+        # so the agent pursues OPEN topics and avoids re-picking a branch it has
+        # fully explored (the churn where it re-asks the same topics). It MAY
+        # still revisit an asked topic if it believes quest progress unlocked
+        # something new - but by default, skip the [asked] ones.
+        if in_convo:
+            _ans = state.get("answers") or []
+            if _ans:
+                # Conversing NPC = nearest non-party person (the one adjacent).
+                _cnpc = None
+                _best = 1e9
+                for _n in nearby:
+                    if _n.get("in_party") or not _n.get("name"):
+                        continue
+                    _d = abs(_n.get("dx", 0)) + abs(_n.get("dy", 0))
+                    if _d < _best:
+                        _best, _cnpc = _d, _n.get("name")
+                _asked = set()
+                if _cnpc and kb:
+                    _asked = {str(a).strip().lower()
+                              for a in (kb.recall_npc(_cnpc) or {}).get("topics_asked", [])}
+                _tagged = []
+                _open_left = 0
+                for _i, _a in enumerate(_ans):
+                    _is_asked = str(_a).strip().lower() in _asked
+                    if not _is_asked:
+                        _open_left += 1
+                    _tagged.append(f"{_i}: {_a}" + ("  [asked - branch explored]" if _is_asked else ""))
+                view["conversation_options"] = _tagged
+                view["CONVERSATION_TIP"] = (
+                    "Pick an OPEN option (not marked [asked]). Options marked "
+                    "[asked] are branches you already fully explored - do NOT "
+                    "re-pick them unless you think a quest you advanced unlocked "
+                    "new dialogue there. "
+                    + ("No open topics remain - say goodbye/leave and move on."
+                       if _open_left == 0 else
+                       f"{_open_left} open topic(s) remain."))
     if last_look:
         view["look_description"] = last_look
     if alert:
