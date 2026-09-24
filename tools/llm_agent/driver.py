@@ -2260,7 +2260,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         else:
             _oscillating = False
         _force_step = _oscillating
-        if best and best_d >= 3 and _force_step:
+        _cur_tz_here = (state.get("player") or {}).get("tz", 0) or 0
+        if _force_step and _cur_tz_here > 0:
+            # Stuck oscillating while UP HIGH (e.g. wedged at the wall gateway):
+            # the reliable escape is to DESCEND to ground. goto a far ground tile
+            # with tz:0 (engine walks down the ramp). This breaks the elevated
+            # dead-end so the agent can pursue prerequisites at ground level.
+            session["wedge_recent"] = []
+            _gt = (1079, 2214)   # Trinsic start/ground area (verified descendable)
+            action = {"type": "goto", "tx": _gt[0], "ty": _gt[1], "tz": 0}
+            reason = "(guard) stuck up high; descending to ground to break the trap"
+            print(f"[{step:03d}] wedge-escape: elevated trap -> descend to {_gt}")
+        elif best and best_d >= 3 and _force_step:
             # We're trapped in a tiny pocket but the flood-fill sees a far open
             # tile: commit a goto straight to it and clear the recent buffer so
             # we don't immediately re-trigger.
