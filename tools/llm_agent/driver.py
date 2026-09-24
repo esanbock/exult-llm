@@ -168,12 +168,14 @@ periodically). For finer detail you have the recall/quests tools.
                                 Time is passing - use it to notice when you have
                                 spent many turns on one thing without progress.
   player: {tx,ty (your absolute tile on the world map), elevation, hp, max_hp, hp_pct, food}
-                                ELEVATION: 0 = ground level. >0 means you are UP
-                                on a wall walkway / upper floor / stairs. The
-                                world is 3D: most people & items are at ground
-                                level and are NOT reachable while you are up high
-                                - descend (walk back down the stairs) to reach
-                                them.
+                                ELEVATION: 0 = GROUND level. >0 = UP (on a wall
+                                walkway / upper floor / rooftop). <0 = UNDERGROUND
+                                (cave/cellar/dungeon). The "level" field states
+                                this in words. The world is 3D: people & items on
+                                a DIFFERENT level than you are NOT reachable until
+                                you change levels (climb stairs up, or descend).
+                                If you are at elevation 0 you are ALREADY at
+                                ground - do not try to "descend to ground".
                                 HEALTH: hp is CURRENT, max_hp is your MAXIMUM
                                 (== your strength). hp == max_hp means FULL
                                 health - you do NOT need healing. Only seek a
@@ -538,11 +540,18 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "player": {
             "tx": p.get("tx"), "ty": p.get("ty"),
             "elevation": p.get("tz", 0),
-            "level": ("GROUND LEVEL (elevation 0 - you are NOT up high; do NOT "
-                      "try to descend, you are already down)"
-                      if (p.get("tz", 0) or 0) == 0
-                      else f"UP HIGH at elevation {p.get('tz')} (on a wall/upper "
-                           "floor - descend to reach ground-level people/items)"),
+            "level": (
+                "GROUND LEVEL (elevation 0 - you are NOT up high and NOT "
+                "underground; do NOT try to climb down or up to 'reach ground', "
+                "you are already at ground level)"
+                if (p.get("tz", 0) or 0) == 0
+                else (f"UP HIGH at elevation {p.get('tz')} (on a wall / upper "
+                      "floor / rooftop - descend to reach ground-level "
+                      "people & items)"
+                      if (p.get("tz", 0) or 0) > 0
+                      else f"UNDERGROUND at elevation {p.get('tz')} (in a "
+                           "cave/cellar/dungeon below ground - go UP to return "
+                           "to the surface)")),
             "hp": p.get("hp"), "max_hp": p.get("max_hp"),
             "hp_pct": (round(100 * p.get("hp", 0) / p["max_hp"])
                        if p.get("max_hp") else None),
@@ -609,6 +618,10 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             "and are NOT reachable from up here. If you're looking for someone, "
             "come back DOWN (walk back to the stairs/ramp and descend) unless you "
             "specifically need something up here.")
+    elif (p.get("tz", 0) or 0) <= -1:
+        view["ELEVATION_NOTE"] = (
+            f"You are UNDERGROUND (elevation {p.get('tz')}, in a cave/cellar/"
+            "dungeon). To return to the surface, find stairs/a ladder and go UP.")
     doors = state.get("doors") or []
     if doors:
         view["doors"] = [
