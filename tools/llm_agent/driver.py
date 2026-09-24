@@ -538,6 +538,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "player": {
             "tx": p.get("tx"), "ty": p.get("ty"),
             "elevation": p.get("tz", 0),
+            "level": ("GROUND LEVEL (elevation 0 - you are NOT up high; do NOT "
+                      "try to descend, you are already down)"
+                      if (p.get("tz", 0) or 0) == 0
+                      else f"UP HIGH at elevation {p.get('tz')} (on a wall/upper "
+                           "floor - descend to reach ground-level people/items)"),
             "hp": p.get("hp"), "max_hp": p.get("max_hp"),
             "hp_pct": (round(100 * p.get("hp", 0) / p["max_hp"])
                        if p.get("max_hp") else None),
