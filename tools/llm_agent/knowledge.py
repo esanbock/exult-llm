@@ -47,6 +47,12 @@ class KnowledgeBase:
         # landmarks) as name -> {name, tx, ty, kind, notes}. Grows over time so
         # the agent can navigate a large multi-region world.
         self.places: dict[str, dict] = {}
+        # Coarse fog-of-war of explored area: a set of visited CELLS (tiles
+        # rounded to a grid) keyed per map region, so it stays compact even
+        # across the whole world and naturally handles many towns/dungeons.
+        # Stored as {region_key: [ "cx,cy", ... ]}. Cell size = MAP_CELL tiles.
+        self.MAP_CELL = 8
+        self.visited_cells: dict[str, list] = {}
         # Rolling window of recent conversation exchanges (kept fairly long -
         # dialogue carries the story/clues). Each: {"npc":str,"said":str} or
         # {"me":str} for the answer the agent chose.
@@ -91,6 +97,7 @@ class KnowledgeBase:
                 "action_history": self.action_history,
                 "current_quest": self.current_quest,
                 "turn_counter": self.turn_counter,
+                "visited_cells": self.visited_cells,
                 "places": self.places,
                 "hints": self.hints,
                 "observations": self.observations,
@@ -115,6 +122,7 @@ class KnowledgeBase:
             kb.dialogue_history = list(data.get("dialogue_history", []))
             kb.action_history = list(data.get("action_history", []))
             kb.current_quest = data.get("current_quest") or None
+            kb.visited_cells = dict(data.get("visited_cells", {}) or {})
             kb.turn_counter = int(data.get("turn_counter", 0) or 0)
             # Safety: never let the counter be BELOW the highest turn already in
             # the action log (guarantees monotonic increase even if the saved
@@ -1104,6 +1112,55 @@ class KnowledgeBase:
                          "dx": dx, "dy": dy}))
         out.sort(key=lambda t: t[0])
         return [o for _, o in out[:limit]]
+
+    def record_visit(self, tx: int, ty: int, region: str = "world") -> None:
+        """Mark the avatar's current cell as explored (coarse fog-of-war). Cheap
+        and bounded: rounds to MAP_CELL-sized cells and stores per region."""
+        cx, cy = int(tx) // self.MAP_CELL, int(ty) // self.MAP_CELL
+        cells = self.visited_cells.setdefault(region, [])
+        key = f"{cx},{cy}"
+        if key not in cells:
+            cells.append(key)
+            if len(cells) > 4000:      # keep it bounded across a huge world
+                del cells[:len(cells) - 4000]
+
+    def render_area_map(self, here_tx: int, here_ty: int, region: str = "world",
+                        radius_cells: int = 9) -> str:
+        """Town-scale ASCII overview centered on the avatar: '.' explored cell,
+        ' ' unexplored, '@' you, and single letters for known landmarks (legend
+        below). Coarse (each cell = MAP_CELL tiles) so it shows the whole town/
+        area at a glance for orientation - complements the fine screen grid."""
+        cell = self.MAP_CELL
+        hcx, hcy = here_tx // cell, here_ty // cell
+        visited = set(self.visited_cells.get(region, []))
+        # Assign a letter to each known place; build a cell->char overlay.
+        overlay = {}
+        legend = []
+        used = set()
+        for r in self.places.values():
+            nm = r.get("name", "")
+            pcx, pcy = r.get("tx", 0) // cell, r.get("ty", 0) // cell
+            ch = next((c.upper() for c in nm if c.isalpha() and c.upper() not in used), "*")
+            used.add(ch)
+            overlay[(pcx, pcy)] = ch
+            legend.append(f"{ch}={nm}")
+        rows = []
+        for cy in range(hcy - radius_cells, hcy + radius_cells + 1):
+            line = []
+            for cx in range(hcx - radius_cells, hcx + radius_cells + 1):
+                if cx == hcx and cy == hcy:
+                    line.append("@")
+                elif (cx, cy) in overlay:
+                    line.append(overlay[(cx, cy)])
+                elif f"{cx},{cy}" in visited:
+                    line.append(".")
+                else:
+                    line.append(" ")
+            rows.append("".join(line))
+        grid = "\n".join(rows)
+        return (f"AREA MAP (each cell ~{cell} tiles; @ = you at ({here_tx},{here_ty}); "
+                f"'.' = explored, blank = unexplored):\n{grid}\n"
+                + ("landmarks: " + "  ".join(legend) if legend else ""))
 
     # ----- automatic knowledge capture -----------------------------------
     # Phrases that suggest an NPC is giving a task/lead worth remembering as a

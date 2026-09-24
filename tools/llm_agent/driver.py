@@ -409,6 +409,12 @@ periodically). For finer detail you have the recall/quests tools.
             nearby person with what you know about them, items on the ground,
             doors/exits, terrain features). params: none. Use it when you enter
             a new area or want to understand a scene before acting.
+  map     - See a TOWN-SCALE overview map: where you are, the AREA you've
+            EXPLORED so far (fog-of-war), and labeled landmarks (stables,
+            fortress, shops...). params: none. Use it to ORIENT yourself
+            relative to the whole town - e.g. to head toward an unexplored
+            direction or back to a known landmark. Complements the fine screen
+            grid (which only shows a small radius around you).
   recall  - Retrieve your FULL saved knowledge about a character OR a TOPIC.
             params: {"name":"<character or topic>"} (fuzzy). For a person you get
             their transcript, topics you asked, and topics NOT yet asked. For a
@@ -795,6 +801,9 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     if state.get("quest_detail") is not None:
         # Full quest log the agent asked to review this turn (notes/prereqs).
         view["quest_detail"] = state["quest_detail"]
+    if state.get("area_map") is not None:
+        # Town-scale explored-area overview the agent requested via the map tool.
+        view["area_map"] = state["area_map"]
     # Pretty-print (indent=2) so lists like action_log render ONE ITEM PER LINE
     # and the whole state is human/LLM-readable, not a run-on blob. We have
     # context headroom (typically ~30-40%), so the extra whitespace is worth the
@@ -1217,6 +1226,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # with this counter.
     kb.turn_counter = getattr(kb, "turn_counter", 0) + 1
     kb.current_turn = kb.turn_counter
+    # Fog-of-war: mark the avatar's current cell explored (for the map tool).
+    _pp0 = state.get("player") or {}
+    if _pp0.get("tx") is not None:
+        kb.record_visit(_pp0["tx"], _pp0["ty"],
+                        region=str(state.get("map_num", "world")))
     if window.available:
         window.update_turn(kb.turn_counter)   # persistent monotonic turn, not per-run step
         window.set_map(state.get("grid") or "(no map)")
@@ -1503,6 +1517,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _qd = session.pop("quest_detail", None)
         if _qd is not None:
             state["quest_detail"] = _qd
+        _am = session.pop("area_map", None)
+        if _am is not None:
+            state["area_map"] = _am
         # Time/progress awareness: give the model the turn number and how many
         # recent turns it has pursued the SAME goal, so it can notice it is
         # stuck in a cycle and change tack (self-sufficiency, not steering).
@@ -1725,6 +1742,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         print(f"[{step:03d}] quests: reviewed full log")
         action = {"type": "wait"}
         reason = "(reviewed my quest log)"
+
+    # MAP tool: a town-scale overview of where you are and what you've explored,
+    # with labeled landmarks - for orientation relative to the whole town/area
+    # (the screen grid only shows a small radius). Shown next turn as area_map.
+    if isinstance(action, dict) and action.get("type") == "map":
+        _pp = state.get("player") or {}
+        session["area_map"] = kb.render_area_map(
+            _pp.get("tx", 0), _pp.get("ty", 0),
+            region=str(state.get("map_num", "world")))
+        kb.record_action("checked the area map")
+        if window.available:
+            window.set_action("[map] reviewed the area map")
+        print(f"[{step:03d}] map: rendered area overview")
+        action = {"type": "wait"}
+        reason = "(checked the area map to orient myself)"
 
     if isinstance(action, dict) and action.get("type") == "recall":
         who = str(action.get("name") or action.get("npc") or action.get("topic") or "").strip()
