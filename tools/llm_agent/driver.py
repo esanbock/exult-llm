@@ -2624,6 +2624,27 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             kb.deprioritize_matching_quest("fortress descend stairs wall ground")
             print(f"[{step:03d}] escape-latch: ARMED -> {session['escape_target']}")
 
+    # Arm the latch when recent reasoning is DOMINATED by descend/fortress/
+    # stairs (the fixation), regardless of exact box size - the avatar may do a
+    # WIDE oscillation (fortress<->start) that a tiny-box check misses.
+    _rh6 = (session.get("reason_hist") or [])[-6:]
+    _fixate = sum(1 for r in _rh6
+                  if "descend" in r or "fortress" in r or "stairs" in r or "climb" in r)
+    if _fixate >= 4 and session.get("escape_latch", 0) == 0:
+        _pp = state.get("player") or {}
+        _far = None
+        for _pl in (kb.places_view(_pp.get("tx", 0), _pp.get("ty", 0), limit=12) if kb else []):
+            _nm = (_pl.get("name", "") or "").lower()
+            if ("fortress" in _nm or "wall" in _nm or "stair" in _nm):
+                continue   # don't escape TO the fortress
+            if abs(_pl.get("dx", 0)) + abs(_pl.get("dy", 0)) >= 10:
+                _far = (_pp.get("tx", 0) + _pl.get("dx", 0), _pp.get("ty", 0) + _pl.get("dy", 0))
+                break
+        session["escape_target"] = _far or (1065, 2180)
+        session["escape_latch"] = 12
+        kb.deprioritize_matching_quest("fortress descend stairs wall ground climb")
+        print(f"[{step:03d}] escape-latch: ARMED (fixation) -> {session['escape_target']}")
+
     _at_ground = _cur_tz_now == 0
     _wants_descend = any(w in (reason or "").lower()
                          for w in ("descend", "climb down", "go down", "down to ground",
