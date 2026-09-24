@@ -724,11 +724,12 @@ class KnowledgeBase:
         return self.dialogue_history[-limit:]
 
     # ----- action history (temporal memory - one entry per action) -------
-    # Wider window than before: this is the agent's TEMPORAL MEMORY of what it
-    # has been doing. A generous window (we have context to spare) + a turn
-    # number + the quest it was working on per entry lets the agent SEE a
-    # fruitless loop over time and switch strategy itself.
-    ACTION_WINDOW = 40
+    # Wide window: this is the agent's TEMPORAL MEMORY of what it has been
+    # doing. We have lots of context to spare (~35-40% used), so keep a LONG
+    # horizon (150 entries) + a turn number + the quest per entry, so the agent
+    # can see even LONG-PERIOD loops (e.g. cycling the same witnesses over dozens
+    # of turns) and switch strategy itself.
+    ACTION_WINDOW = 150
 
     def record_action(self, text: str, turn: int = -1) -> None:
         if not text:
@@ -750,7 +751,7 @@ class KnowledgeBase:
             {"turn": int(turn), "quest": self.current_quest, "text": text})
         self.action_history = self.action_history[-self.ACTION_WINDOW:]
 
-    def action_view(self, limit: int = 40) -> list:
+    def action_view(self, limit: int = 150) -> list:
         """Return the action log as formatted one-per-line strings with the game
         turn and the quest being worked, so the agent has a clean temporal
         record. Marks quest SWITCHES with a '>>> now working:' line so a change

@@ -726,7 +726,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         dh = kb.dialogue_view(dlg_n)
         if dh:
             view["recent_dialogue"] = dh
-        ah = kb.action_view(max(act_n, 24))   # temporal memory: keep it generous
+        ah = kb.action_view(150)   # long temporal memory: we have context to spare
         if ah:
             view["action_log"] = ah
         if kb.current_quest:
