@@ -337,6 +337,25 @@ class KnowledgeBase:
         """Mark a quest resolved (done). Accepts id or fuzzy title."""
         return self.update_quest(qid, status="done")
 
+    def drop_quest(self, qid: str) -> bool:
+        """REMOVE a quest entirely (for the LLM to consolidate duplicates or
+        discard an obsolete goal). Distinct from resolve (which means completed).
+        Accepts id or fuzzy title; returns True if one was removed."""
+        if not qid:
+            return False
+        key = None
+        if qid in self.quests:
+            key = qid
+        else:
+            for cid, cand in self.quests.items():
+                if _slug(cand.get("title", "")) == _slug(qid):
+                    key = cid
+                    break
+        if key is not None:
+            del self.quests[key]
+            return True
+        return False
+
     def auto_resolve_talk_quests(self, npc: str) -> list:
         """Conservatively resolve open quests that are simply 'speak to / talk to
         / ask <npc>' once we've actually had a substantive conversation with that

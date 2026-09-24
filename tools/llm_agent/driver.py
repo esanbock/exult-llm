@@ -124,8 +124,15 @@ goal without spending your action - it does not use up your turn:
 "new_quest" can be one quest object or a list. Break a big goal into smaller
 sub-quests (use depends_on with the parent quest's id, which is its title
 lower-cased with underscores). To mark a goal finished, add "resolve_quest":
-"<quest id or title>". Capture a quest whenever your reasoning names something
-you intend to do - keep your quest log current and prioritized.
+"<quest id or title>". To REMOVE a redundant, duplicate, or obsolete quest that
+you did NOT actually complete, add "drop_quest": "<title or id>" (or a list) -
+this is how you CONSOLIDATE and clean up your log.
+
+YOU OWN AND CURATE YOUR QUEST LOG. Whenever you ADD or COMPLETE a quest, briefly
+RE-EVALUATE the WHOLE list (it's all in "quests"): merge or drop_quest any
+duplicates/near-duplicates, drop goals that no longer make sense, and re-set
+priorities so the most important open quest is P1. Keep the list lean and
+accurate - a tidy quest log is your plan; a cluttered one wastes your focus.
 
 DECLARE YOUR FOCUS: add "set_current_quest": "<quest title>" whenever you START
 or SWITCH the quest you are actively working on. This is shown back to you as
@@ -1694,6 +1701,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 kb.resolve_quest(_rq)
                 kb.reset_talk_gate()
                 print(f"[{step:03d}] inline resolve_quest: {_rq}")
+            # Inline drop_quest: REMOVE a redundant/obsolete quest (not the same
+            # as resolving - use this to consolidate duplicates or discard a goal
+            # that's no longer relevant). Accepts a title/id or a list.
+            _dq = _obj.get("drop_quest") or _obj.get("remove_quest")
+            _dq_items = _dq if isinstance(_dq, list) else ([_dq] if _dq else [])
+            for _d in _dq_items:
+                if isinstance(_d, str) and _d.strip():
+                    if kb.drop_quest(_d):
+                        print(f"[{step:03d}] inline drop_quest: {_d}")
             # Inline LLM-authored TOPICS: {"topic":"Fellowship","note":"..."} or a
             # list. Topics now come ONLY from the LLM, so the topic list shows
             # its own thinking accumulating over time.
