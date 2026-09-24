@@ -488,6 +488,42 @@ class KnowledgeBase:
         rec["notes"].append(note)
         rec["notes"] = rec["notes"][-20:]
 
+    def npc_notes_view(self, limit_npcs: int = 12, notes_each: int = 6) -> list:
+        """Compact per-NPC notes for the ALWAYS-ON context, so the stateless
+        agent actually SEES its accumulated notes (and can decide to consolidate
+        them) instead of relying on a recall tool it rarely calls. Most-recently-
+        noted NPCs first; a few notes each (recall gives full detail)."""
+        items = sorted(self.npcs.items(),
+                       key=lambda kv: -kv[1].get("times_talked", 0))
+        out = []
+        for name, rec in items[:limit_npcs]:
+            notes = rec.get("notes") or []
+            if not notes:
+                continue
+            out.append({"npc": name, "notes": notes[-notes_each:],
+                        "total_notes": len(notes)})
+        return out
+
+    def consolidate_notes(self, name: str, text: str) -> bool:
+        """Replace an NPC's notes with a cleaned/merged version the LLM wrote,
+        so it can PRUNE duplicates and keep only what matters. Accepts a string
+        (newline- or '; '-separated) or a list. Returns True if applied."""
+        rec = self.npcs.get(name)
+        if rec is None:
+            # fuzzy match
+            for nm, r in self.npcs.items():
+                if nm.lower() == (name or "").lower():
+                    rec, name = r, nm
+                    break
+        if rec is None:
+            return False
+        if isinstance(text, list):
+            notes = [str(t).strip() for t in text if str(t).strip()]
+        else:
+            notes = [ln.strip() for ln in re.split(r"[\n;]", str(text)) if ln.strip()]
+        rec["notes"] = notes[-20:]
+        return True
+
     def mark_talked(self, name: str) -> None:
         if not name:
             return
@@ -722,13 +758,14 @@ class KnowledgeBase:
         out = []
         for r in recs[:limit]:
             offered = r.get("topics_offered", [])
-            asked = set(r.get("topics_asked", []))
+            _asked_n = {str(a).strip().lower() for a in r.get("topics_asked", [])}
             out.append({
                 "name": r.get("name", "?"),
                 "times_talked": r.get("times_talked", 0),
                 "transcript": r.get("transcript", [])[-40:],
                 "topics_asked": r.get("topics_asked", []),
-                "topics_unasked": [t for t in offered if t not in asked],
+                "topics_unasked": [t for t in offered
+                                   if str(t).strip().lower() not in _asked_n],
                 "notes": r.get("notes", []),
             })
         return out
@@ -758,14 +795,15 @@ class KnowledgeBase:
         if rec is None:
             return {"name": npc, "known": False}
         offered = rec.get("topics_offered", [])
-        asked = set(rec.get("topics_asked", []))
+        _asked_norm = {str(a).strip().lower() for a in rec.get("topics_asked", [])}
         return {
             "name": rec.get("name", npc),
             "known": True,
             "times_talked": rec.get("times_talked", 0),
             "transcript": rec.get("transcript", [])[-60:],
             "topics_asked": rec.get("topics_asked", []),
-            "topics_unasked": [t for t in offered if t not in asked],
+            "topics_unasked": [t for t in offered
+                               if str(t).strip().lower() not in _asked_norm],
             "notes": rec.get("notes", [])[-20:],
         }
 

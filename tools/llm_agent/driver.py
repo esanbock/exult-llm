@@ -319,10 +319,13 @@ periodically). For finer detail you have the recall/quests tools.
       - Each quest: {id, title, priority, status, npc (who it involves),
         depends_on[], prereqs_unmet[]}
       - A quest with "npc" set can be pursued by going to/talking to that NPC.
-  npc_notes: what you have recorded about nearby/known NPCs (their leads, wants),
-      including "last_seen":{tx,ty} - the tile where you most recently saw each
-      person. To return to someone (e.g. a companion to recruit after progress),
-      "goto" their name or their last_seen coordinates.
+  npc_notes: YOUR recorded notes about each NPC (their leads, wants, what they
+      told you), shown ALWAYS so you can review what you've learned. REVIEW these
+      before deciding what to do or re-talking someone. If an NPC's notes get
+      long or repetitive, CONSOLIDATE them: add "consolidate_notes":{"npc":
+      "<name>","notes":"<cleaned, merged notes>"} to replace them with a tidy
+      version (prune duplicates, keep what matters). "recall" gives the full
+      transcript + asked/unasked topics for one person on demand.
   known_places: your MENTAL MAP of discovered locations (landmarks, buildings,
       gates, shops, etc.), nearest first, each {name, kind, dx, dy}. You can
       "goto" any of these by name to travel back to them - useful for returning
@@ -768,6 +771,14 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         topics = kb.topics_view(8 if lvl >= 2 else 16)
         if topics:
             view["known_topics"] = topics
+        # NPC NOTES always in context (compact): the agent wasn't reviewing its
+        # notes via the recall tool, just accumulating them. Surface them so it
+        # SEES what it has learned about each person and can consolidate. Fewer
+        # under context pressure.
+        _nn = kb.npc_notes_view(limit_npcs=(8 if lvl >= 2 else 12),
+                                notes_each=(4 if lvl >= 2 else 6))
+        if _nn:
+            view["npc_notes"] = _nn
         # Spots already searched and empty - stated IMPERATIVELY so the agent
         # stops returning to the same looted body/container/bag.
         se = kb.searched_empty_view(10)
@@ -1246,6 +1257,26 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if _pp0.get("tx") is not None:
         kb.record_visit(_pp0["tx"], _pp0["ty"],
                         region=str(state.get("map_num", "world")))
+    # Stat-change logging: notice hp/food/gold changes turn-to-turn and record
+    # them in the action log so the stateless agent KNOWS an event happened
+    # (took damage, got hungry, gained/spent money) rather than only seeing the
+    # new number in isolation.
+    _prev_stats = session.get("prev_stats") or {}
+    for _k, _label, _dir in (("hp", "HP", "dmg"), ("food", "food", "hunger"),
+                             ("gold", "gold", "gold")):
+        _cur = _pp0.get(_k)
+        _old = _prev_stats.get(_k)
+        if isinstance(_cur, int) and isinstance(_old, int) and _cur != _old:
+            _delta = _cur - _old
+            if _k == "gold":
+                kb.record_action(f"gold {'+' if _delta>0 else ''}{_delta} (now {_cur})")
+            elif _delta < 0:  # hp/food dropping is the notable event
+                _why = "took damage" if _k == "hp" else "got hungrier"
+                kb.record_action(f"{_label} {_old}->{_cur} ({_why})")
+            elif _k == "hp" and _delta > 0:
+                kb.record_action(f"HP {_old}->{_cur} (healed)")
+    session["prev_stats"] = {"hp": _pp0.get("hp"), "food": _pp0.get("food"),
+                             "gold": _pp0.get("gold")}
     if window.available:
         window.update_turn(kb.turn_counter)   # persistent monotonic turn, not per-run step
         window.set_map(state.get("grid") or "(no map)")
@@ -1718,6 +1749,16 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 if isinstance(_d, str) and _d.strip():
                     if kb.drop_quest(_d):
                         print(f"[{step:03d}] inline drop_quest: {_d}")
+            # Inline consolidate_notes: the LLM rewrites an NPC's notes to a
+            # pruned/merged version. {"consolidate_notes": {"npc": "...",
+            # "notes": "..."|[...]}} or a list of such. Lets it clean up notes it
+            # only ever appended to.
+            _cn = _obj.get("consolidate_notes")
+            _cn_items = _cn if isinstance(_cn, list) else ([_cn] if _cn else [])
+            for _c in _cn_items:
+                if isinstance(_c, dict) and _c.get("npc"):
+                    if kb.consolidate_notes(str(_c["npc"]), _c.get("notes", "")):
+                        print(f"[{step:03d}] inline consolidate_notes: {_c['npc']}")
             # Inline LLM-authored TOPICS: {"topic":"Fellowship","note":"..."} or a
             # list. Topics now come ONLY from the LLM, so the topic list shows
             # its own thinking accumulating over time.
