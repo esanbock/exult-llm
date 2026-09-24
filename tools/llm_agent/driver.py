@@ -505,6 +505,18 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     dlg_n, act_n, obj_n, near_n, place_n = _TIERS[idx]
     lvl = max(0, int(squeeze))  # only positive levels trim durable-view caps
     p = state.get("player") or {}
+    # Transient-zero guard: the engine occasionally reports hp:0 for a frame
+    # (e.g. right after a save loads or during a schedule transition) even when
+    # the avatar is alive and full. A lone hp:0 with dead:false made the model
+    # panic and hunt a healer. If hp reads 0 but we're NOT dead, treat it as the
+    # last-known-good hp (or max_hp) so the model isn't misled by a glitch.
+    _hpz = p.get("hp")
+    if _hpz == 0 and not p.get("dead"):
+        _lastgood = summarize_state._last_good_hp if hasattr(summarize_state, "_last_good_hp") else None
+        p = dict(p)
+        p["hp"] = _lastgood if _lastgood else (p.get("max_hp") or 1)
+    elif isinstance(_hpz, int) and _hpz > 0:
+        summarize_state._last_good_hp = _hpz
     nearby = state.get("nearby") or []
     objects = state.get("objects") or []
     # Only surface dialog fields when a conversation is actually open, so the
