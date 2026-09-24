@@ -382,6 +382,13 @@ class ThoughtsWindow:
         except queue.Empty:
             pass
         if self._root is not None:
+            # Save geometry PERIODICALLY (not just on close): the driver process
+            # is often force-killed on relaunch, which skips the close handler,
+            # so persist the current size/position every few seconds while
+            # running to survive a hard kill.
+            self._drain_ticks = getattr(self, "_drain_ticks", 0) + 1
+            if self._drain_ticks % 30 == 0:   # ~every 3s (drain runs each 100ms)
+                self._save_geometry()
             self._root.after(100, self._drain)
 
     def mainloop(self) -> None:
