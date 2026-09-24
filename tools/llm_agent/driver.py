@@ -355,7 +355,9 @@ periodically). For finer detail you have the recall/quests tools.
   talk    - START a conversation with a nearby NPC. params: {"name": "<NPC name>"}
             This is the ONLY way to begin dialog. Walking next to an NPC does
             NOT start dialog. You do NOT need to be adjacent - it finds the
-            named NPC in your view and opens the conversation. The NPC must be
+            named NPC in your view and opens the conversation. But PREFER to be
+            CLOSE to the NPC first (goto them, within a few tiles) - it's more
+            reliable and natural, though not strictly required. The NPC must be
             AWAKE (a "sleeping" condition NPC won't respond - wait_until morning).
             Works for townspeople; your own party is in "party" (nothing new).
   open    - Open (or close) the nearest door within a few tiles. params: none.
@@ -2495,10 +2497,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # remembers what IT said, not just what NPCs said).
     if isinstance(action, dict) and action.get("type") == "answer":
         idx = action.get("index")
+        _chosen = None
         if isinstance(idx, int) and 0 <= idx < len(answers):
-            kb.record_my_reply(answers[idx])
+            _chosen = answers[idx]
+            kb.record_my_reply(_chosen)
         elif action.get("text"):
-            kb.record_my_reply(str(action.get("text")))
+            _chosen = str(action.get("text"))
+            kb.record_my_reply(_chosen)
+        if _chosen:
+            # Log the actual answer TEXT (not the opaque index) to the temporal
+            # action log, and stash it so the GUI turn display shows it too.
+            kb.record_action(f"answered: \"{_chosen[:60]}\"")
+            session["answer_text"] = _chosen
 
     # If the model asks to "goto" a named target that isn't visible but IS a
     # remembered place or NPC, resolve it to coordinates from the mental map.
@@ -2934,10 +2944,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         elif result.get("ok") and _pname:
             fails.pop(_pname, None)
     if window.available:
-        window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
-
-    # Explicit "you bumped into something" feedback: if a move reported it was
-    # blocked, tell the model next turn and note it (so it tries another way).
+        _disp = dict(action) if isinstance(action, dict) else action
+        # Show the chosen ANSWER TEXT instead of the opaque index.
+        if isinstance(_disp, dict) and _disp.get("type") == "answer" and session.get("answer_text"):
+            _disp = {"type": "answer", "chose": session["answer_text"]}
+        window.set_action(json.dumps(_disp) + "\n\n-> " + json.dumps(result))
+        session.pop("answer_text", None)
     if (isinstance(action, dict) and action.get("type") == "move"
             and isinstance(result, dict) and result.get("blocked")):
         d = action.get("dir", "")
