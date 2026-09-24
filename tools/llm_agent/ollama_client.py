@@ -19,13 +19,16 @@ class OllamaClient:
         host: str = "http://127.0.0.1:11434",
         timeout: float = 120.0,
         num_ctx: int = 8192,
+        allow_think: bool = False,
     ):
         self.model = model
         self.host = host.rstrip("/")
         self.timeout = timeout
-        # IMPORTANT: Ollama defaults num_ctx to 2048, which would silently
-        # TRUNCATE our multi-thousand-token prompt (dropping tool/policy text so
-        # the model never sees it). Set it large enough to hold the whole prompt.
+        # When True, do NOT disable a reasoning model's thinking channel (useful
+        # for TROUBLESHOOTING - the thinking shows WHY the model chose an action;
+        # captured to raw_comms.log). Off by default for stability/speed (qwen's
+        # verbose thinking can starve the JSON reply).
+        self.allow_think = allow_think
         self.num_ctx = num_ctx
 
     def chat(
@@ -112,11 +115,11 @@ class OllamaClient:
             #    triggers a repeat-loop abort); instead give num_predict headroom
             #    so thinking + JSON both fit.
             "options": {"temperature": temperature, "num_ctx": self.num_ctx,
-                        "num_predict": 2048},
+                        "num_predict": 4096 if self.allow_think else 2048},
         }
         _ml = (self.model or "").lower()
         _is_qwen = _ml.startswith("qwen") or "qwen3" in _ml
-        if _is_qwen:
+        if _is_qwen and not self.allow_think:
             payload["think"] = False
         if force_json:
             payload["format"] = "json"
@@ -130,6 +133,7 @@ class OllamaClient:
         rt = int(body.get("eval_count", 0) or 0)
         return {
             "content": body.get("message", {}).get("content", ""),
+            "thinking": body.get("message", {}).get("thinking", "") or "",
             "prompt_tokens": pt,
             "response_tokens": rt,
             "total_tokens": pt + rt,

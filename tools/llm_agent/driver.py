@@ -391,6 +391,10 @@ periodically). For finer detail you have the recall/quests tools.
   equip   - Wear/wield an item you have (or one in a nearby container): it goes
             into its correct slot (weapon, head, torso, legs, feet, shield,
             belt, amulet, cloak, gloves, ring). params: {"name":"<item>"}.
+  unequip - Take a worn/wielded item OFF and put it back in your pack.
+            params: {"name":"<item>"}.
+  drop    - Drop a carried or worn item on the ground at your feet (e.g. to get
+            rid of junk or free up space). params: {"name":"<item>"}.
   look    - Get a DETAILED description of your surroundings (setting, every
             nearby person with what you know about them, items on the ground,
             doors/exits, terrain features). params: none. Use it when you enter
@@ -402,7 +406,12 @@ periodically). For finer detail you have the recall/quests tools.
             line any NPC told you about it and who mentioned it. Result appears
             next turn as "recalled". Use it to remember instructions (e.g. the
             Mayor telling you to find someone) and to understand recurring themes
-            before deciding what to do.
+            before deciding what to do. You can "recall" a character AT ANY TIME
+            to see their past transcript and which topics you've already asked
+            vs not - handy before (re)talking to them so you don't waste turns
+            re-asking covered topics. (This is a guide, not a rule: NPCs may
+            offer NEW topics as quests progress, so re-visiting someone can still
+            be worthwhile - use your judgement.)
   quests  - Review your FULL quest log with notes and prerequisites. params:
             none. The always-on "quests" field is a COMPACT list (titles only);
             use this tool when planning to see each quest's notes/details.
@@ -726,7 +735,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         dh = kb.dialogue_view(dlg_n)
         if dh:
             view["recent_dialogue"] = dh
-        ah = kb.action_view(150)   # long temporal memory: we have context to spare
+        ah = kb.action_view(300)   # long temporal memory: we have context to spare
         if ah:
             view["action_log"] = ah
         if kb.current_quest:
@@ -2966,7 +2975,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # crowded out.
     atype = action.get("type") if isinstance(action, dict) else None
     _ok = result.get("ok") if isinstance(result, dict) else None
-    if atype in ("talk", "open", "pickup", "search", "combat", "feed", "take", "read"):
+    if atype in ("talk", "open", "pickup", "search", "combat", "feed", "take", "read",
+                 "equip", "unequip", "drop"):
         p0 = state.get("player") or {}
         detail = action.get("name") or action.get("dir") or ""
         outcome = ""
@@ -2993,6 +3003,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 outcome = " -> nothing to search here"
         elif atype in ("pickup", "take"):
             outcome = f" -> got {result.get('item')}" if _ok else " -> could not take"
+        elif atype == "equip":
+            outcome = (f" -> equipped {result.get('item') or action.get('name')}"
+                       if _ok else " -> could not equip")
+        elif atype == "unequip":
+            outcome = (f" -> removed {result.get('item') or action.get('name')}"
+                       if _ok else " -> could not unequip")
+        elif atype == "drop":
+            outcome = (f" -> dropped {result.get('item') or action.get('name')}"
+                       if _ok else " -> could not drop")
         elif atype == "talk":
             outcome = " (conversed)" if _ok else " -> could not talk"
         elif atype == "read":
@@ -3133,12 +3152,16 @@ def main() -> int:
                     help="Ollama context window (tokens). Must exceed the prompt "
                          "size or the prompt is silently truncated (Ollama default "
                          "is only 2048).")
+    ap.add_argument("--think", action="store_true",
+                    help="Keep the reasoning model's thinking channel ON (for "
+                         "troubleshooting - captured to raw_comms.log). Off by "
+                         "default for stability/speed.")
     args = ap.parse_args()
 
     ollama = None
     if not args.dry_run:
         ollama = OllamaClient(model=args.model, host=args.ollama_host,
-                              num_ctx=args.num_ctx)
+                              num_ctx=args.num_ctx, allow_think=args.think)
         if not ollama.is_up():
             print(
                 f"[!] Ollama not reachable at {args.ollama_host}. "

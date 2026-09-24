@@ -1646,6 +1646,62 @@ namespace LLM_agent {
 			return "{\"ok\":false,\"error\":\"could not carry '" + json_escape(nm) + "'\"}";
 		}
 
+		if (type == "drop" || type == "unequip") {
+			// drop: put a carried/worn item on the ground at your feet.
+			// unequip: move a worn item back into your pack (not the ground).
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			string want;
+			if (!get_string(action_json, "name", want)) {
+				return "{\"ok\":false,\"error\":\"missing name\"}";
+			}
+			std::string wlow = want;
+			std::transform(wlow.begin(), wlow.end(), wlow.begin(), ::tolower);
+			// Search the avatar's own inventory tree (worn + carried + bags).
+			Game_object* found = nullptr;
+			{
+				std::vector<Container_game_object*> stk{av};
+				while (!stk.empty() && !found) {
+					Container_game_object* c = stk.back();
+					stk.pop_back();
+					Object_iterator it(c->get_objects());
+					Game_object* inner;
+					while ((inner = it.get_next()) != nullptr) {
+						std::string l = inner->get_name();
+						std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+						if (!l.empty() && l.find(wlow) != std::string::npos) {
+							found = inner;
+							break;
+						}
+						if (Container_game_object* ic = inner->as_container()) {
+							stk.push_back(ic);
+						}
+					}
+				}
+			}
+			if (!found) {
+				return "{\"ok\":false,\"error\":\"you are not carrying '"
+					   + json_escape(want) + "'\"}";
+			}
+			const std::string nm = found->get_name();
+			const Tile_coord   at = av->get_tile();
+			Game_object_shared keep;
+			found->remove_this(&keep);   // detach (also un-readies if worn)
+			if (type == "unequip") {
+				// Put it back into the pack rather than the ground.
+				if (av->add(found, false, true)) {
+					return "{\"ok\":true,\"did\":\"unequip\",\"item\":\""
+						   + json_escape(nm) + "\"}";
+				}
+			}
+			// drop (or unequip fallback if pack is full): place at feet.
+			found->set_invalid();
+			found->move(at.tx, at.ty, at.tz);
+			return "{\"ok\":true,\"did\":\"drop\",\"item\":\"" + json_escape(nm) + "\"}";
+		}
+
 		if (type == "goto") {
 			// Pathfind (A*) to a destination: an explicit tile {tx,ty}, or the
 			// nearest NPC/object matching {name}.  Routes around walls and
