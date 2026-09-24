@@ -1693,6 +1693,40 @@ namespace LLM_agent {
 			if (!have_dest) {
 				return "{\"ok\":false,\"error\":\"no destination (give tx/ty or a visible name)\"}";
 			}
+			// Z-LAYER RESOLUTION: goto defaults the destination to the avatar's
+			// current Z. But a stairs/wall-top tile is only WALKABLE at a higher
+			// Z - targeting it at ground Z means pathing to "under the stairs"
+			// (always blocked, hence endless partial-goto oscillation). If the
+			// destination tile is blocked at the current Z but there IS a
+			// standable surface higher up (a step/roof/walkway), retarget the
+			// goto to that higher Z so the pathfinder climbs to it.
+			{
+				Game_map* gmap = gwin->get_map();
+				Map_chunk* dchunk = gmap ? gmap->get_chunk(
+						dest.tx / c_tiles_per_chunk, dest.ty / c_tiles_per_chunk) : nullptr;
+				if (dchunk) {
+					dchunk->setup_cache();
+					const int lx = dest.tx % c_tiles_per_chunk;
+					const int ly = dest.ty % c_tiles_per_chunk;
+					int new_lift = dest.tz;
+					const bool blk = dchunk->is_blocked(
+							2, dest.tz, lx, ly, new_lift, av->get_type_flags(),
+							1 /*max_drop*/, 6 /*max_rise: allow climbing stairs*/);
+					if (blk) {
+						// Blocked at this Z; probe upward for a standable surface.
+						for (int z = dest.tz + 1; z <= dest.tz + 6; ++z) {
+							int nl = z;
+							if (!dchunk->is_blocked(2, z, lx, ly, nl,
+									av->get_type_flags(), 1, 0)) {
+								dest.tz = z;
+								break;
+							}
+						}
+					} else if (new_lift != dest.tz) {
+						dest.tz = new_lift;   // stepping up onto a surface
+					}
+				}
+			}
 			long speed = 200;
 			get_int(action_json, "speed", speed);
 			if (av->walk_path_to_tile(dest, static_cast<int>(speed))) {
