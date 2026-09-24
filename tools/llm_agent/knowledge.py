@@ -492,7 +492,13 @@ class KnowledgeBase:
         """Compact per-NPC notes for the ALWAYS-ON context, so the stateless
         agent actually SEES its accumulated notes (and can decide to consolidate
         them) instead of relying on a recall tool it rarely calls. Most-recently-
-        noted NPCs first; a few notes each (recall gives full detail)."""
+        noted NPCs first. Within each NPC we keep the most recent notes BUT also
+        pull forward any 'standout clue' notes (questions an NPC asked, or lines
+        naming a quest-relevant thing) so a key early clue like 'what didst thou
+        find in the chest?' doesn't scroll out of view - mirroring how a human
+        player would remember a pointed question."""
+        _clue = ("?", "chest", "key", "password", "report", "find", "bring",
+                 "deed", "must", "need", "hidden", "secret", "look for", "seek")
         items = sorted(self.npcs.items(),
                        key=lambda kv: -kv[1].get("times_talked", 0))
         out = []
@@ -500,8 +506,12 @@ class KnowledgeBase:
             notes = rec.get("notes") or []
             if not notes:
                 continue
-            out.append({"npc": name, "notes": notes[-notes_each:],
-                        "total_notes": len(notes)})
+            recent = notes[-notes_each:]
+            # Pull forward earlier clue-bearing notes not already in 'recent'.
+            clues = [n for n in notes[:-notes_each]
+                     if any(w in n.lower() for w in _clue)]
+            shown = (clues[-3:] + recent) if clues else recent
+            out.append({"npc": name, "notes": shown, "total_notes": len(notes)})
         return out
 
     def consolidate_notes(self, name: str, text: str) -> bool:
