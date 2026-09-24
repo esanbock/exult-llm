@@ -2521,6 +2521,33 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     #     sufficient - INFORM it (don't seize its action) so it can decide, and
     #     only override as a last resort if it's truly stuck in an infinite
     #     loop despite being told. We never edit its memory to move it along.
+    #
+    # --- Already-at-ground guard: the agent repeatedly tries to "descend to
+    #     ground level" while it is ALREADY at ground (tz 0), gotoing a stairs
+    #     tile at the same elevation. This is a provably-false premise. Inform
+    #     it plainly and, after a couple of repeats, redirect to explore so it
+    #     stops the loop. (Purely correcting a false belief about a physical
+    #     fact - not choosing content for it.)
+    _at_ground = ((state.get("player") or {}).get("tz", 0) or 0) == 0
+    _wants_descend = any(w in (reason or "").lower()
+                         for w in ("descend", "climb down", "go down", "down to ground",
+                                   "to ground level", "down the stairs", "down the fortress"))
+    if _at_ground and _wants_descend:
+        n = session.get("false_descend", 0) + 1
+        session["false_descend"] = n
+        session["last_bump"] = (
+            "FACT: you are ALREADY at ground level (elevation 0). You cannot "
+            "'descend' - there is no lower level here. Stop trying to go down. "
+            "Whatever you're looking for at ground level, you are already on it - "
+            "walk to the PERSON or PLACE you want (e.g. the stables) directly.")
+        if n >= 2:
+            session["false_descend"] = 0
+            action = _explore_far(state, session, wedged)
+            reason = "(guard) already at ground; stop descending, explore"
+            print(f"[{step:03d}] ground-guard: already at tz0; redirect from descend")
+    elif not _wants_descend:
+        session["false_descend"] = 0
+
     if (isinstance(action, dict) and action.get("type") == "goto" and "tx" in action
             and not state.get("conversation_in_progress")):
         _tgt = (action.get("tx"), action.get("ty"))
