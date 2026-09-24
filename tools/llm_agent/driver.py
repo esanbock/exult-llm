@@ -739,7 +739,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     if state.get("quest_detail") is not None:
         # Full quest log the agent asked to review this turn (notes/prereqs).
         view["quest_detail"] = state["quest_detail"]
-    return json.dumps(view)
+    # Pretty-print (indent=2) so lists like action_log render ONE ITEM PER LINE
+    # and the whole state is human/LLM-readable, not a run-on blob. We have
+    # context headroom (typically ~30-40%), so the extra whitespace is worth the
+    # clarity - especially for the temporal action log.
+    return json.dumps(view, indent=2)
 
 def format_dialog(state: dict) -> str:
     """Human-readable dialog/characters/objects panel for the thoughts window."""
