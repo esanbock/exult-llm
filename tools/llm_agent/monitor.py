@@ -71,7 +71,12 @@ def main():
 
     # Diagnosis heuristics (advisory only).
     diag = []
-    if recent_distinct <= 3 and turns > 20:
+    # In-conversation turns are legitimately stationary; don't flag those as
+    # stuck. Count how many of the recent lines are dialogue-advancing.
+    convo_tail = sum(1 for l in lines[-40:]
+                     if "advancing NPC dialog" in l or "conv=True" in l
+                     or "answer" in l or "conversation" in l)
+    if recent_distinct <= 3 and turns > 20 and convo_tail < 8:
         diag.append("STUCK? <=3 distinct positions in last 20 turns")
     if parse_fails > max(3, turns * 0.05):
         diag.append(f"PARSE-FAILS high ({parse_fails})")
