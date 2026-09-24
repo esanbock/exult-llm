@@ -1594,6 +1594,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         hist.pop(0)
     if len(hist) >= 5 and len(set(hist)) == 1 and pos_now[0] is not None and not in_convo:
         wedged = True
+    # Range-based oscillation: positions bouncing within a tiny bounding box
+    # (e.g. a goto to an UNREACHABLE target that always stops 1-3 tiles short,
+    # ping-ponging 1086<->1088). stuck_count misses this (position changes each
+    # turn), so detect a small span over recent history and treat as wedged.
+    if (len(hist) >= 5 and pos_now[0] is not None and not in_convo):
+        _hx = [h[0] for h in hist if h[0] is not None]
+        _hy = [h[1] for h in hist if h[1] is not None]
+        if _hx and max(max(_hx) - min(_hx), max(_hy) - min(_hy)) <= 3:
+            wedged = True
     if not wedged:
         session["wedge_try"] = 0
 
@@ -1847,7 +1856,16 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _wr = session.setdefault("wedge_recent", [])
         _wr.append(_pp_now)
         del _wr[:-8]
-        _oscillating = len(_wr) >= 6 and len(set(_wr)) <= 2
+        # Range-based oscillation: if the last several positions all fall within
+        # a tiny bounding box (<=3 tiles across each axis), we're stuck bouncing
+        # even if that's 3-4 distinct tiles (a same-count check missed this).
+        if len(_wr) >= 6:
+            _xs = [t[0] for t in _wr]
+            _ys = [t[1] for t in _wr]
+            _span = max(max(_xs) - min(_xs), max(_ys) - min(_ys))
+            _oscillating = _span <= 3
+        else:
+            _oscillating = False
         _force_step = _oscillating
         if best and best_d >= 3 and _force_step:
             # We're trapped in a tiny pocket but the flood-fill sees a far open
