@@ -214,34 +214,26 @@ class KnowledgeBase:
         return False
 
     def deprioritize_matching_quest(self, goal_text: str) -> str:
-        """Lower the priority of the open quest whose title best matches a
-        recurring goal the agent keeps pursuing WITHOUT progress. The agent is
-        stateless and picks per-turn, but its stated goal text lets us find the
-        quest it's effectively 'on'. We don't delete it (it owns its quests) -
-        we just let futility DECAY its priority so it naturally moves to other
-        quests. Returns the demoted quest title, or ''."""
+        """Lower the priority of ALL open quests matching a recurring goal the
+        agent keeps pursuing WITHOUT progress. The agent is stateless and picks
+        per-turn, and it tends to spawn NEW near-duplicate quests for the same
+        stuck situation, so we demote the whole matching cluster (not just one)
+        and demote hard, letting futility push the fixation below productive
+        quests. We don't delete (it owns its quests). Returns a summary string."""
         gt = (goal_text or "").lower()
-        if not gt:
-            return ""
-        # Score open quests by word overlap with the goal text.
         gwords = set(re.findall(r"[a-z]{4,}", gt))
         if not gwords:
             return ""
-        best = None
-        best_score = 0
+        demoted = []
         for q in self.quests.values():
             if q.get("status") == "done":
                 continue
             tw = set(re.findall(r"[a-z]{4,}", (q.get("title", "") or "").lower()))
-            score = len(gwords & tw)
-            if score > best_score:
-                best_score = score
-                best = q
-        if best is not None and best_score >= 1:
-            old = int(best.get("priority", 5))
-            best["priority"] = min(9, old + 2)   # bigger number = lower priority
-            return best.get("title", "")
-        return ""
+            if len(gwords & tw) >= 1:
+                old = int(q.get("priority", 5))
+                q["priority"] = min(9, max(old + 3, 7))   # push well down the list
+                demoted.append(q.get("title", ""))
+        return "; ".join(demoted[:4])
 
     def quest_view(self, max_open: int = 12) -> dict:
         """One priority-sorted list of open quests (priority 1 = highest). We do
