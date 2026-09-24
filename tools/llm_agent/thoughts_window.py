@@ -48,7 +48,7 @@ class ThoughtsWindow:
             return
         self._root = tk.Tk()
         self._root.title(self._title)
-        self._root.geometry("1180x900")
+        self._root.geometry("1500x1000")
 
         top = tk.Frame(self._root)
         top.pack(fill="x", padx=8, pady=(8, 2))
@@ -72,87 +72,103 @@ class ThoughtsWindow:
         self._gstatus = tk.Label(statusrow, text="", font=("Consolas", 9), anchor="w")
         self._gstatus.pack(side="left", fill="x", expand=True)
 
-        body = tk.Frame(self._root)
-        body.pack(fill="both", expand=True, padx=8, pady=4)
-        left = tk.Frame(body)
-        left.pack(side="left", fill="both", expand=True)
-        right = tk.Frame(body)
-        right.pack(side="right", fill="both", expand=True)
+        # ---- Resizable layout: nested ttk.PanedWindows so EVERY box border is
+        #      draggable (both directions). Outer split = live play | inspector.
+        outer = ttk.PanedWindow(self._root, orient="horizontal")
+        outer.pack(fill="both", expand=True, padx=6, pady=4)
+        left = ttk.PanedWindow(outer, orient="vertical")
+        right = ttk.PanedWindow(outer, orient="vertical")
+        outer.add(left, weight=3)
+        outer.add(right, weight=4)
 
-        def _pane(parent, key, label, height, mono=False, wrap="word"):
-            frame = tk.LabelFrame(parent, text=label, font=("Segoe UI", 10, "bold"))
-            frame.pack(fill="both", expand=True, padx=4, pady=3)
+        def _text_pane(parent, key, label, mono=False, wrap="word", weight=1):
+            frame = tk.LabelFrame(parent, text=label, font=("Segoe UI", 9, "bold"))
             font = ("Consolas", 10) if mono else ("Segoe UI", 10)
-            txt = scrolledtext.ScrolledText(frame, height=height, wrap=wrap, font=font)
+            txt = scrolledtext.ScrolledText(frame, height=6, wrap=wrap, font=font)
             txt.pack(fill="both", expand=True)
             self._panes[key] = txt
+            parent.add(frame, weight=weight)
+            return frame
 
-        # LEFT: live play
-        _pane(left, "map",
-              "Map (@ you  C companion  & person  b lootable-body  x corpse  "
-              "n container  * item  E exit  ~ water  = barrier  +/ doors  # wall)",
-              14, mono=True, wrap="none")
-        # Rolling COMBINED turn log: reasoning and the action/result it led to
-        # are two halves of one thought, so they live together per turn.
-        _pane(left, "turnlog", f"Turn log - reasoning -> action -> result (last {self._MAX_TURNS})",
-              14, mono=False, wrap="word")
-        _pane(left, "dialog", "Dialog / characters / objects on screen", 8)
+        # LEFT: live play (map / turn log / dialog) - all draggable-resizable.
+        # Map uses no-wrap + horizontal scrollbar so a wide map isn't clipped.
+        map_frame = tk.LabelFrame(
+            left, text="Map (@ you  C comp  & person  b body  x corpse  n cont  "
+            "* item  E exit  ~ water  = barrier  +/ doors  # wall)",
+            font=("Segoe UI", 9, "bold"))
+        map_txt = scrolledtext.ScrolledText(map_frame, height=10, wrap="none",
+                                            font=("Consolas", 10))
+        _mxsb = ttk.Scrollbar(map_frame, orient="horizontal", command=map_txt.xview)
+        map_txt.configure(xscrollcommand=_mxsb.set)
+        _mxsb.pack(side="bottom", fill="x")
+        map_txt.pack(side="top", fill="both", expand=True)
+        self._panes["map"] = map_txt
+        left.add(map_frame, weight=3)
+        _text_pane(left, "turnlog",
+                   f"Turn log - reasoning -> action -> result (last {self._MAX_TURNS})",
+                   weight=3)
+        _text_pane(left, "dialog", "Dialog / characters / objects on screen", weight=2)
 
-        # RIGHT: inspector
-        _pane(right, "plot", "Story so far (LLM's running plot summary)", 4)
-        _pane(right, "quests", "Open quests (priority-sorted; prereqs shown)", 8, mono=True)
+        # RIGHT: inspector.
+        _text_pane(right, "plot", "Story so far (LLM's running plot summary)", weight=1)
 
-        # Finished quests as a distinct LIST (not a comma-separated line).
-        rq_frame = tk.LabelFrame(right, text="Finished quests",
-                                 font=("Segoe UI", 10, "bold"))
-        rq_frame.pack(fill="both", expand=True, padx=4, pady=3)
-        self._resolved_list = tk.Listbox(rq_frame, height=6, font=("Segoe UI", 9))
+        # Quests: Open | Finished side by side (draggable).
+        quest_pw = ttk.PanedWindow(right, orient="horizontal")
+        oq_frame = tk.LabelFrame(quest_pw, text="Open quests (priority-sorted)",
+                                 font=("Segoe UI", 9, "bold"))
+        oq_txt = scrolledtext.ScrolledText(oq_frame, height=8, wrap="word",
+                                           font=("Consolas", 9))
+        oq_txt.pack(fill="both", expand=True)
+        self._panes["quests"] = oq_txt
+        quest_pw.add(oq_frame, weight=1)
+        rq_frame = tk.LabelFrame(quest_pw, text="Finished quests",
+                                 font=("Segoe UI", 9, "bold"))
+        self._resolved_list = tk.Listbox(rq_frame, font=("Segoe UI", 9))
         _rsb = ttk.Scrollbar(rq_frame, orient="vertical",
                              command=self._resolved_list.yview)
         self._resolved_list.configure(yscrollcommand=_rsb.set)
         self._resolved_list.pack(side="left", fill="both", expand=True)
         _rsb.pack(side="right", fill="y")
+        quest_pw.add(rq_frame, weight=1)
+        right.add(quest_pw, weight=2)
 
-        # Knowledge notebook: expandable trees for Topics and Characters.
-        nb = ttk.Notebook(right)
-        nb.pack(fill="both", expand=True, padx=4, pady=3)
-
-        # Topics tree: topic -> mentions (npc: line)
-        topic_frame = tk.Frame(nb)
+        # Knowledge: Topics | Characters side by side (BOTH visible, no tabs).
+        know_pw = ttk.PanedWindow(right, orient="horizontal")
+        topic_frame = tk.LabelFrame(know_pw, text="Topics (LLM's notebook)",
+                                    font=("Segoe UI", 9, "bold"))
         self._topic_tree = ttk.Treeview(topic_frame, columns=("meta",), show="tree headings")
-        self._topic_tree.heading("#0", text="Topic / note (LLM's own)")
+        self._topic_tree.heading("#0", text="Topic / note")
         self._topic_tree.heading("meta", text="notes")
-        self._topic_tree.column("meta", width=90, anchor="e")
+        self._topic_tree.column("meta", width=60, anchor="e")
         _tsb = ttk.Scrollbar(topic_frame, orient="vertical", command=self._topic_tree.yview)
         self._topic_tree.configure(yscrollcommand=_tsb.set)
         self._topic_tree.pack(side="left", fill="both", expand=True)
         _tsb.pack(side="right", fill="y")
-        nb.add(topic_frame, text="Topics")
+        know_pw.add(topic_frame, weight=1)
 
-        # Characters tree: npc -> {transcript, topics asked/unasked, notes}
-        char_frame = tk.Frame(nb)
+        char_frame = tk.LabelFrame(know_pw, text="Characters (dialogue/notes)",
+                                   font=("Segoe UI", 9, "bold"))
         self._char_tree = ttk.Treeview(char_frame, columns=("meta",), show="tree headings")
         self._char_tree.heading("#0", text="Character / dialogue")
         self._char_tree.heading("meta", text="info")
-        self._char_tree.column("meta", width=90, anchor="e")
+        self._char_tree.column("meta", width=60, anchor="e")
         _csb = ttk.Scrollbar(char_frame, orient="vertical", command=self._char_tree.yview)
         self._char_tree.configure(yscrollcommand=_csb.set)
         self._char_tree.pack(side="left", fill="both", expand=True)
         _csb.pack(side="right", fill="y")
-        nb.add(char_frame, text="Characters")
+        know_pw.add(char_frame, weight=1)
+        right.add(know_pw, weight=3)
 
-        # Stats & memory: a grid of distinct labelled value boxes (not a textbox).
-        stats_frame = tk.LabelFrame(right, text="Stats & memory",
-                                    font=("Segoe UI", 10, "bold"))
-        stats_frame.pack(fill="x", padx=4, pady=3)
+        # Stats grid + Tool-call table side by side (draggable).
+        bottom_pw = ttk.PanedWindow(right, orient="horizontal")
+        stats_frame = tk.LabelFrame(bottom_pw, text="Stats & memory",
+                                    font=("Segoe UI", 9, "bold"))
         self._stats_grid = tk.Frame(stats_frame)
-        self._stats_grid.pack(fill="x", padx=4, pady=2)
+        self._stats_grid.pack(fill="both", expand=True, padx=4, pady=2)
+        bottom_pw.add(stats_frame, weight=1)
 
-        # Tool calls: a DEDICATED section with a summary line and a sortable
-        # table (tool | calls | ok | err | err%).
-        tool_frame = tk.LabelFrame(right, text="Tool calls",
-                                   font=("Segoe UI", 10, "bold"))
-        tool_frame.pack(fill="both", expand=True, padx=4, pady=3)
+        tool_frame = tk.LabelFrame(bottom_pw, text="Tool calls",
+                                   font=("Segoe UI", 9, "bold"))
         tsum = tk.Frame(tool_frame)
         tsum.pack(fill="x", padx=4, pady=(2, 0))
         self._tool_turns = tk.Label(tsum, text="turns: -", font=("Consolas", 9, "bold"))
@@ -161,19 +177,20 @@ class ThoughtsWindow:
         self._tool_pfail.pack(side="left")
         cols = ("calls", "ok", "err", "errpct")
         self._tool_tree = ttk.Treeview(tool_frame, columns=cols, show="tree headings",
-                                       height=8)
+                                       height=6)
         self._tool_tree.heading("#0", text="tool")
-        self._tool_tree.column("#0", width=110, anchor="w")
-        for c, txt, w in (("calls", "calls", 60), ("ok", "ok", 50),
-                          ("err", "err", 50), ("errpct", "err%", 60)):
+        self._tool_tree.column("#0", width=90, anchor="w")
+        for c, txt, w in (("calls", "calls", 55), ("ok", "ok", 45),
+                          ("err", "err", 45), ("errpct", "err%", 55)):
             self._tool_tree.heading(c, text=txt)
             self._tool_tree.column(c, width=w, anchor="e")
         _ttsb = ttk.Scrollbar(tool_frame, orient="vertical", command=self._tool_tree.yview)
         self._tool_tree.configure(yscrollcommand=_ttsb.set)
         self._tool_tree.pack(side="left", fill="both", expand=True, padx=(4, 0), pady=2)
         _ttsb.pack(side="right", fill="y")
-        # Tag error rows red so problem tools stand out.
         self._tool_tree.tag_configure("err", foreground="#c0392b")
+        bottom_pw.add(tool_frame, weight=1)
+        right.add(bottom_pw, weight=2)
 
         # Hint bar: type a hint and Send it to the agent for the next turn(s).
         hintrow = tk.Frame(self._root)
