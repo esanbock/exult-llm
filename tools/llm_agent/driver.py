@@ -2504,7 +2504,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _e_cells = [(x - cx, y - cy)
                     for y in range(len(rows)) for x in range(len(rows[y]))
                     if rows[y][x] == "E"]
-        if _reason_stairs and _e_cells:
+        # Bounded assistance: try to help climb for a limited number of turns.
+        # If it hasn't worked (avatar still at tz 0 near the same stairs after
+        # many tries), STOP forcing it - the staircase may be unclimbable from
+        # here or the goal (a Mayor atop the wall) may be mistaken. Let the
+        # agent pursue its objective another way. (Self-sufficiency: we assist,
+        # we don't trap the agent against one staircase forever.)
+        _sc = session.get("stairs_attempts", 0)
+        if _reason_stairs and _e_cells and _sc < 12:
+            session["stairs_attempts"] = _sc + 1
             # West-most E cell (smallest dx). Its entry is one tile further west.
             _wmost = min(_e_cells, key=lambda c: (c[0], abs(c[1])))
             _entry = (_wmost[0] - 1, _wmost[1])   # tile just west of the stairs
@@ -2531,7 +2539,23 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = {"type": "move", "dir": _nm[_pick], "speed": 120}
                     reason = f"(guard) lining up WEST of stairs: step {_nm[_pick]}"
                     print(f"[{step:03d}] stairs-approach: step {_nm[_pick]} toward west entry {_entry}")
-        _dead_old_stairs = False
+        elif _reason_stairs and _e_cells and _sc >= 12:
+            # Gave the climb enough tries and it hasn't worked - stop forcing it.
+            # Inform the agent this staircase is a dead end so it stops trying to
+            # go up here and pursues its goal (the Mayor) by another route.
+            session["stairs_attempts"] = 0     # allow a fresh future attempt elsewhere
+            session["last_bump"] = (
+                "You've repeatedly tried to climb these stairs with no success - "
+                "treat this route as a DEAD END. The person you seek is likely "
+                "NOT up here; stop trying to climb and look for them elsewhere in "
+                "town (they may be in a building or wandering the streets).")
+            action = _explore_far(state, session, True)
+            reason = "(guard) stairs unclimbable; abandoning and exploring elsewhere"
+            print(f"[{step:03d}] stairs: attempts exhausted; abandoning dead-end")
+        # Reset the attempt counter once we actually climbed (tz>0) or wandered
+        # away from any stairs, so a legitimate future staircase isn't pre-capped.
+        if (p_now := (state.get("player") or {})).get("tz", 0) > 0 or not _e_cells:
+            session["stairs_attempts"] = 0
         near_here = abs(tgt[0]-here[0]) + abs(tgt[1]-here[1]) <= 1
         last_was_goto = session.get("last_action_type") == "goto"
         if near_here:
