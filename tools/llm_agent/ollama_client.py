@@ -103,14 +103,21 @@ class OllamaClient:
                 {"role": "user", "content": user},
             ],
             "stream": False,
-            # Reasoning models (gpt-oss) emit a separate chain-of-thought that
-            # consumes response tokens BEFORE the JSON. Giving generous headroom
-            # (num_predict) lets both the thinking and the JSON fit, avoiding
-            # empty replies. (Do NOT disable thinking AND use format=json for
-            # gpt-oss - that combination triggers a repeat-loop abort.)
+            # Reasoning models emit a separate chain-of-thought that consumes
+            # response tokens BEFORE the JSON, which can starve the reply and
+            # yield an empty completion. Two known-good strategies by model:
+            #  - qwen3.x: DISABLE thinking (think=false). It works cleanly WITH
+            #    format=json, removes ~6k chars of thinking/turn, and is faster.
+            #  - gpt-oss: do NOT disable thinking with format=json (that combo
+            #    triggers a repeat-loop abort); instead give num_predict headroom
+            #    so thinking + JSON both fit.
             "options": {"temperature": temperature, "num_ctx": self.num_ctx,
                         "num_predict": 2048},
         }
+        _ml = (self.model or "").lower()
+        _is_qwen = _ml.startswith("qwen") or "qwen3" in _ml
+        if _is_qwen:
+            payload["think"] = False
         if force_json:
             payload["format"] = "json"
         data = json.dumps(payload).encode("utf-8")
