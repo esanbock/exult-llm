@@ -167,6 +167,9 @@ periodically). For finer detail you have the recall/quests tools.
   turn (int)                  - the current turn number (increments each action).
                                 Time is passing - use it to notice when you have
                                 spent many turns on one thing without progress.
+  turns_since_progress (int)  - turns since you last made REAL progress (resolved
+                                a quest or met a new person). If this grows large,
+                                what you're doing ISN'T working - change strategy.
   player: {tx,ty (your absolute tile on the world map), elevation, hp, max_hp, hp_pct, food}
                                 ELEVATION: 0 = GROUND level. >0 = UP (on a wall
                                 walkway / upper floor / rooftop). <0 = UNDERGROUND
@@ -537,6 +540,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     in_convo = bool(state.get("conversation_in_progress"))
     view = {
         "turn": state.get("turn"),
+        "turns_since_progress": state.get("turns_since_progress"),
         "player": {
             "tx": p.get("tx"), "ty": p.get("ty"),
             "elevation": p.get("tz", 0),
@@ -604,6 +608,14 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             "water, a barrier, or stairs from the wrong side). Do not just repeat "
             "the same move. Try a DIFFERENT direction, go around, or pick another "
             "route/target.")
+    _tsp = state.get("turns_since_progress") or 0
+    if _tsp >= 15:
+        view["NO_PROGRESS_WARNING"] = (
+            f"You have made NO real progress (no quest resolved, no new person "
+            f"met) for {_tsp} turns. Whatever you are doing is NOT working. STOP "
+            "and change strategy completely: go somewhere you have NOT been, talk "
+            "to someone NEW, or pick a different quest. Do not keep repeating the "
+            "same attempt.")
     if state.get("stuck_in_place"):
         view["STUCK_WARNING"] = (
             "You have NOT MOVED for ~10 turns - you are re-trying variations of "
@@ -1410,6 +1422,16 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _recent_tiles = set(zip(_ph, _ph2))
         if len(_ph) >= 8 and len(_recent_tiles) <= 2:
             state["stuck_in_place"] = True
+        # Turns-since-real-progress: a stronger "you're wasting time" signal than
+        # a raw turn count. Progress = a quest resolved or a NEW npc met. If many
+        # turns pass with NO progress, surface it so the agent gives up on what
+        # isn't working (it tends to loop without a sense of futility).
+        _prog_key = (sum(1 for q in kb.quests.values() if q.get("status") == "done"),
+                     len(kb.npcs))
+        if _prog_key != session.get("last_progress_key"):
+            session["last_progress_key"] = _prog_key
+            session["last_progress_turn"] = step
+        state["turns_since_progress"] = step - session.get("last_progress_turn", step)
         # Tell summarize_state who we're talking to, so it can proactively show
         # which topics we've already asked this NPC and which we have NOT.
         if state.get("conversation_in_progress"):

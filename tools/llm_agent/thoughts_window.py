@@ -11,6 +11,7 @@ via a thread-safe queue.
 
 from __future__ import annotations
 
+import os
 import queue
 from typing import Optional
 
@@ -48,7 +49,21 @@ class ThoughtsWindow:
             return
         self._root = tk.Tk()
         self._root.title(self._title)
-        self._root.geometry("1500x1000")
+        # Restore the last window size/position from a small ini next to this
+        # module, falling back to a sensible default.
+        self._geom_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), ".gui_geometry")
+        _geo = "1500x1000"
+        try:
+            with open(self._geom_file, encoding="utf-8") as _gf:
+                _saved = _gf.read().strip()
+            if _saved:
+                _geo = _saved
+        except OSError:
+            pass
+        self._root.geometry(_geo)
+        # Persist geometry on close.
+        self._root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         top = tk.Frame(self._root)
         top.pack(fill="x", padx=8, pady=(8, 2))
@@ -435,7 +450,22 @@ class ThoughtsWindow:
             for note in c.get("notes", [])[-6:]:
                 tree.insert(parent, "end", text=f"note: {note[:110]}", values=("",))
 
+    def _save_geometry(self) -> None:
+        """Persist the current window size+position so the next launch restores
+        it (like a typical app storing window state in an ini)."""
+        try:
+            if self._root is not None and getattr(self, "_geom_file", None):
+                with open(self._geom_file, "w", encoding="utf-8") as _gf:
+                    _gf.write(self._root.geometry())
+        except Exception:
+            pass
+
+    def _on_close(self) -> None:
+        self._save_geometry()
+        self.close()
+
     def close(self) -> None:
+        self._save_geometry()
         if self._root is not None:
             try:
                 self._root.destroy()
