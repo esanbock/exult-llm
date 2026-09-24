@@ -2488,33 +2488,31 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # Did we move at all since the previous turn?
         moved = here != session.get("prev_pos_for_goto")
         session["prev_pos_for_goto"] = here
-        # --- Stairs/exit step: goto WON'T land on a stairs/level-transition tile
-        #     (it stops adjacent), so a "climb stairs" goto oscillates forever.
-        #     If the target is within 2 tiles and is a stairs/exit ('E') tile,
-        #     issue a DIRECT move onto it (climbing stairs is just movement).
-        _dxt = tgt[0] - here[0]
-        _dyt = tgt[1] - here[1]
-        if abs(_dxt) <= 2 and abs(_dyt) <= 2 and (_dxt or _dyt):
-            rows = (state.get("grid") or "").split("\n")
-            cx, cy = _grid_center(rows)
-            def _cellz(ddx, ddy):
-                x, y = cx + ddx, cy + ddy
-                if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
-                    return rows[y][x]
-                return "#"
-            # Is the target (or a tile toward it) a stairs/exit marker?
-            _sdx = (1 if _dxt > 0 else -1 if _dxt < 0 else 0)
-            _sdy = (1 if _dyt > 0 else -1 if _dyt < 0 else 0)
-            _tgt_glyph = _cellz(_dxt, _dyt)
-            _step_glyph = _cellz(_sdx, _sdy)
-            if _tgt_glyph == "E" or _step_glyph == "E":
+        # --- Stairs/exit step: goto WON'T land on a stairs/level-transition
+        #     tile, so a "climb stairs" goto oscillates. If the model is heading
+        #     for a stairs/exit, find the NEAREST actual 'E' cell ON THE GRID
+        #     (real perception, not a possibly-stale remembered coord) and step
+        #     directly toward it. Climbing stairs is just movement onto them.
+        _reason_stairs = any(w in (reason or "").lower()
+                             for w in ("stair", "climb", "exit", "up to", "fortress"))
+        rows = (state.get("grid") or "").split("\n")
+        cx, cy = _grid_center(rows)
+        _e_cells = [(x - cx, y - cy)
+                    for y in range(len(rows)) for x in range(len(rows[y]))
+                    if rows[y][x] == "E"]
+        if _reason_stairs and _e_cells:
+            # nearest E cell (grid dx,dy relative to avatar)
+            _edx, _edy = min(_e_cells, key=lambda c: abs(c[0]) + abs(c[1]))
+            if abs(_edx) <= 3 and abs(_edy) <= 3:
+                _sdx = (1 if _edx > 0 else -1 if _edx < 0 else 0)
+                _sdy = (1 if _edy > 0 else -1 if _edy < 0 else 0)
                 _nm = {(0,-1):"n",(0,1):"s",(1,0):"e",(-1,0):"w",
                        (1,-1):"ne",(1,1):"se",(-1,1):"sw",(-1,-1):"nw"}
-                _sc = session.get("stairs_step", 0) + 1
-                session["stairs_step"] = _sc
+                # If already ON/adjacent to the E cell, step straight onto it;
+                # otherwise move to line up under it first.
                 action = {"type": "move", "dir": _nm.get((_sdx, _sdy), "n"), "speed": 120}
-                reason = f"(guard) stepping onto stairs/exit (climb = move) {_nm.get((_sdx,_sdy))}"
-                print(f"[{step:03d}] stairs-step: direct move onto E tile")
+                reason = f"(guard) climbing stairs: step {_nm.get((_sdx,_sdy))} onto E cell"
+                print(f"[{step:03d}] stairs-step: move {_nm.get((_sdx,_sdy))} toward E@({_edx},{_edy})")
         near_here = abs(tgt[0]-here[0]) + abs(tgt[1]-here[1]) <= 1
         last_was_goto = session.get("last_action_type") == "goto"
         if near_here:
