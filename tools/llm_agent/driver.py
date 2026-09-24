@@ -196,15 +196,14 @@ periodically). For finer detail you have the recall/quests tools.
                                 health - you do NOT need healing. Only seek a
                                 healer/rest when hp is well below max_hp (hp_pct
                                 low). food is hunger (eat when it gets low).
-                                COORDINATES: everything uses ONE consistent frame.
-                                Your tile is (tx,ty). Every object/person gives a
-                                RELATIVE offset {dx,dy} from you, so its absolute
-                                tile is (tx+dx, ty+dy). The ASCII map is centered
-                                on you (@ = your tile); moving right/east is +dx,
-                                down/south is +dy. To walk somewhere, "goto" an
-                                absolute (tx,ty) - e.g. an object at dx=5,dy=-3
-                                means goto (tx+5, ty-3). You do NOT need the map's
-                                coordinate range; @ is always your anchor.
+                                COORDINATES: everything uses ONE ABSOLUTE frame.
+                                Your tile is (tx,ty). Every nearby person/object
+                                also gives its ABSOLUTE (tx,ty) plus a short
+                                "dir" hint (e.g. "NE 5" = northeast, 5 tiles). To
+                                walk to something, "goto" its (tx,ty) DIRECTLY -
+                                no conversion needed (e.g. a person at tx=1070,
+                                ty=2207 -> goto (1070,2207)). The ASCII map is
+                                centered on you (@); north=up, east=right.
   time_of_day (string)        - morning/afternoon/evening/night, plus hour (0-23)
                                 and is_night. At night most townsfolk are asleep
                                 (see condition:"sleeping"); use "wait_until" to
@@ -235,7 +234,8 @@ periodically). For finer detail you have the recall/quests tools.
                                 wait for day or leave them), "paralyzed",
                                 "poisoned", "charmed", "cursed", or "hostile".
                                 (your own party is listed separately in "party")
-                                dx>0 = east, dx<0 = west, dy>0 = south, dy<0 = north
+                                each gives ABSOLUTE {tx,ty} + a "dir" hint; goto
+                                its (tx,ty) to reach it.
                                 status = new (never talked) | talked (spoken to)
                                 | exhausted (talked several times without new
                                 progress) - this is ADVISORY, not a ban. Before
@@ -249,7 +249,8 @@ periodically). For finer detail you have the recall/quests tools.
                                 They follow you and have no new information - do
                                 NOT "talk" to them to investigate; just travel
                                 and act, and they come along.
-  objects (list)              - items on the ground: {name, dx, dy}. May include
+  objects (list)              - items on the ground: {name, tx, ty (ABSOLUTE),
+                                dir}. goto (tx,ty) to reach one. May include
                                 "owned": true - that item is someone's property;
                                 taking it is STEALING (avoid it). Items without
                                 "owned" are free to take. "body":true means a
@@ -612,7 +613,14 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "answers": state.get("answers") if in_convo else [],
         "ambient_speech": state.get("ambient_speech") or [],
         "nearby": [
-            {"name": n.get("name"), "dx": n.get("dx"), "dy": n.get("dy"),
+            {"name": n.get("name"),
+             # ABSOLUTE tile (same frame as your position and goto targets), plus
+             # a short compass hint. Use tx,ty directly with goto.
+             "tx": (n.get("tx") if n.get("tx") is not None
+                    else (p.get("tx", 0) + n.get("dx", 0))),
+             "ty": (n.get("ty") if n.get("ty") is not None
+                    else (p.get("ty", 0) + n.get("dy", 0))),
+             "dir": _compass(n.get("dx", 0), n.get("dy", 0)),
              "status": (kb.talk_status(n.get("name")) if kb and n.get("name") else "new"),
              **({"condition": n["condition"]} if n.get("condition") else {}),
              **({"different_level": True} if n.get("same_level") is False else {})}
@@ -622,7 +630,10 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         # new information, so do NOT "talk" to them to investigate.
         "party": [n.get("name") for n in nearby if n.get("in_party") and n.get("name")],
         "objects": [
-            {"name": o.get("name"), "dx": o.get("dx"), "dy": o.get("dy"),
+            {"name": o.get("name"),
+             "tx": p.get("tx", 0) + o.get("dx", 0),
+             "ty": p.get("ty", 0) + o.get("dy", 0),
+             "dir": _compass(o.get("dx", 0), o.get("dy", 0)),
              **({"body": True} if o.get("body") else {}),
              **({"corpse_not_lootable": True} if o.get("corpse") else {}),
              **({"owned": True} if o.get("owned") else {}),
@@ -854,6 +865,15 @@ def parse_reply(text: str) -> tuple[str, dict]:
     if action.get("type") == "press_key":
         action["type"] = "key"
     return (reason, action)
+
+
+def _compass(dx: int, dy: int) -> str:
+    """Short direction+distance hint (e.g. 'NE 5') to accompany an absolute tile,
+    for spatial intuition. Coordinates are the source of truth; this is a hint."""
+    ns = "N" if dy < 0 else ("S" if dy > 0 else "")
+    ew = "E" if dx > 0 else ("W" if dx < 0 else "")
+    d = (ns + ew) or "here"
+    return f"{d} {abs(dx) + abs(dy)}" if d != "here" else "here"
 
 
 def _where(px: int, py: int, dx: int, dy: int) -> str:
