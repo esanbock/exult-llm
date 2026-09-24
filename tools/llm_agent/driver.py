@@ -554,8 +554,10 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
                 "you are already at ground level)"
                 if (p.get("tz", 0) or 0) == 0
                 else (f"UP HIGH at elevation {p.get('tz')} (on a wall / upper "
-                      "floor / rooftop - descend to reach ground-level "
-                      "people & items)"
+                      "floor / rooftop). To get DOWN, 'goto' a ground tile with "
+                      "tz:0 (e.g. a place you know) - the engine walks you down "
+                      "the ramp. Ground-level people & items are only reachable "
+                      "once you are back down."
                       if (p.get("tz", 0) or 0) > 0
                       else f"UNDERGROUND at elevation {p.get('tz')} (in a "
                            "cave/cellar/dungeon below ground - go UP to return "
@@ -2531,10 +2533,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     #     it plainly and, after a couple of repeats, redirect to explore so it
     #     stops the loop. (Purely correcting a false belief about a physical
     #     fact - not choosing content for it.)
-    _at_ground = ((state.get("player") or {}).get("tz", 0) or 0) == 0
+    _cur_tz_now = (state.get("player") or {}).get("tz", 0) or 0
+    _at_ground = _cur_tz_now == 0
     _wants_descend = any(w in (reason or "").lower()
                          for w in ("descend", "climb down", "go down", "down to ground",
-                                   "to ground level", "down the stairs", "down the fortress"))
+                                   "to ground level", "down the stairs", "down the fortress",
+                                   "down from"))
     if _at_ground and _wants_descend:
         n = session.get("false_descend", 0) + 1
         session["false_descend"] = n
@@ -2548,6 +2552,25 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             action = _explore_far(state, session, wedged)
             reason = "(guard) already at ground; stop descending, explore"
             print(f"[{step:03d}] ground-guard: already at tz0; redirect from descend")
+    elif _cur_tz_now > 0 and _wants_descend:
+        # Elevated and wanting down: goto a GROUND tile with tz:0. The engine
+        # descends 1 level/step, so targeting a known ground destination (a
+        # remembered place, else the world-start area) at tz 0 walks the avatar
+        # back down reliably (verified tz4->0). This is the descend analog of
+        # the climb - use goto with an explicit ground Z rather than poking the
+        # stairs tile.
+        _pp0 = state.get("player") or {}
+        _gp = None
+        _places = kb.places_view(_pp0.get("tx", 0), _pp0.get("ty", 0), limit=10) if kb else []
+        for _pl in _places:  # nearest remembered place; assume ground
+            _gp = (_pp0.get("tx", 0) + _pl.get("dx", 0),
+                   _pp0.get("ty", 0) + _pl.get("dy", 0))
+            break
+        if _gp is None:
+            _gp = (1079, 2214)   # Trinsic start / murder-scene area (ground)
+        action = {"type": "goto", "tx": _gp[0], "ty": _gp[1], "tz": 0}
+        reason = f"(guard) descending: goto ground tile ({_gp[0]},{_gp[1]}) tz0"
+        print(f"[{step:03d}] descend-guard: goto ground {_gp} tz0 from tz{_cur_tz_now}")
     elif not _wants_descend:
         session["false_descend"] = 0
 
