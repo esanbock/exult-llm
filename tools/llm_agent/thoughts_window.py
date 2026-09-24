@@ -39,6 +39,7 @@ class ThoughtsWindow:
         self._turn_log: list = []       # [(turn, reason, action_result)]
         self._pending_reason = ""       # reason awaiting its action this turn
         self._last_context = ""         # full prompt for the Show-context window
+        self._last_area_map = ""        # latest area map for the Show-map window
         self._stat_labels = {}          # key -> value Label widget
 
     # -- lifecycle ------------------------------------------------------------
@@ -217,6 +218,8 @@ class ThoughtsWindow:
         tk.Button(hintrow, text="Send hint", command=self._send_hint).pack(side="left")
         tk.Button(hintrow, text="Show context",
                   command=self._show_context).pack(side="left", padx=(6, 0))
+        tk.Button(hintrow, text="Show map",
+                  command=self._show_map).pack(side="left", padx=(6, 0))
         self._hint_status = tk.Label(hintrow, text="", font=("Segoe UI", 8), fg="green")
         self._hint_status.pack(side="left", padx=6)
 
@@ -247,6 +250,29 @@ class ThoughtsWindow:
         btnrow.pack(fill="x")
         tk.Label(btnrow, text=f"{len(self._last_context)} chars",
                  font=("Segoe UI", 8)).pack(side="left", padx=6)
+        tk.Button(btnrow, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
+
+    def _show_map(self) -> None:
+        """Open a separate window showing the latest town-scale AREA MAP
+        (explored cells + labeled landmarks + your position), monospaced so the
+        ASCII grid aligns. Refreshable to see the map update as play continues."""
+        if self._root is None:
+            return
+        win = tk.Toplevel(self._root)
+        win.title("Area map (explored + landmarks)")
+        win.geometry("760x760")
+        txt = scrolledtext.ScrolledText(win, wrap="none", font=("Consolas", 11))
+        txt.pack(fill="both", expand=True)
+
+        def _fill():
+            txt.configure(state="normal")
+            txt.delete("1.0", "end")
+            txt.insert("end", self._last_area_map or "(no map yet - it fills in as the agent explores)")
+            txt.configure(state="disabled")
+        _fill()
+        btnrow = tk.Frame(win)
+        btnrow.pack(fill="x")
+        tk.Button(btnrow, text="Refresh", command=_fill).pack(side="left", padx=6, pady=4)
         tk.Button(btnrow, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
 
     def _append_turn_entry(self, action_result=None) -> None:
@@ -371,6 +397,8 @@ class ThoughtsWindow:
                     self._rebuild_resolved(payload)
                 elif kind == "context_dump":
                     self._last_context = payload
+                elif kind == "area_map":
+                    self._last_area_map = payload
                 elif kind == "topics_tree":
                     self._rebuild_topics(payload)
                 elif kind == "npc_tree":
@@ -538,6 +566,9 @@ class ThoughtsWindow:
 
     def set_context_dump(self, text: str) -> None:
         self._q.put(("context_dump", text))
+
+    def set_area_map(self, text: str) -> None:
+        self._q.put(("area_map", text))
 
     # observation now folded into stats/dialog; keep for compatibility
     def set_observation(self, text: str) -> None:

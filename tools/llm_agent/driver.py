@@ -1250,6 +1250,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 f"pos({p.get('tx')},{p.get('ty')},z{p.get('tz',0)})  hp {p.get('hp')}/{p.get('max_hp')}  gold {p.get('gold')}  food {p.get('food')}  "
                 f"str {p.get('str')} dex {p.get('dex')} int {p.get('int')}  "
                 f"{'IN COMBAT' if state.get('in_combat') else ''}")
+            # Keep the GUI's "Show map" button supplied with a fresh area map
+            # each turn (this is for the OPERATOR; it does NOT go into the LLM
+            # context - that only happens when the LLM calls the map tool).
+            try:
+                window.set_area_map(kb.render_area_map(
+                    p.get("tx", 0), p.get("ty", 0),
+                    region=str(state.get("map_num", "world"))))
+            except Exception:
+                pass
             # Structured stats: labelled key/value pairs for distinct boxes.
             _resolved = sum(1 for q in kb.quests.values() if q.get("status") == "done")
             _ts = kb.tool_stats or {}
