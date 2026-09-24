@@ -1647,13 +1647,12 @@ namespace LLM_agent {
 			long ty = -1;
 			Tile_coord dest(0, 0, at.tz);
 			bool have_dest = false;
+			bool tz_was_explicit = false;
 			if (get_int(action_json, "tx", tx) && get_int(action_json, "ty", ty)) {
 				// Accept an explicit target elevation (tz) if given, so the LLM
 				// can disambiguate levels (ground vs wall-top vs underground).
-				// Falls back to the avatar's current elevation, then the Z-layer
-				// resolution below finds the standable surface.
 				long tz_in = at.tz;
-				get_int(action_json, "tz", tz_in);
+				tz_was_explicit = get_int(action_json, "tz", tz_in);
 				dest      = Tile_coord(static_cast<int>(tx), static_cast<int>(ty),
 									   static_cast<int>(tz_in));
 				have_dest = true;
@@ -1709,14 +1708,14 @@ namespace LLM_agent {
 			if (!have_dest) {
 				return "{\"ok\":false,\"error\":\"no destination (give tx/ty or a visible name)\"}";
 			}
-			// Z-LAYER RESOLUTION: goto defaults the destination to the avatar's
-			// current Z. But a stairs/wall-top tile is only WALKABLE at a higher
-			// Z - targeting it at ground Z means pathing to "under the stairs"
-			// (always blocked, hence endless partial-goto oscillation). If the
-			// destination tile is blocked at the current Z but there IS a
-			// standable surface higher up (a step/roof/walkway), retarget the
-			// goto to that higher Z so the pathfinder climbs to it.
-			{
+			// Z-LAYER RESOLUTION: only when the caller did NOT give an explicit
+			// tz. goto defaults the destination to the avatar's current Z; a
+			// stairs/wall-top tile is only walkable at a higher Z, so targeting
+			// it at ground Z paths to "under the stairs". If the dest tile is
+			// blocked at the current Z but a standable surface exists higher up,
+			// retarget to that Z so the pathfinder climbs. (If the LLM gave an
+			// explicit tz we TRUST it and skip this heuristic.)
+			if (!tz_was_explicit) {
 				Game_map* gmap = gwin->get_map();
 				Map_chunk* dchunk = gmap ? gmap->get_chunk(
 						dest.tx / c_tiles_per_chunk, dest.ty / c_tiles_per_chunk) : nullptr;
