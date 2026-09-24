@@ -53,6 +53,9 @@ class KnowledgeBase:
         self.dialogue_history: list[dict] = []
         # Short rolling window of meaningful actions taken (open/pickup/etc).
         self.action_history: list = []
+        # Persistent, monotonic turn counter (survives restarts) so action-log
+        # turn numbers always increase across runs.
+        self.turn_counter: int = 0
         # The quest the agent has declared it is currently working on (via the
         # set_current_quest tool). Tagged onto action-log entries.
         self.current_quest: "str | None" = None
@@ -87,6 +90,7 @@ class KnowledgeBase:
                 "dialogue_history": self.dialogue_history,
                 "action_history": self.action_history,
                 "current_quest": self.current_quest,
+                "turn_counter": self.turn_counter,
                 "places": self.places,
                 "hints": self.hints,
                 "observations": self.observations,
@@ -111,6 +115,14 @@ class KnowledgeBase:
             kb.dialogue_history = list(data.get("dialogue_history", []))
             kb.action_history = list(data.get("action_history", []))
             kb.current_quest = data.get("current_quest") or None
+            kb.turn_counter = int(data.get("turn_counter", 0) or 0)
+            # Safety: never let the counter be BELOW the highest turn already in
+            # the action log (guarantees monotonic increase even if the saved
+            # counter is stale/missing from an older memory file).
+            for _e in kb.action_history:
+                if isinstance(_e, dict):
+                    kb.turn_counter = max(kb.turn_counter,
+                                          int(_e.get("turn_to", _e.get("turn", 0)) or 0))
             kb.places = dict(data.get("places", {}))
             kb.hints = list(data.get("hints", []))
             kb.observations = list(data.get("observations", []))

@@ -1158,9 +1158,15 @@ def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
 
 def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -> None:
     state = exult.observe()
-    kb.current_turn = step   # so record_action tags each entry with the game turn
+    # Advance a PERSISTENT, monotonic turn counter (kb.turn_counter) that
+    # survives restarts, so the action log's turn numbers always INCREASE across
+    # runs (the per-process 'step' resets to 0 each launch, which made log turns
+    # jump backwards after a relaunch). record_action/record_move tag entries
+    # with this counter.
+    kb.turn_counter = getattr(kb, "turn_counter", 0) + 1
+    kb.current_turn = kb.turn_counter
     if window.available:
-        window.update_turn(step)
+        window.update_turn(kb.turn_counter)   # persistent monotonic turn, not per-run step
         window.set_map(state.get("grid") or "(no map)")
         window.set_dialog(format_dialog(state))
         # Inspector panels: quests, NPC knowledge, and stats.
@@ -1561,7 +1567,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # display exactly what the model saw this turn (system + user + reply).
         if window.available:
             window.set_context_dump(
-                f"===== TURN {step} =====\n"
+                f"===== TURN {kb.turn_counter} =====\n"
                 f"----- SYSTEM PROMPT -----\n{SYSTEM_PROMPT}\n\n"
                 f"----- USER (per-turn state) -----\n{_user}\n\n"
                 f"----- MODEL REPLY -----\n{reply}\n")
@@ -2691,7 +2697,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             kb.record_tool(_atype, result.get("ok") if isinstance(result, dict) else None)
             session["last_action_type"] = _atype
             if window.available:
-                window.update_turn(step)
+                window.update_turn(kb.turn_counter)
                 window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
                 window.set_thinking(reason)
             return
