@@ -167,7 +167,12 @@ periodically). For finer detail you have the recall/quests tools.
   turn (int)                  - the current turn number (increments each action).
                                 Time is passing - use it to notice when you have
                                 spent many turns on one thing without progress.
-  player: {tx,ty (your absolute tile on the world map), hp, dead, food}
+  player: {tx,ty (your absolute tile on the world map), hp, max_hp, hp_pct, food}
+                                HEALTH: hp is CURRENT, max_hp is your MAXIMUM
+                                (== your strength). hp == max_hp means FULL
+                                health - you do NOT need healing. Only seek a
+                                healer/rest when hp is well below max_hp (hp_pct
+                                low). food is hunger (eat when it gets low).
                                 COORDINATES: everything uses ONE consistent frame.
                                 Your tile is (tx,ty). Every object/person gives a
                                 RELATIVE offset {dx,dy} from you, so its absolute
@@ -509,7 +514,10 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "turn": state.get("turn"),
         "player": {
             "tx": p.get("tx"), "ty": p.get("ty"),
-            "hp": p.get("hp"), "dead": p.get("dead"),
+            "hp": p.get("hp"), "max_hp": p.get("max_hp"),
+            "hp_pct": (round(100 * p.get("hp", 0) / p["max_hp"])
+                       if p.get("max_hp") else None),
+            "dead": p.get("dead"),
         },
         "time_of_day": state.get("time_of_day"),
         "hour": state.get("hour"),
@@ -1042,7 +1050,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             # Always-visible game status line.
             window.set_gstatus(
                 f"{state.get('time_of_day','?')} (h{state.get('hour','?')})  "
-                f"pos({p.get('tx')},{p.get('ty')})  hp {p.get('hp')}  food {p.get('food')}  "
+                f"pos({p.get('tx')},{p.get('ty')})  hp {p.get('hp')}/{p.get('max_hp')}  food {p.get('food')}  "
                 f"str {p.get('str')} dex {p.get('dex')} int {p.get('int')}  "
                 f"{'IN COMBAT' if state.get('in_combat') else ''}")
             # Structured stats: labelled key/value pairs for distinct boxes.

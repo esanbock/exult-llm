@@ -476,6 +476,9 @@ namespace LLM_agent {
 			os << ',' << json_int("ty", t.ty);
 			os << ',' << json_int("tz", t.tz);
 			os << ',' << json_int("hp", av->get_property(Actor::health));
+			// Max HP == strength in U7 (health is capped at strength). Emit it
+			// so the agent knows current-vs-max and doesn't think full HP is low.
+			os << ',' << json_int("max_hp", av->get_property(Actor::strength));
 			os << ',' << json_int("str", av->get_property(Actor::strength));
 			os << ',' << json_int("dex", av->get_property(Actor::dexterity));
 			os << ',' << json_int("int", av->get_property(Actor::intelligence));
