@@ -3083,6 +3083,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 outcome = " -> nothing to read here"
         kb.record_action(f"{atype} {detail}".strip()
                          + f" @({p0.get('tx')},{p0.get('ty')})" + outcome)
+    elif atype in ("goto", "move"):
+        # Log movement too, but COLLAPSED per target so a movement LOOP shows as
+        # a single counted line (e.g. 'move toward stairs x22 (NO progress)')
+        # rather than flooding the log. Target = the goto name/coords or move dir;
+        # 'progressed' = whether the avatar actually changed tile.
+        _p1 = state.get("player") or {}
+        _tgt = (action.get("name")
+                or (f"({action.get('tx')},{action.get('ty')})" if "tx" in action else None)
+                or action.get("dir") or "somewhere")
+        _movedok = (isinstance(result, dict) and result.get("ok")
+                    and not result.get("blocked"))
+        # progressed only if position actually changed since last turn
+        _progressed = (_p1.get("tx"), _p1.get("ty")) != session.get("prev_xy_for_log")
+        session["prev_xy_for_log"] = (_p1.get("tx"), _p1.get("ty"))
+        kb.record_move(str(_tgt), moved=(_movedok and _progressed))
     # A successful pickup/search changes the world -> NPCs may now have new
     # dialogue, so allow revisiting them.
     if atype in ("pickup", "search") and isinstance(result, dict) and result.get("ok"):

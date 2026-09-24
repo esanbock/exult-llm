@@ -764,8 +764,12 @@ class KnowledgeBase:
                 if q and q != last_quest:
                     out.append(f">>> now working: {q}")
                     last_quest = q
-                t = e.get("turn", 0)
-                out.append(f"[T{t}] {e.get('text','')}")
+                # Move entries already carry their own turn span in .text; other
+                # entries get a [T<turn>] prefix here.
+                if e.get("kind") == "move":
+                    out.append(e.get("text", ""))
+                else:
+                    out.append(f"[T{e.get('turn', 0)}] {e.get('text','')}")
             else:  # legacy plain-string entries
                 out.append(str(e))
         return out
@@ -775,6 +779,39 @@ class KnowledgeBase:
         set_current_quest tool). Surfaced as 'Current quest' and tagged onto
         each action-log entry so quest switches are visible over time."""
         self.current_quest = (title or "").strip()[:80] or None
+
+    def record_move(self, target: str, turn: int = -1, moved: bool = True) -> None:
+        """Record a movement (goto/move) toward a target, COLLAPSING a run of
+        moves toward the SAME target into one line with a COUNT and turn span,
+        e.g. '[T88-T130] goto stairs x22 (no progress)'. This makes a movement
+        LOOP visible and quantified in the action log WITHOUT flooding it with a
+        line per step - so the agent can reason 'I've tried this 22 times, stop'."""
+        if turn < 0:
+            turn = getattr(self, "current_turn", 0)
+        target = (target or "somewhere").strip()[:40]
+        last = self.action_history[-1] if self.action_history else None
+        # Extend a same-target movement run in progress.
+        if (isinstance(last, dict) and last.get("kind") == "move"
+                and last.get("target") == target):
+            last["count"] = last.get("count", 1) + 1
+            last["turn_to"] = int(turn)
+            last["progressed"] = last.get("progressed") or moved
+            last["text"] = self._fmt_move(last)
+            return
+        entry = {"turn": int(turn), "turn_to": int(turn), "quest": self.current_quest,
+                 "kind": "move", "target": target, "count": 1, "progressed": moved}
+        entry["text"] = self._fmt_move(entry)
+        self.action_history.append(entry)
+        self.action_history = self.action_history[-self.ACTION_WINDOW:]
+
+    @staticmethod
+    def _fmt_move(e: dict) -> str:
+        span = (f"T{e['turn']}-T{e['turn_to']}" if e.get("turn_to", e["turn"]) != e["turn"]
+                else f"T{e['turn']}")
+        n = e.get("count", 1)
+        prog = "" if e.get("progressed") else " (NO progress - blocked/looping)"
+        cnt = f" x{n}" if n > 1 else ""
+        return f"[{span}] move toward {e.get('target')}{cnt}{prog}"
 
     # ----- hint history (operator guidance - persistent, high value) -----
     def record_hint(self, text: str, step: int = 0) -> None:
