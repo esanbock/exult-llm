@@ -690,6 +690,22 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         view["ELEVATION_NOTE"] = (
             f"You are UNDERGROUND (elevation {p.get('tz')}, in a cave/cellar/"
             "dungeon). To return to the surface, find stairs/a ladder and go UP.")
+    # Correct a STALE plot summary: if the agent's own summary says it's on the
+    # wall / elevated / needs to descend, but it is ACTUALLY at ground (tz 0),
+    # flag the contradiction so it rewrites its summary and stops "finding stairs
+    # down". (It authored a true fact earlier and never updated it once it came
+    # down - a false belief that keeps it hunting a non-existent descent.)
+    if kb is not None and (p.get("tz", 0) or 0) == 0:
+        _sl = (kb.episodic_summary or "").lower()
+        if any(w in _sl for w in ("on the wall", "on fortress wall", "on the fortress wall",
+                                  "elev 1", "elev 2", "elev 3", "elevated", "descend to ground",
+                                  "find stairs down", "stairs down", "descend to the ground")):
+            view["ELEVATION_CORRECTION"] = (
+                "IMPORTANT: your plot summary says you are ON THE WALL / need to "
+                "DESCEND - but you are ALREADY at GROUND LEVEL (tz 0) now. That "
+                "part of your summary is STALE. Update your plot_summary to drop "
+                "'on the wall / find stairs down', and pursue your goal at ground "
+                "level directly (e.g. go to the fortress gateway to use the deed).")
     doors = state.get("doors") or []
     if doors:
         view["doors"] = [
@@ -1217,7 +1233,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             # Always-visible game status line.
             window.set_gstatus(
                 f"{state.get('time_of_day','?')} (h{state.get('hour','?')})  "
-                f"pos({p.get('tx')},{p.get('ty')})  hp {p.get('hp')}/{p.get('max_hp')}  gold {p.get('gold')}  food {p.get('food')}  "
+                f"pos({p.get('tx')},{p.get('ty')},z{p.get('tz',0)})  hp {p.get('hp')}/{p.get('max_hp')}  gold {p.get('gold')}  food {p.get('food')}  "
                 f"str {p.get('str')} dex {p.get('dex')} int {p.get('int')}  "
                 f"{'IN COMBAT' if state.get('in_combat') else ''}")
             # Structured stats: labelled key/value pairs for distinct boxes.
