@@ -1383,9 +1383,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # interleaved guard turns): if the last ~10 turns barely moved, tell the
         # model plainly. This catches "standing in one spot re-trying variations"
         # that the goal-head streak misses.
-        _ph = session.setdefault("pos_hist", [])
+        _ph = session.setdefault("stuck_pos_x", [])
         _ph.append((state.get("player") or {}).get("tx"))
-        _ph2 = session.setdefault("pos_hist2", [])
+        _ph2 = session.setdefault("stuck_pos_y", [])
         _ph2.append((state.get("player") or {}).get("ty"))
         del _ph[:-10]
         del _ph2[:-10]
