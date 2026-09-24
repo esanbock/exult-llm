@@ -2491,7 +2491,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 if 0 <= y < len(rows) and 0 <= x < len(rows[y]):
                     return rows[y][x]
                 return "#"
-            WALK = ".*&C/xno~"
+            WALK = ".*&C/xbnE+"   # open, item, npc, comp, door, body, container, exit
             name_of = {(0,-1):"n",(0,1):"s",(1,0):"e",(-1,0):"w",
                        (1,-1):"ne",(1,1):"se",(-1,1):"sw",(-1,-1):"nw"}
             # Try the intended diagonal/cardinal toward target, then fall back

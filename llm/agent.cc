@@ -276,13 +276,23 @@ namespace {
 		// Start from terrain/blocking, then overlay objects and NPCs.
 		std::vector<std::string> rows(dimy, std::string(dimx, '.'));
 
-		// Blocking layer.
+		// Blocking layer. Use the AVATAR's own walkability check so elevated
+		// walkable surfaces (wall-tops reachable via stairs, bridges, etc.) are
+		// NOT shown as solid walls. is_tile_occupied only tests a single Z and
+		// wrongly marks a wall as blocked even when its TOP is walkable. We test
+		// whether the avatar could stand at each tile allowing a rise (stairs),
+		// updating the probe's tz to the standable height.
+		const int move_flags = av->get_type_flags();
 		for (int dy = -ry; dy <= ry; ++dy) {
 			for (int dx = -rx; dx <= rx; ++dx) {
 				const int tx = (at.tx + dx + c_num_tiles) % c_num_tiles;
 				const int ty = (at.ty + dy + c_num_tiles) % c_num_tiles;
-				const Tile_coord probe(tx, ty, at.tz);
-				if (gmap->is_tile_occupied(probe)) {
+				// Probe from the avatar's tile so elevation transitions (a rise
+				// onto stairs / a wall walkway) are considered walkable.
+				Tile_coord probe(tx, ty, at.tz);
+				Tile_coord from = at;
+				const bool blocked = av->is_blocked(probe, &from, move_flags);
+				if (blocked) {
 					rows[dy + ry][dx + rx] = '#';
 				}
 			}
