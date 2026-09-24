@@ -399,10 +399,11 @@ periodically). For finer detail you have the recall/quests tools.
   set_number - Answer a numeric slider prompt. params: {"value": <int>}. Only
             valid when number_prompt is true; value is clamped to
             [number_min, number_max]. Use this to pick a quantity/amount.
-  press_key - Press a KEYBOARD key (NOT a game key-item). params:
-            {"key": "space"|"escape"|"a".."z"|"0".."9"}. Mainly used to press
-            "space" to advance an NPC's text when there is npc_text but no
-            answer choices yet, or "escape" to close a menu.
+  continue - Advance an NPC's speech to the next page when there is npc_text
+            showing but no answer choices yet (conversation_in_progress but not
+            conversation_active). params: none. This is how you read through a
+            character's multi-page dialogue until choices appear.
+  dismiss - Close/cancel a menu, sign, or popup. params: none.
   combat  - Toggle combat/attack mode on or off. params: none.
   set_combat_mode - Set how you and your party fight in combat. params:
             {"mode": one of "nearest"|"weakest"|"strongest"|"berserk"|"defend"|
@@ -448,8 +449,8 @@ periodically). For finer detail you have the recall/quests tools.
      re-picking anything in "already_asked_this_npc". Only choose "bye"/"leave"
      once there are no useful unasked topics left.
   2. Else if conversation_in_progress is true (a conversation is open but no
-     choices yet) -> use "key" with "space" to advance the NPC's text until the
-     answer choices appear. Do NOT "talk" again or "move" during a conversation.
+     choices yet) -> use "continue" to advance the NPC's text until the answer
+     choices appear. Do NOT "talk" again or "move" during a conversation.
   3. YOUR QUEST LOG IS YOUR PLAN - own it. You decide which quests matter and
      their priority (1=highest). Each turn, CONSULT "quests": pick whichever
      open quest you judge most important right now and act on
@@ -890,7 +891,7 @@ def scripted_reply(step: int, state: dict) -> tuple[str, dict]:
     if state.get("conversation_active") and state.get("answers"):
         return ("Conversation active; picking first answer.", {"type": "answer", "index": 0})
     if state.get("npc_text") and not state.get("answers"):
-        return ("NPC talking; advancing text.", {"type": "key", "key": "space"})
+        return ("NPC talking; advancing text.", {"type": "continue"})
     dirs = ["n", "e", "s", "w"]
     d = dirs[step % len(dirs)]
     return (f"Exploring; moving {d}.", {"type": "move", "dir": d})
@@ -1729,7 +1730,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # Fall back to the last option (usually the exit), else press escape.
         if answers:
             return {"type": "answer", "index": len(answers) - 1}
-        return {"type": "key", "key": "escape"}
+        return {"type": "dismiss"}
 
     # 0a) A numeric slider prompt is up: answer it. Use the model's value if it
     #     chose set_number, else default to a sensible amount (the max, i.e.
@@ -1810,12 +1811,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 action = _bye_action()
                 reason = "(guard) leaving: choosing exit reply"
             else:
-                action = {"type": "key", "key": "space"}
+                action = {"type": "continue"}
                 reason = "(guard) leaving: clearing dialog text"
             # Safety: if we've been "leaving" too many turns, force escape.
             session["leaving_n"] = session.get("leaving_n", 0) + 1
             if session["leaving_n"] > 8:
-                action = {"type": "key", "key": "escape"}
+                action = {"type": "dismiss"}
                 reason = "(guard) leaving: forcing escape"
                 session["leaving_n"] = 0
             # Skip the rest of the conversation guards this turn.
@@ -1902,11 +1903,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             session["stuck_convo_n"] = 0
             session["stuck_convo_text"] = cur_text
         if session.get("stuck_convo_n", 0) >= 4:
-            action = {"type": "key", "key": "escape"}
+            action = {"type": "dismiss"}
             reason = "(guard) conversation hung with no choices; escaping"
             session["stuck_convo_n"] = 0
         else:
-            action = {"type": "key", "key": "space"}
+            action = {"type": "continue"}
             reason = "(guard) advancing NPC dialog"
     # 0.5) Wedged: try hard to escape. Likely sealed in a building (closed
     #      door) or against terrain. Try in order: open a door, then goto a
@@ -2025,8 +2026,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             action = {"type": "move", "dir": picked, "speed": 120}
             reason = f"(guard) wedged; forcing step {picked}"
     else:
-        # 1b) A "space"/"key" press outside a conversation does nothing.
-        if (isinstance(action, dict) and action.get("type") == "key"
+        # 1b) A "continue"/"dismiss"/key press outside a conversation does
+        #     nothing useful -> redirect to something productive.
+        if (isinstance(action, dict)
+                and action.get("type") in ("key", "continue", "dismiss")
                 and not state.get("conversation_in_progress")):
             fresh = [n for n in (state.get("nearby") or [])
                      if not n.get("dead") and not exhausted(n.get("name"))]

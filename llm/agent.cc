@@ -1045,6 +1045,18 @@ namespace LLM_agent {
 			return "{\"ok\":true,\"did\":\"key\",\"key\":\"" + json_escape(keyname) + "\"}";
 		}
 
+		// Semantic wrappers so the agent never deals with raw keyboard keys:
+		//   continue -> advance an NPC's multi-page speech (a space press)
+		//   dismiss  -> close/cancel a menu or popup (an escape press)
+		if (type == "continue") {
+			push_key(keycode_for("space"));
+			return "{\"ok\":true,\"did\":\"continue\"}";
+		}
+		if (type == "dismiss") {
+			push_key(keycode_for("escape"));
+			return "{\"ok\":true,\"did\":\"dismiss\"}";
+		}
+
 		if (type == "answer") {
 			Usecode_machine* uc   = gwin->get_usecode();
 			Conversation*    conv = uc ? uc->get_conversation() : nullptr;
