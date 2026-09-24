@@ -217,6 +217,7 @@ static bool   arg_verify_files = false;    // Verify a game's files.
 #ifdef USE_LLM_AGENT
 static bool arg_llmagent      = false;    // Enable the LLM agent TCP server.
 static int  arg_llmagent_port = 0;        // Port (0 => default 45999).
+static bool arg_newgame       = false;    // Force a fresh new game (LLM agent).
 #endif
 
 static string arg_installmod  = {};
@@ -321,6 +322,7 @@ int main(int argc, char* argv[]) {
 #ifdef USE_LLM_AGENT
 	parameters.declare("--llmagent", &arg_llmagent, true);
 	parameters.declare("--llmagent-port", &arg_llmagent_port, 0);
+	parameters.declare("--newgame", &arg_newgame, true);
 #endif
 #if defined _WIN32
 	bool portable = false;
@@ -1150,6 +1152,16 @@ static void Init() {
 
 	gwin->init_files();
 	gwin->read_gwin();
+#ifdef USE_LLM_AGENT
+	// LLM agent: start from a PRISTINE new game when asked, so an automated run
+	// begins at the canonical opening instead of continuing a progressed (and
+	// possibly corrupted) gamedat. This restores gamedat from INITGAME, exactly
+	// like the "New Game" menu, but without the interactive intro.
+	if (arg_newgame) {
+		cout << "LLM agent: forcing a fresh new game (init_gamedat)." << endl;
+		gwin->init_gamedat(true);
+	}
+#endif
 #ifdef USE_LLM_AGENT
 	// Open the agent bridge before setup_game() so the port is available
 	// immediately (setup_game may run a blocking intro loop for a new game).
