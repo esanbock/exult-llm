@@ -246,7 +246,12 @@ periodically). For finer detail you have the recall/quests tools.
                                   b lootable body/container-corpse (search it)
                                   x corpse (nothing to take)   n container
                                   * loose item (pickup)   E exit/route (gate,
-                                    stairs, ladder - the way through/out)
+                                    stairs, ladder - the way through/out).
+                                    STAIRS ARE DIRECTIONAL: you climb them only
+                                    from the BOTTOM STEP, not the side. If a step
+                                    onto stairs is "blocked", walk AROUND to line
+                                    up with the bottom of the stairs, then MOVE
+                                    onto them (goto won't land on a stairs tile).
                                   ~ water   = fence/barrier (find a gap or gate)
                                   + closed door (goto opens it)   / open door
                                   . walkable ground   # blocked
@@ -1357,6 +1362,16 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         res = ollama.chat_ex(SYSTEM_PROMPT, _user)
         reply = res["content"]
         reason, action = parse_reply(reply)
+        # Honor the blocked-breaker: if the last few moves were blocked (e.g.
+        # stairs approached from the wrong side - they only climb from the
+        # bottom step), and the model is AGAIN trying to move/goto the same way,
+        # override with a committed explore AWAY so it can re-approach from a
+        # different side or pursue the goal elsewhere.
+        if session.pop("force_explore_next", False):
+            if isinstance(action, dict) and action.get("type") in ("move", "goto"):
+                action = _explore_far(state, session, True)
+                reason = "(guard) previous route impassable; exploring away to re-approach"
+                print(f"[{step:03d}] blocked-breaker: exploring away from impassable route")
         # Repeated-goal detector: if the model keeps stating the SAME short goal
         # turn after turn, it is likely re-deriving a goal instead of consulting
         # what it already knows. Set an advisory review-nudge for NEXT turn
@@ -2565,6 +2580,28 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     _ok = result.get("ok") if isinstance(result, dict) else None
     kb.record_tool(_atype, _ok)
     session["last_action_type"] = _atype
+    # Blocked-move / unreachable-target breaker: a move that comes back
+    # blocked:true (e.g. stairs that can't be climbed from this angle) means the
+    # avatar physically can't go there. If this keeps happening, ABANDON the
+    # target: record a strong bump telling the agent this route is impassable,
+    # and force a committed explore AWAY so it stops wasting turns and pursues
+    # its goal another way (the target NPC/place may be reachable elsewhere).
+    if _atype == "move" and isinstance(result, dict) and result.get("blocked"):
+        session["blocked_moves"] = session.get("blocked_moves", 0) + 1
+    elif _atype == "move" and isinstance(result, dict) and not result.get("blocked"):
+        session["blocked_moves"] = 0
+    if session.get("blocked_moves", 0) >= 3:
+        session["blocked_moves"] = 0
+        session["last_bump"] = (
+            "That route is IMPASSABLE - your last several steps were blocked "
+            "(e.g. stairs you cannot climb from this side, or a wall). Stop "
+            "trying to go that exact way. Pick a DIFFERENT approach or a "
+            "different objective; the person/place you want is reachable by "
+            "another route or will come to you. Walk away and try elsewhere.")
+        # Overwrite the just-executed (blocked) action's follow-up by nudging
+        # exploration next turn via a flag the top-of-turn logic can honor.
+        session["force_explore_next"] = True
+        print(f"[{step:03d}] blocked-breaker: route impassable; abandon target")
     # Track FAILED pickups so we don't retry the same un-takeable item over and
     # over (tongs x4 etc). Key by item name; after a couple of failures, tell
     # the agent to stop trying that item.
