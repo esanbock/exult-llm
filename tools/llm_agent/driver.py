@@ -167,7 +167,13 @@ periodically). For finer detail you have the recall/quests tools.
   turn (int)                  - the current turn number (increments each action).
                                 Time is passing - use it to notice when you have
                                 spent many turns on one thing without progress.
-  player: {tx,ty (your absolute tile on the world map), hp, max_hp, hp_pct, food}
+  player: {tx,ty (your absolute tile on the world map), elevation, hp, max_hp, hp_pct, food}
+                                ELEVATION: 0 = ground level. >0 means you are UP
+                                on a wall walkway / upper floor / stairs. The
+                                world is 3D: most people & items are at ground
+                                level and are NOT reachable while you are up high
+                                - descend (walk back down the stairs) to reach
+                                them.
                                 HEALTH: hp is CURRENT, max_hp is your MAXIMUM
                                 (== your strength). hp == max_hp means FULL
                                 health - you do NOT need healing. Only seek a
@@ -531,6 +537,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "turn": state.get("turn"),
         "player": {
             "tx": p.get("tx"), "ty": p.get("ty"),
+            "elevation": p.get("tz", 0),
             "hp": p.get("hp"), "max_hp": p.get("max_hp"),
             "hp_pct": (round(100 * p.get("hp", 0) / p["max_hp"])
                        if p.get("max_hp") else None),
@@ -582,6 +589,13 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             "DIFFERENT now: walk AWAY to a new area (goto a distant known place "
             "or explore), or talk to a NEW person. Whatever you keep trying here "
             "is NOT working - abandon it.")
+    if (p.get("tz", 0) or 0) >= 1:
+        view["ELEVATION_NOTE"] = (
+            f"You are UP on an elevated surface (a wall walkway / upper floor, "
+            f"elevation {p.get('tz')}). Most people and items are at GROUND level "
+            "and are NOT reachable from up here. If you're looking for someone, "
+            "come back DOWN (walk back to the stairs/ramp and descend) unless you "
+            "specifically need something up here.")
     doors = state.get("doors") or []
     if doors:
         view["doors"] = [
@@ -2491,12 +2505,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # Did we move at all since the previous turn?
         moved = here != session.get("prev_pos_for_goto")
         session["prev_pos_for_goto"] = here
-        # --- Stairs climb: these stairs are DIRECTIONAL - you climb by walking
-        #     WEST->EAST (step east onto the west end of the stairs row). goto
-        #     won't land on a stairs tile and the model keeps approaching from
-        #     the N/S side. So: find the stairs 'E' cells on the grid, compute
-        #     the ENTRY tile = one tile WEST of the west-most E on its row, route
-        #     to that entry tile, then step EAST onto the stairs.
+        # --- Stairs climb (empirical): a staircase is a RAMP - you climb by
+        #     repeatedly MOVING in the ascending direction and tz rises one per
+        #     step (verified: walking east across the ramp took tz 0->5 onto the
+        #     wall). goto stalls at tz1 and oscillates, so we drive MOVEs. We
+        #     learn the ascending direction from feedback: remember our last tz;
+        #     if the last climb-move RAISED tz, keep going that direction; else
+        #     try the next direction toward the stairs 'E' cells.
         _reason_stairs = any(w in (reason or "").lower()
                              for w in ("stair", "climb", "up to", "fortress", "tower"))
         rows = (state.get("grid") or "").split("\n")
@@ -2504,42 +2519,37 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _e_cells = [(x - cx, y - cy)
                     for y in range(len(rows)) for x in range(len(rows[y]))
                     if rows[y][x] == "E"]
-        # Bounded assistance: try to help climb for a limited number of turns.
-        # If it hasn't worked (avatar still at tz 0 near the same stairs after
-        # many tries), STOP forcing it - the staircase may be unclimbable from
-        # here or the goal (a Mayor atop the wall) may be mistaken. Let the
-        # agent pursue its objective another way. (Self-sufficiency: we assist,
-        # we don't trap the agent against one staircase forever.)
+        _cur_tz = (state.get("player") or {}).get("tz", 0) or 0
         _sc = session.get("stairs_attempts", 0)
-        if _reason_stairs and _e_cells and _sc < 12:
+        if _reason_stairs and _e_cells and _sc < 25:
             session["stairs_attempts"] = _sc + 1
-            # West-most E cell (smallest dx). Its entry is one tile further west.
-            _wmost = min(_e_cells, key=lambda c: (c[0], abs(c[1])))
-            _entry = (_wmost[0] - 1, _wmost[1])   # tile just west of the stairs
             _nm = {(0,-1):"n",(0,1):"s",(1,0):"e",(-1,0):"w",
                    (1,-1):"ne",(1,1):"se",(-1,1):"sw",(-1,-1):"nw"}
-            def _cellg(ddx, ddy):
-                x, y = cx + ddx, cy + ddy
-                return rows[y][x] if 0 <= y < len(rows) and 0 <= x < len(rows[y]) else "#"
-            if (0, 0) == _entry:
-                # We ARE on the entry tile (just west of the stairs) -> climb east.
-                action = {"type": "move", "dir": "e", "speed": 120}
-                reason = "(guard) climbing stairs: stepping EAST onto them"
-                print(f"[{step:03d}] stairs-climb: step E onto stairs")
+            _prev_tz = session.get("climb_prev_tz")
+            _prev_dir = session.get("climb_dir")
+            session["climb_prev_tz"] = _cur_tz
+            # If our last move raised tz, we're on the ramp ascending - keep going.
+            if _prev_dir is not None and _prev_tz is not None and _cur_tz > _prev_tz:
+                action = {"type": "move", "dir": _prev_dir, "speed": 120}
+                reason = f"(guard) climbing ramp {_prev_dir} (tz {_prev_tz}->{_cur_tz})"
+                print(f"[{step:03d}] stairs-climb: continue {_prev_dir} tz={_cur_tz}")
             else:
-                # Route toward the entry tile with a direct step (prefer a
-                # walkable neighbor toward it) so we line up on the WEST side.
-                _sdx = (1 if _entry[0] > 0 else -1 if _entry[0] < 0 else 0)
-                _sdy = (1 if _entry[1] > 0 else -1 if _entry[1] < 0 else 0)
-                # pick a walkable step toward entry
-                _cands = [(_sdx, _sdy), (_sdx, 0), (0, _sdy)]
-                _pick = next((c for c in _cands if c != (0, 0)
-                              and _cellg(*c) in ".*&CxbnE/+@"), None)
-                if _pick:
-                    action = {"type": "move", "dir": _nm[_pick], "speed": 120}
-                    reason = f"(guard) lining up WEST of stairs: step {_nm[_pick]}"
-                    print(f"[{step:03d}] stairs-approach: step {_nm[_pick]} toward west entry {_entry}")
-        elif _reason_stairs and _e_cells and _sc >= 12:
+                # Pick a direction toward the nearest E cell and try it; the
+                # ramp base is reached by heading at the stairs. Cycle the
+                # candidate directions across attempts until one raises tz.
+                _near = min(_e_cells, key=lambda c: abs(c[0]) + abs(c[1]))
+                _tdx = (1 if _near[0] > 0 else -1 if _near[0] < 0 else 0)
+                _tdy = (1 if _near[1] > 0 else -1 if _near[1] < 0 else 0)
+                # candidate step dirs, biased toward the stairs, rotating by attempt
+                _cands = [(_tdx, _tdy), (_tdx, 0), (0, _tdy),
+                          (1, 0), (-1, 0), (0, 1), (0, -1)]
+                _cands = [c for c in _cands if c != (0, 0)]
+                _pick = _cands[_sc % len(_cands)]
+                session["climb_dir"] = _nm[_pick]
+                action = {"type": "move", "dir": _nm[_pick], "speed": 120}
+                reason = f"(guard) approaching/climbing stairs: try {_nm[_pick]}"
+                print(f"[{step:03d}] stairs-climb: try {_nm[_pick]} toward E{_near} tz={_cur_tz}")
+        elif _reason_stairs and _e_cells and _sc >= 25:
             # Gave the climb enough tries and it hasn't worked - stop forcing it.
             # Inform the agent this staircase is a dead end so it stops trying to
             # go up here and pursues its goal (the Mayor) by another route.
