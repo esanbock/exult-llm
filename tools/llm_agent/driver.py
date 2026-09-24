@@ -2312,7 +2312,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     return rows[y][x]
                 return "#"
             def walkable(ch):
-                return ch in ".*&Cx/@"   # open, item, npc, body, open door
+                # open, item, npc, companion, body, container, open/closed door,
+                # EXIT/STAIRS ('E'), self. Must include 'E' or this guard will
+                # redirect a step onto stairs and prevent climbing.
+                return ch in ".*&CxbnE/+@"
             d = action.get("dir", "")
             dxy = deltas.get(d)
             if dxy and not walkable(cell(*dxy)):
