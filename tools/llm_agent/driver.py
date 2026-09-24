@@ -475,20 +475,30 @@ OUTPUT RULES (critical - follow exactly):
 def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: str = "", alert: str = "", squeeze: int = 0) -> str:
     """Compact the observation to keep the prompt small and focused.
 
-    `squeeze` is a context-pressure level (0 = plenty of room .. 3 = very
-    tight). Higher levels shrink the raw rolling windows (dialogue/actions/
-    objects) so the prompt stays within num_ctx as the playthrough grows. The
-    durable structured memory (quests, places, hints, episodic summary) is
-    always kept - only the verbose recent-context tiers are trimmed."""
-    # Window sizes per squeeze level (dialogue, actions, objects, nearby, places).
+    `squeeze` is a context-pressure LEVEL that dynamically sizes the short-term
+    (rolling) memory windows to USE the available context:
+      -2 = huge room  .. 0 = default .. +3 = very tight.
+    Negative levels EXPAND the windows (more recent dialogue/actions/objects
+    kept in view) when the prompt is well under num_ctx; positive levels shrink
+    them as the prompt approaches the limit. The durable structured memory
+    (quests, places, hints, episodic summary) is always kept; only these verbose
+    recent-context tiers grow/shrink. This makes short-term memory as large as
+    the context budget comfortably allows."""
+    # Window sizes per level (dialogue, actions, objects, nearby, places).
+    # Index 0 in this list is the MOST expanded; the default (level 0) maps to
+    # _EXPAND_BASE below so negative levels index earlier (bigger) rows.
     _TIERS = [
-        (30, 10, 14, 8, 12),   # 0: roomy
-        (18, 8, 10, 8, 10),    # 1: trim
-        (10, 6, 8, 6, 8),      # 2: tight
-        (6, 4, 6, 5, 6),       # 3: very tight
+        (80, 24, 30, 14, 24),  # -2: huge room (big short-term memory)
+        (50, 16, 20, 12, 18),  # -1: roomy+
+        (30, 10, 14, 8, 12),   #  0: default
+        (18, 8, 10, 8, 10),    # +1: trim
+        (10, 6, 8, 6, 8),      # +2: tight
+        (6, 4, 6, 5, 6),       # +3: very tight
     ]
-    lvl = max(0, min(int(squeeze), len(_TIERS) - 1))
-    dlg_n, act_n, obj_n, near_n, place_n = _TIERS[lvl]
+    _EXPAND_BASE = 2  # list index that corresponds to squeeze level 0
+    idx = max(0, min(_EXPAND_BASE + int(squeeze), len(_TIERS) - 1))
+    dlg_n, act_n, obj_n, near_n, place_n = _TIERS[idx]
+    lvl = max(0, int(squeeze))  # only positive levels trim durable-view caps
     p = state.get("player") or {}
     nearby = state.get("nearby") or []
     objects = state.get("objects") or []
@@ -1257,14 +1267,29 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         reserve = 500  # tokens kept free for the model's answer
         usable = max(1, ctx_max - reserve)
         frac = last_pt / usable
-        if frac >= 0.80:
+        # Dynamic sizing: pick the level that keeps the prompt near a target
+        # band. Below the band we EXPAND short-term memory (negative levels) to
+        # use the spare context; above it we shrink. This fills the available
+        # window instead of leaving it idle at ~55%.
+        if frac >= 0.85:
             squeeze = 3
-        elif frac >= 0.60:
+        elif frac >= 0.72:
             squeeze = 2
-        elif frac >= 0.45:
+        elif frac >= 0.60:
             squeeze = 1
-        else:
+        elif frac >= 0.45:
             squeeze = 0
+        elif frac >= 0.30:
+            squeeze = -1    # expand: plenty of room
+        else:
+            squeeze = -2    # expand a lot: lots of idle context
+        # Damp the controller: move at most ONE level per turn toward the
+        # target so a big expansion doesn't overshoot and cause oscillation.
+        _prev = session.get("squeeze", 0)
+        if squeeze > _prev + 1:
+            squeeze = _prev + 1
+        elif squeeze < _prev - 1:
+            squeeze = _prev - 1
         session["squeeze"] = squeeze
         # When under pressure, compress old dialogue into story_so_far and drop
         # it from the raw window (keep the most recent exchanges intact).
