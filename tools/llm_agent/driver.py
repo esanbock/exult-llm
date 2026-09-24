@@ -1444,7 +1444,25 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if _prog_key != session.get("last_progress_key"):
             session["last_progress_key"] = _prog_key
             session["last_progress_turn"] = step
+            session["last_deprio_turn"] = step   # reset the decay clock on progress
         state["turns_since_progress"] = step - session.get("last_progress_turn", step)
+        # Quest-priority DECAY: if the agent keeps pursuing the same goal with NO
+        # progress, the quest it's effectively 'on' (matched by its recent goal
+        # text) gets its priority lowered so it naturally moves to other quests.
+        # It's stateless and owns its quest log, so we don't delete - we let
+        # futility decay priority. Fire every ~40 stalled turns.
+        if (state["turns_since_progress"] >= 40
+                and step - session.get("last_deprio_turn", -999) >= 40):
+            session["last_deprio_turn"] = step
+            _recent_goal = " ".join((session.get("reason_hist") or [])[-3:])
+            demoted = kb.deprioritize_matching_quest(_recent_goal)
+            if demoted:
+                print(f"[{step:03d}] quest-decay: lowered priority of '{demoted}' "
+                      f"(no progress {state['turns_since_progress']} turns)")
+                session["last_bump"] = (
+                    f"You've spent many turns on '{demoted}' with no progress, so "
+                    "its priority was lowered. Work a DIFFERENT quest now - check "
+                    "your quest log and pick another high-priority one.")
         # Tell summarize_state who we're talking to, so it can proactively show
         # which topics we've already asked this NPC and which we have NOT.
         if state.get("conversation_in_progress"):
