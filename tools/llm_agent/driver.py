@@ -1450,19 +1450,30 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # progress, the quest it's effectively 'on' (matched by its recent goal
         # text) gets its priority lowered so it naturally moves to other quests.
         # It's stateless and owns its quest log, so we don't delete - we let
-        # futility decay priority. Fire every ~40 stalled turns.
-        if (state["turns_since_progress"] >= 40
-                and step - session.get("last_deprio_turn", -999) >= 40):
+        # futility decay priority. Trigger on EITHER a long no-progress stall OR
+        # a tight physical loop (confined to a small area many turns), since
+        # trivial quest auto-resolves can keep resetting the no-progress timer
+        # while the avatar is really stuck (e.g. the fortress descend churn).
+        _confined = (state.get("stuck_in_place")
+                     or (session.get("wedge_recent") and len(session["wedge_recent"]) >= 6
+                         and (max(t[0] for t in session["wedge_recent"])
+                              - min(t[0] for t in session["wedge_recent"])) <= 6
+                         and (max(t[1] for t in session["wedge_recent"])
+                              - min(t[1] for t in session["wedge_recent"])) <= 6))
+        _stalled = state["turns_since_progress"] >= 40
+        if ((_stalled or _confined)
+                and step - session.get("last_deprio_turn", -999) >= 25):
             session["last_deprio_turn"] = step
             _recent_goal = " ".join((session.get("reason_hist") or [])[-3:])
             demoted = kb.deprioritize_matching_quest(_recent_goal)
             if demoted:
                 print(f"[{step:03d}] quest-decay: lowered priority of '{demoted}' "
-                      f"(no progress {state['turns_since_progress']} turns)")
+                      f"(stalled/confined loop)")
                 session["last_bump"] = (
                     f"You've spent many turns on '{demoted}' with no progress, so "
                     "its priority was lowered. Work a DIFFERENT quest now - check "
-                    "your quest log and pick another high-priority one.")
+                    "your quest log and pick another high-priority one, and LEAVE "
+                    "this area to pursue it.")
         # Tell summarize_state who we're talking to, so it can proactively show
         # which topics we've already asked this NPC and which we have NOT.
         if state.get("conversation_in_progress"):
