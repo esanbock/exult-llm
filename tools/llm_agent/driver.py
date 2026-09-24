@@ -2545,7 +2545,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     if rows[y][x] == "E"]
         _cur_tz = (state.get("player") or {}).get("tz", 0) or 0
         _sc = session.get("stairs_attempts", 0)
-        if _reason_stairs and _e_cells and _sc < 25:
+        # Only ASSIST the climb when: the model itself is trying to move/goto
+        # (don't hijack talk/search/etc), it's reasoning about stairs, stairs
+        # are CLOSE (within ~4 tiles), and it isn't already up high. This keeps
+        # the guard from commandeering the agent every turn.
+        _near_stairs = _e_cells and min(abs(c[0]) + abs(c[1]) for c in _e_cells) <= 4
+        _act_type = action.get("type") if isinstance(action, dict) else None
+        if (_reason_stairs and _near_stairs and _sc < 25
+                and _act_type in ("move", "goto") and _cur_tz < 5):
             session["stairs_attempts"] = _sc + 1
             _nm = {(0,-1):"n",(0,1):"s",(1,0):"e",(-1,0):"w",
                    (1,-1):"ne",(1,1):"se",(-1,1):"sw",(-1,-1):"nw"}
