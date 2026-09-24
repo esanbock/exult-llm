@@ -2491,31 +2491,47 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # Did we move at all since the previous turn?
         moved = here != session.get("prev_pos_for_goto")
         session["prev_pos_for_goto"] = here
-        # --- Stairs/exit step: goto WON'T land on a stairs/level-transition
-        #     tile, so a "climb stairs" goto oscillates. If the model is heading
-        #     for a stairs/exit, find the NEAREST actual 'E' cell ON THE GRID
-        #     (real perception, not a possibly-stale remembered coord) and step
-        #     directly toward it. Climbing stairs is just movement onto them.
+        # --- Stairs climb: these stairs are DIRECTIONAL - you climb by walking
+        #     WEST->EAST (step east onto the west end of the stairs row). goto
+        #     won't land on a stairs tile and the model keeps approaching from
+        #     the N/S side. So: find the stairs 'E' cells on the grid, compute
+        #     the ENTRY tile = one tile WEST of the west-most E on its row, route
+        #     to that entry tile, then step EAST onto the stairs.
         _reason_stairs = any(w in (reason or "").lower()
-                             for w in ("stair", "climb", "exit", "up to", "fortress"))
+                             for w in ("stair", "climb", "up to", "fortress", "tower"))
         rows = (state.get("grid") or "").split("\n")
         cx, cy = _grid_center(rows)
         _e_cells = [(x - cx, y - cy)
                     for y in range(len(rows)) for x in range(len(rows[y]))
                     if rows[y][x] == "E"]
         if _reason_stairs and _e_cells:
-            # nearest E cell (grid dx,dy relative to avatar)
-            _edx, _edy = min(_e_cells, key=lambda c: abs(c[0]) + abs(c[1]))
-            if abs(_edx) <= 3 and abs(_edy) <= 3:
-                _sdx = (1 if _edx > 0 else -1 if _edx < 0 else 0)
-                _sdy = (1 if _edy > 0 else -1 if _edy < 0 else 0)
-                _nm = {(0,-1):"n",(0,1):"s",(1,0):"e",(-1,0):"w",
-                       (1,-1):"ne",(1,1):"se",(-1,1):"sw",(-1,-1):"nw"}
-                # If already ON/adjacent to the E cell, step straight onto it;
-                # otherwise move to line up under it first.
-                action = {"type": "move", "dir": _nm.get((_sdx, _sdy), "n"), "speed": 120}
-                reason = f"(guard) climbing stairs: step {_nm.get((_sdx,_sdy))} onto E cell"
-                print(f"[{step:03d}] stairs-step: move {_nm.get((_sdx,_sdy))} toward E@({_edx},{_edy})")
+            # West-most E cell (smallest dx). Its entry is one tile further west.
+            _wmost = min(_e_cells, key=lambda c: (c[0], abs(c[1])))
+            _entry = (_wmost[0] - 1, _wmost[1])   # tile just west of the stairs
+            _nm = {(0,-1):"n",(0,1):"s",(1,0):"e",(-1,0):"w",
+                   (1,-1):"ne",(1,1):"se",(-1,1):"sw",(-1,-1):"nw"}
+            def _cellg(ddx, ddy):
+                x, y = cx + ddx, cy + ddy
+                return rows[y][x] if 0 <= y < len(rows) and 0 <= x < len(rows[y]) else "#"
+            if (0, 0) == _entry:
+                # We ARE on the entry tile (just west of the stairs) -> climb east.
+                action = {"type": "move", "dir": "e", "speed": 120}
+                reason = "(guard) climbing stairs: stepping EAST onto them"
+                print(f"[{step:03d}] stairs-climb: step E onto stairs")
+            else:
+                # Route toward the entry tile with a direct step (prefer a
+                # walkable neighbor toward it) so we line up on the WEST side.
+                _sdx = (1 if _entry[0] > 0 else -1 if _entry[0] < 0 else 0)
+                _sdy = (1 if _entry[1] > 0 else -1 if _entry[1] < 0 else 0)
+                # pick a walkable step toward entry
+                _cands = [(_sdx, _sdy), (_sdx, 0), (0, _sdy)]
+                _pick = next((c for c in _cands if c != (0, 0)
+                              and _cellg(*c) in ".*&CxbnE/+@"), None)
+                if _pick:
+                    action = {"type": "move", "dir": _nm[_pick], "speed": 120}
+                    reason = f"(guard) lining up WEST of stairs: step {_nm[_pick]}"
+                    print(f"[{step:03d}] stairs-approach: step {_nm[_pick]} toward west entry {_entry}")
+        _dead_old_stairs = False
         near_here = abs(tgt[0]-here[0]) + abs(tgt[1]-here[1]) <= 1
         last_was_goto = session.get("last_action_type") == "goto"
         if near_here:
