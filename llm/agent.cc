@@ -274,26 +274,55 @@ namespace {
 		const int        dimy = 2 * ry + 1;
 
 		// Start from terrain/blocking, then overlay objects and NPCs.
-		std::vector<std::string> rows(dimy, std::string(dimx, '.'));
+		std::vector<std::string> rows(dimy, std::string(dimx, '#'));
 
-		// Blocking layer. Use the AVATAR's own walkability check so elevated
-		// walkable surfaces (wall-tops reachable via stairs, bridges, etc.) are
-		// NOT shown as solid walls. is_tile_occupied only tests a single Z and
-		// wrongly marks a wall as blocked even when its TOP is walkable. We test
-		// whether the avatar could stand at each tile allowing a rise (stairs),
-		// updating the probe's tz to the standable height.
+		// Walkability via 3D REACHABILITY BFS from the avatar. The world is 3D:
+		// stairs raise you to a wall-top / upper floor and only climb from the
+		// correct approach tile. A single-Z occupancy test (or a one-step check)
+		// mis-marks wall-tops as solid and can't tell that a stairs tile is
+		// reachable only from its bottom step. So we FLOOD-FILL using the
+		// avatar's own step primitive (Actor::is_blocked), which returns the
+		// resulting standing height (new_lift) for each step - naturally
+		// climbing stairs, walking elevated walkways, and refusing side
+		// approaches. A tile is '.' (walkable) iff the BFS can stand on it.
 		const int move_flags = av->get_type_flags();
-		for (int dy = -ry; dy <= ry; ++dy) {
-			for (int dx = -rx; dx <= rx; ++dx) {
-				const int tx = (at.tx + dx + c_num_tiles) % c_num_tiles;
-				const int ty = (at.ty + dy + c_num_tiles) % c_num_tiles;
-				// Probe from the avatar's tile so elevation transitions (a rise
-				// onto stairs / a wall walkway) are considered walkable.
-				Tile_coord probe(tx, ty, at.tz);
-				Tile_coord from = at;
-				const bool blocked = av->is_blocked(probe, &from, move_flags);
-				if (blocked) {
-					rows[dy + ry][dx + rx] = '#';
+		{
+			// Per-cell best-known standing tz reached by the BFS (-128 = unseen).
+			std::vector<int> reach(dimx * dimy, -128);
+			auto idx = [&](int gx, int gy) { return gy * dimx + gx; };
+			std::deque<std::pair<int, int>> bfs;  // grid (gx,gy)
+			const int cxg = rx, cyg = ry;         // avatar at grid center
+			reach[idx(cxg, cyg)] = at.tz;
+			bfs.emplace_back(cxg, cyg);
+			rows[cyg][cxg] = '.';
+			static const int ndx[8] = {0, 0, 1, -1, 1, 1, -1, -1};
+			static const int ndy[8] = {-1, 1, 0, 0, -1, 1, -1, 1};
+			while (!bfs.empty()) {
+				auto [gx, gy] = bfs.front();
+				bfs.pop_front();
+				const int fz = reach[idx(gx, gy)];
+				const Tile_coord from(
+						(at.tx + (gx - cxg) + c_num_tiles) % c_num_tiles,
+						(at.ty + (gy - cyg) + c_num_tiles) % c_num_tiles, fz);
+				for (int d = 0; d < 8; ++d) {
+					const int nx = gx + ndx[d];
+					const int ny = gy + ndy[d];
+					if (nx < 0 || nx >= dimx || ny < 0 || ny >= dimy) {
+						continue;
+					}
+					if (reach[idx(nx, ny)] != -128) {
+						continue;    // already reached
+					}
+					Tile_coord to(
+							(at.tx + (nx - cxg) + c_num_tiles) % c_num_tiles,
+							(at.ty + (ny - cyg) + c_num_tiles) % c_num_tiles, fz);
+					Tile_coord fromc = from;
+					const bool blocked = av->is_blocked(to, &fromc, move_flags);
+					if (!blocked) {
+						reach[idx(nx, ny)] = to.tz;   // resulting standing height
+						rows[ny][nx] = '.';
+						bfs.emplace_back(nx, ny);
+					}
 				}
 			}
 		}
