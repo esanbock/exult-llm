@@ -469,6 +469,12 @@ periodically). For finer detail you have the recall/quests tools.
             (optional). Both "pickup" and "take" work for loose items; "take"
             additionally reaches inside bodies/containers. Keys, notes and small
             items often sit loose on furniture - grab them with either verb.
+  give    - Hand a carried ITEM to a nearby PERSON (the human drags an item onto
+            them). params: {"item":"<item>","to":"<npc name>"} ("to" optional =
+            nearest person). Stand next to them first. Use this to give someone
+            evidence, a gift, a delivery, a payment, or a quest item they asked
+            for. The person reacts (may advance a quest). Distinct from "drop"
+            (which puts an item on the ground).
   inventory - Report what you are WEARING (per slot) and CARRYING. params: none.
   annotate - Mark the current location (or a given tile) on your map with a
             label so you can return later. params: {"label":"<name>"} (uses your
@@ -3422,7 +3428,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if _ok is not False and _atype in (
                 "search", "pickup", "take", "open", "read", "talk",
                 "close", "equip", "unequip", "drop", "attack", "combat",
-                "unlock", "use_key", "use"):
+                "unlock", "use_key", "use", "give"):
             kb.record_activity(_atype)
     session["last_action_type"] = _atype
     # Blocked-move / unreachable-target breaker: a move that comes back
@@ -3485,7 +3491,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     atype = action.get("type") if isinstance(action, dict) else None
     _ok = result.get("ok") if isinstance(result, dict) else None
     if atype in ("talk", "open", "pickup", "search", "combat", "feed", "take", "read",
-                 "equip", "unequip", "drop", "use", "unlock", "attack"):
+                 "equip", "unequip", "drop", "use", "unlock", "attack", "give"):
         p0 = state.get("player") or {}
         detail = action.get("name") or action.get("dir") or ""
         outcome = ""
@@ -3559,6 +3565,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         elif atype == "attack":
             outcome = (f" -> attacking {result.get('target', detail)}"
                        if _ok else " -> no target to attack")
+        elif atype == "give":
+            if _ok:
+                outcome = f" -> gave {result.get('item', '')} to {result.get('to', '')}"
+            else:
+                _e = result.get("error", "") if isinstance(result, dict) else ""
+                outcome = f" -> could not give: {_e}" if _e else " -> could not give"
+                if _e:
+                    session["last_bump"] = _e
         elif atype == "read":
             if _ok:
                 _txt = (result.get("text") or "").strip() if isinstance(result, dict) else ""

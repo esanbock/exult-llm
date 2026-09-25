@@ -2330,6 +2330,117 @@ namespace LLM_agent {
 			return "{\"ok\":true,\"did\":\"use\"," + json_str("object", nm) + "}";
 		}
 
+		if (type == "give") {
+			// Hand a carried ITEM to a nearby NPC (the human drags an item onto
+			// a person). Used for quests: give evidence, a gift, a delivery, pay
+			// someone, etc. params: {"item":"<item>","to":"<npc>"} - 'to'
+			// optional (nearest non-party person). Triggers the item's usecode
+			// with the NPC as target (so the NPC reacts/quest fires), then
+			// transfers the item into the NPC's inventory.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			string item_name, to_name;
+			get_string(action_json, "item", item_name);
+			get_string(action_json, "to", to_name);
+			std::string ilow = item_name, tlow = to_name;
+			std::transform(ilow.begin(), ilow.end(), ilow.begin(), ::tolower);
+			std::transform(tlow.begin(), tlow.end(), tlow.begin(), ::tolower);
+			if (ilow.empty()) {
+				return "{\"ok\":false,\"error\":\"say WHICH item to give: "
+					   "{\\\"item\\\":\\\"<name>\\\",\\\"to\\\":\\\"<npc>\\\"}\"}";
+			}
+			// Find the recipient NPC (nearest matching non-party, within reach).
+			const Tile_coord at = av->get_tile();
+			std::vector<Actor*> npcs;
+			gwin->get_nearby_npcs(npcs);
+			Actor* npc = nullptr;
+			int    nbest = 1 << 30;
+			for (Actor* a : npcs) {
+				if (!a || a == av || a->is_dead() || a->is_in_party()) {
+					continue;
+				}
+				if (!tlow.empty()) {
+					std::string l = a->get_name();
+					std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+					if (l.find(tlow) == std::string::npos) {
+						continue;
+					}
+				}
+				const Tile_coord ot = a->get_tile();
+				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+				if (d <= 4 && d < nbest) {
+					nbest = d;
+					npc = a;
+				}
+			}
+			if (!npc) {
+				return "{\"ok\":false,\"error\":\"no "
+					   + std::string(tlow.empty() ? "person" : "such person")
+					   + " within reach to give to - stand next to them\"}";
+			}
+			// Find the item in the avatar's pack.
+			Container_game_object* pack = av->get_readied(backpack)
+					? av->get_readied(backpack)->as_container()
+					: nullptr;
+			Game_object* item = nullptr;
+			if (pack) {
+				std::vector<Container_game_object*> stack{pack};
+				while (!stack.empty() && !item) {
+					Container_game_object* c = stack.back();
+					stack.pop_back();
+					Object_iterator it(c->get_objects());
+					Game_object* inner;
+					while ((inner = it.get_next()) != nullptr) {
+						std::string l = inner->get_name();
+						std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+						if (!l.empty() && l.find(ilow) != std::string::npos) {
+							item = inner;
+							break;
+						}
+						if (Container_game_object* ic = inner->as_container()) {
+							stack.push_back(ic);
+						}
+					}
+				}
+			}
+			if (!item) {
+				return "{\"ok\":false,\"error\":\"you are not carrying '"
+					   + json_escape(ilow) + "'\"}";
+			}
+			const std::string inm = item->get_name();
+			const std::string tnm = npc->get_name();
+			// Trigger the item's usecode with the NPC as the intercepted target
+			// (this is how a gift/hand-over fires quest logic), then transfer it.
+			Usecode_machine* uc = gwin->get_usecode();
+			Game_object* oldtarg;
+			Tile_coord*  oldtile;
+			uc->save_intercept(oldtarg, oldtile);
+			uc->intercept_click_on_item(npc);
+			item->activate(Usecode_machine::double_click);
+			uc->restore_intercept(oldtarg, oldtile);
+			// Ensure the item actually moves to the NPC (if the usecode didn't
+			// already consume/move it). If it's still somewhere in our pack,
+			// transfer it.
+			Container_game_object* owner = item->get_owner();
+			bool still_ours = false;
+			while (owner) {
+				if (static_cast<Game_object*>(owner) == static_cast<Game_object*>(av)) {
+					still_ours = true;
+					break;
+				}
+				owner = owner->get_owner();
+			}
+			if (still_ours) {
+				Game_object_shared keep;
+				item->remove_this(&keep);
+				npc->add(item, false, true);
+			}
+			return "{\"ok\":true,\"did\":\"give\"," + json_str("item", inm)
+				   + "," + json_str("to", tnm) + "}";
+		}
+
 		if (type == "set_number") {
 			Slider_gump* sg = Slider_gump::get_active();
 			if (!sg) {
