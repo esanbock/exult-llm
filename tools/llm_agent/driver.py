@@ -3451,8 +3451,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if nm not in nearby_names:
             pos = kb.place_pos(nm) or kb.npc_last_pos(nm)
             if pos and pos[0] is not None:
-                action = {"type": "goto", "tx": pos[0], "ty": pos[1]}
-                reason = f"{reason} [mapped '{nm}' -> ({pos[0]},{pos[1]})]"
+                # FIXATION BREAKER: if this landmark was already reached and had
+                # NOTHING searchable (marked exhausted), stop re-going there -
+                # the model loops 'goto stables' forever. Redirect to a NEW area.
+                _exh = session.get("exhausted_landmarks") or set()
+                if any(abs(pos[0] - ex) + abs(pos[1] - ey) <= 2 for (ex, ey) in _exh):
+                    session["last_bump"] = (
+                        f"'{nm}' is a DEAD END for searching - you already went "
+                        "there and there was nothing to search/loot. STOP going "
+                        "back. Go to a DIFFERENT building you have NOT entered and "
+                        "search inside it. The chest you need is in ANOTHER house.")
+                    action = _explore_far(state, session, True)
+                    reason = f"(guard) '{nm}' already searched-empty; exploring a NEW building"
+                else:
+                    action = {"type": "goto", "tx": pos[0], "ty": pos[1]}
+                    reason = f"{reason} [mapped '{nm}' -> ({pos[0]},{pos[1]})]"
             else:
                 # Unresolvable target: it's not visible and not in our mental map
                 # or NPC memory. Don't hand the engine a goto it can't route
