@@ -37,12 +37,13 @@ from ollama_client import OllamaClient
 from thoughts_window import ThoughtsWindow
 from knowledge import KnowledgeBase
 
-SYSTEM_PROMPT = """\
-You are an autonomous agent playing Ultima VII: The Black Gate as the Avatar.
-You interact ONLY through the JSON tool interface described below. You cannot
-click, use a mouse, or do anything not listed as a TOOL. Think of this as an
-API: the only way to affect the game is to call one TOOL per turn.
-
+# --- Independently live-editable prompt sections -------------------------
+# These three constants hold the DEFAULT text for the MISSION, INTERACTION and
+# WISDOM sections of the system prompt. They are spliced into SYSTEM_PROMPT in
+# their original positions so the rendered prompt is byte-identical to before.
+# At runtime each section can be overridden (without restart) via the GUI, which
+# writes prompt_sections.json next to this module; see get_effective_system_prompt.
+DEFAULT_MISSION = """\
 # MISSION (your purpose - let this drive every decision)
 You are the Avatar, the hero of Ultima VII: The Black Gate - an open-world
 role-playing adventure full of towns, people, mysteries, quests, dungeons, and
@@ -63,8 +64,9 @@ General principles (apply to ANY situation, not one specific puzzle):
     not walk past unmet people to chase a single objective; a hint to find a
     specific person is NOT a reason to ignore everyone else you pass.
   * FOLLOW LEADS: when someone mentions a person, place, item, or event, treat
-    it as a lead worth pursuing. Use your journal to remember what you learned.
+    it as a lead worth pursuing. Use your journal to remember what you learned."""
 
+DEFAULT_INTERACTION = """\
 INTERACTION RULES (how the world works - know these so you don't waste turns):
   * PROXIMITY: to take, pickup, search, or open something you must be RIGHT NEXT
     to it (about 1 tile away). If you are farther, first "goto" the target's tile
@@ -85,8 +87,9 @@ INTERACTION RULES (how the world works - know these so you don't waste turns):
     body of a slain creature/person is also searchable/lootable.
   * COMBAT: enemies show HOSTILE. "attack" (by name or nearest hostile) engages
     one; "combat" toggles auto-fight. You must be near a foe to hit it (melee)
-    or have a ranged weapon. Flee fights you cannot win.
+    or have a ranged weapon. Flee fights you cannot win."""
 
+DEFAULT_WISDOM = """\
 RPG PLAYER WISDOM (genre habits a seasoned player relies on):
   * EXHAUST DIALOGUE: work through the WHOLE conversation tree with each person -
     ask every available topic (especially names, jobs, and any proper noun).
@@ -150,7 +153,19 @@ RPG PLAYER WISDOM (genre habits a seasoned player relies on):
     are met just wastes turns.
   * SURVIVE: keep fed and stay alive; avoid needless danger. Hunger, poison, and
     damage all reduce your Hits; at 0 Hits you fall unconscious. "feed" when
-    food is low; rest/heal when hurt.
+    food is low; rest/heal when hurt."""
+
+SYSTEM_PROMPT = """\
+You are an autonomous agent playing Ultima VII: The Black Gate as the Avatar.
+You interact ONLY through the JSON tool interface described below. You cannot
+click, use a mouse, or do anything not listed as a TOOL. Think of this as an
+API: the only way to affect the game is to call one TOOL per turn.
+
+""" + DEFAULT_MISSION + """
+
+""" + DEFAULT_INTERACTION + """
+
+""" + DEFAULT_WISDOM + """
 You are not told the solution to anything - reason from what you observe and are
 told, as a curious, capable adventurer would.
 
@@ -679,9 +694,123 @@ _PROMPT_EXTRA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   "prompt_extra.txt")
 _prompt_extra_cache = {"mtime": None, "text": ""}
 
+# Per-section OVERRIDES: operators can replace the MISSION / INTERACTION / WISDOM
+# sections of SYSTEM_PROMPT at runtime WITHOUT restarting by editing (via the
+# GUI) prompt_sections.json next to this module. Shape:
+#   {"mission": "...", "interaction": "...", "wisdom": "..."}
+# Any present key replaces that section's default text; absent keys keep the
+# DEFAULT_ constant. Like prompt_extra, we re-read only when the file's mtime
+# changes, so it's cheap. This is applied on top of SYSTEM_PROMPT, and THEN the
+# prompt_extra.txt operator-guidance block is appended (as before).
+_PROMPT_SECTIONS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "prompt_sections.json")
+_prompt_sections_cache = {"mtime": None, "data": {}}
+# Sentinel stored in the cache's mtime to FORCE a reload on next access. It can
+# never equal a real mtime (a float) nor None (the "file absent" marker), so a
+# reload always happens even when the file was just deleted.
+_FORCE_RELOAD = object()
+
+# Maps section name -> (DEFAULT_ constant). Order matters only for tidiness.
+_SECTION_DEFAULTS = {
+    "mission": DEFAULT_MISSION,
+    "interaction": DEFAULT_INTERACTION,
+    "wisdom": DEFAULT_WISDOM,
+}
+
+
+def _load_prompt_sections() -> dict:
+    """Return the current per-section overrides dict (cached by mtime)."""
+    try:
+        mt = os.path.getmtime(_PROMPT_SECTIONS_PATH)
+    except OSError:
+        mt = None
+    if mt != _prompt_sections_cache["mtime"]:
+        _prompt_sections_cache["mtime"] = mt
+        data = {}
+        if mt is not None:
+            try:
+                with open(_PROMPT_SECTIONS_PATH, encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                if isinstance(loaded, dict):
+                    # Keep only known sections with non-empty string values.
+                    for name in _SECTION_DEFAULTS:
+                        val = loaded.get(name)
+                        if isinstance(val, str) and val.strip():
+                            data[name] = val
+            except (OSError, ValueError):
+                data = {}
+        _prompt_sections_cache["data"] = data
+    return _prompt_sections_cache["data"]
+
+
+def get_prompt_section(name: str) -> str:
+    """Current text for 'mission'|'interaction'|'wisdom' (override if set)."""
+    if name not in _SECTION_DEFAULTS:
+        raise KeyError(f"unknown prompt section: {name!r}")
+    override = _load_prompt_sections().get(name)
+    return override if isinstance(override, str) and override.strip() \
+        else _SECTION_DEFAULTS[name]
+
+
+def get_prompt_section_default(name: str) -> str:
+    """The DEFAULT_ constant for a section (for GUI 'revert to default')."""
+    if name not in _SECTION_DEFAULTS:
+        raise KeyError(f"unknown prompt section: {name!r}")
+    return _SECTION_DEFAULTS[name]
+
+
+def set_prompt_section(name: str, text: "str | None") -> None:
+    """Set (or clear) a section override in prompt_sections.json.
+
+    text=None or empty/whitespace REMOVES the override (revert to default).
+    Robust if the file does not exist or is unreadable. The driver picks up the
+    change automatically on the next turn via the mtime cache.
+    """
+    if name not in _SECTION_DEFAULTS:
+        raise KeyError(f"unknown prompt section: {name!r}")
+    # Read whatever is currently on disk (ignore corruption).
+    data = {}
+    try:
+        with open(_PROMPT_SECTIONS_PATH, encoding="utf-8") as fh:
+            loaded = json.load(fh)
+        if isinstance(loaded, dict):
+            data = loaded
+    except (OSError, ValueError):
+        data = {}
+    if text is None or not str(text).strip():
+        data.pop(name, None)
+    else:
+        data[name] = str(text).strip()
+    try:
+        if data:
+            with open(_PROMPT_SECTIONS_PATH, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2, ensure_ascii=False)
+        else:
+            # Nothing left to override - remove the file entirely.
+            try:
+                os.remove(_PROMPT_SECTIONS_PATH)
+            except OSError:
+                pass
+    except OSError:
+        pass
+    # Invalidate cache so the change is visible immediately.
+    _prompt_sections_cache["mtime"] = _FORCE_RELOAD
+
 
 def get_effective_system_prompt() -> str:
-    """SYSTEM_PROMPT + any operator guidance from prompt_extra.txt (live)."""
+    """SYSTEM_PROMPT with any live per-section overrides applied, then any
+    operator guidance from prompt_extra.txt appended (both live)."""
+    # 1) Apply per-section overrides by substituting each section's DEFAULT_
+    #    text (which appears exactly once) with its override. With no overrides
+    #    present this is a no-op, so the result is byte-identical to SYSTEM_PROMPT.
+    prompt = SYSTEM_PROMPT
+    overrides = _load_prompt_sections()
+    for name, default_text in _SECTION_DEFAULTS.items():
+        override = overrides.get(name)
+        if isinstance(override, str) and override.strip():
+            prompt = prompt.replace(default_text, override, 1)
+
+    # 2) Append operator guidance from prompt_extra.txt (unchanged behavior).
     try:
         mt = os.path.getmtime(_PROMPT_EXTRA_PATH)
     except OSError:
@@ -696,9 +825,9 @@ def get_effective_system_prompt() -> str:
             _prompt_extra_cache["text"] = ""
     extra = _prompt_extra_cache["text"]
     if extra:
-        return (SYSTEM_PROMPT
+        return (prompt
                 + "\n\n# OPERATOR GUIDANCE (added live - honor these)\n" + extra)
-    return SYSTEM_PROMPT
+    return prompt
 
 
 def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: str = "", alert: str = "", squeeze: int = 0) -> str:

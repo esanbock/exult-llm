@@ -356,50 +356,99 @@ class ThoughtsWindow:
         self._render_chat()
 
     def _edit_prompt(self) -> None:
-        """Live editor for the operator GUIDANCE appended to the system prompt.
-        Edits tools/llm_agent/prompt_extra.txt; the driver re-reads it by mtime
-        each turn, so Save takes effect WITHOUT a restart. The core protocol /
-        schema / tool docs are NOT editable here (so a bad edit can't break JSON
-        parsing) - this only ADDS guidance the model must honor."""
+        """Live, sectioned editor for the system prompt. Tabs for Mission,
+        Interaction Rules, and RPG Wisdom (each replaces that section's default
+        text live), plus an Extra-guidance tab (appended). All apply on the NEXT
+        turn - no restart. The core PROTOCOL/schema/tool docs are NOT editable
+        here, so nothing you do can break JSON parsing."""
         if self._root is None:
             return
         import os
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "prompt_extra.txt")
+        import driver   # same process; use its section helpers
         win = tk.Toplevel(self._root)
-        win.title("Edit operator guidance (live - no restart needed)")
-        win.geometry("760x560")
-        tk.Label(win, anchor="w", justify="left", font=("Segoe UI", 9),
-                 text=("This text is APPENDED to the system prompt every turn. "
-                       "Add guidance/rules for the agent here. Save applies it on "
-                       "the next turn - no restart. (Core protocol/tools are not "
-                       "editable, so you can't break the agent.)")
-                 ).pack(fill="x", padx=6, pady=(6, 2))
-        txt = scrolledtext.ScrolledText(win, wrap="word", font=("Consolas", 10))
-        txt.pack(fill="both", expand=True, padx=6)
+        win.title("Edit system prompt (live - no restart)")
+        win.geometry("860x640")
+        nb = ttk.Notebook(win)
+        nb.pack(fill="both", expand=True, padx=6, pady=6)
+
+        # Section tabs (name -> live get/set via driver helpers) + Extra append.
+        editors = {}   # key -> (Text widget, is_section)
+        _sections = [("mission", "Mission & Principles"),
+                     ("interaction", "Interaction Rules"),
+                     ("wisdom", "RPG Wisdom")]
+        for key, label in _sections:
+            frame = tk.Frame(nb)
+            nb.add(frame, text=label)
+            t = scrolledtext.ScrolledText(frame, wrap="word", font=("Consolas", 9))
+            t.pack(fill="both", expand=True)
+            try:
+                t.insert("end", driver.get_prompt_section(key))
+            except Exception:
+                pass
+            editors[key] = (t, True)
+        # Extra-guidance tab (freeform append).
+        _extra_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "prompt_extra.txt")
+        eframe = tk.Frame(nb)
+        nb.add(eframe, text="Extra guidance (appended)")
+        et = scrolledtext.ScrolledText(eframe, wrap="word", font=("Consolas", 9))
+        et.pack(fill="both", expand=True)
         try:
-            if os.path.isfile(path):
-                txt.insert("end", open(path, encoding="utf-8").read())
+            if os.path.isfile(_extra_path):
+                et.insert("end", open(_extra_path, encoding="utf-8").read())
         except OSError:
             pass
-        status = tk.Label(win, text="", font=("Segoe UI", 8), fg="green")
-        status.pack(side="left", padx=6)
+        editors["_extra"] = (et, False)
+
+        status = tk.Label(win, text="", font=("Segoe UI", 9), fg="green")
+        status.pack(side="left", padx=8, pady=(0, 6))
+
+        def _current_key():
+            idx = nb.index(nb.select())
+            if idx < len(_sections):
+                return _sections[idx][0]
+            return "_extra"
 
         def _save():
+            key = _current_key()
+            t, is_section = editors[key]
+            body = t.get("1.0", "end").strip()
             try:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(txt.get("1.0", "end").strip() + "\n")
-                status.config(text="saved - active next turn")
+                if is_section:
+                    driver.set_prompt_section(key, body)
+                else:
+                    with open(_extra_path, "w", encoding="utf-8") as f:
+                        f.write(body + "\n")
+                status.config(text=f"saved '{key}' - active next turn", fg="green")
                 win.after(2500, lambda: status.config(text=""))
-            except OSError as e:
+            except Exception as e:
                 status.config(text=f"save failed: {e}", fg="red")
 
-        def _clear():
-            txt.delete("1.0", "end")
-        tk.Button(win, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
-        tk.Button(win, text="Save (apply live)", command=_save,
-                  font=("Segoe UI", 9, "bold")).pack(side="right", padx=4, pady=4)
-        tk.Button(win, text="Clear", command=_clear).pack(side="right", padx=4, pady=4)
+        def _revert():
+            key = _current_key()
+            t, is_section = editors[key]
+            t.delete("1.0", "end")
+            if is_section:
+                try:
+                    driver.set_prompt_section(key, None)   # remove override
+                    t.insert("end", driver.get_prompt_section_default(key))
+                    status.config(text=f"'{key}' reverted to default", fg="green")
+                except Exception as e:
+                    status.config(text=f"revert failed: {e}", fg="red")
+            else:
+                try:
+                    if os.path.isfile(_extra_path):
+                        os.remove(_extra_path)
+                    status.config(text="extra guidance cleared", fg="green")
+                except OSError as e:
+                    status.config(text=f"clear failed: {e}", fg="red")
+            win.after(2500, lambda: status.config(text=""))
+
+        tk.Button(win, text="Close", command=win.destroy).pack(side="right", padx=6, pady=6)
+        tk.Button(win, text="Save this tab (apply live)", command=_save,
+                  font=("Segoe UI", 9, "bold")).pack(side="right", padx=4, pady=6)
+        tk.Button(win, text="Revert tab to default", command=_revert).pack(
+            side="right", padx=4, pady=6)
 
     def _show_context(self) -> None:
         """Open a separate window showing the full context sent to the model

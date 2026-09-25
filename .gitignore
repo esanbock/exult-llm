@@ -369,3 +369,4 @@ tools/llm_agent/.gui_sashes
 tools/llm_agent/*.png
 tools/llm_agent/__pycache__/
 tools/llm_agent/prompt_extra.txt
+tools/llm_agent/prompt_sections.json
