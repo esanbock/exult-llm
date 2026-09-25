@@ -1703,16 +1703,33 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # or altering the agent's memory. This lets us probe its reasoning
         # ("why are you carrying a pitchfork?") separately from play.
         _ask = window.get_ask() if window.available else None
+        _ask_from = "operator"
         if not _ask:
+            # File hooks the external Twitch bridge writes to:
+            #  - ask_queue.txt : one QUESTION per line (viewers via !ask). We pop
+            #    the FIRST line each turn (FIFO) so many viewers can queue up.
+            #  - ask.txt       : single-shot (legacy / scripted).
+            _dir = os.path.dirname(os.path.abspath(__file__))
             try:
-                af = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ask.txt")
-                if os.path.isfile(af):
-                    _q = open(af, encoding="utf-8").read().strip()
-                    if _q:
-                        _ask = _q
-                        open(af, "w", encoding="utf-8").close()
+                qf = os.path.join(_dir, "ask_queue.txt")
+                if os.path.isfile(qf):
+                    _lines = [l for l in open(qf, encoding="utf-8").read().splitlines() if l.strip()]
+                    if _lines:
+                        _ask = _lines[0].strip()
+                        _ask_from = "twitch"
+                        open(qf, "w", encoding="utf-8").write("\n".join(_lines[1:]))
             except OSError:
                 pass
+            if not _ask:
+                try:
+                    af = os.path.join(_dir, "ask.txt")
+                    if os.path.isfile(af):
+                        _q = open(af, encoding="utf-8").read().strip()
+                        if _q:
+                            _ask = _q
+                            open(af, "w", encoding="utf-8").close()
+                except OSError:
+                    pass
         if _ask:
             try:
                 _ctx = summarize_state(state, kb, "", "", session.get("squeeze", 0))
@@ -1722,7 +1739,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     "NOT output an action or JSON). Answer their question in plain "
                     "English, honestly and specifically, based on your current "
                     "situation, memory, and reasoning below. If you are unsure or "
-                    "were mistaken, say so.\n\n"
+                    "were mistaken, say so. Keep it under 3 sentences (a viewer is "
+                    "reading it on a live stream).\n\n"
                     "=== YOUR CURRENT SITUATION ===\n" + _ctx +
                     "\n\n=== OPERATOR'S QUESTION ===\n" + _ask +
                     "\n\nYour answer:")
@@ -1732,6 +1750,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 print(f"[{step:03d}] INTERVIEW Q: {_ask}\n         A: {_atext[:300]}")
                 if window.available:
                     window.set_answer(_atext or "(no answer)")
+                # Write the Q&A to a file so the Twitch bridge can post the answer
+                # back to chat, and OBS can show it as a text source.
+                try:
+                    _dir = os.path.dirname(os.path.abspath(__file__))
+                    with open(os.path.join(_dir, "agent_answer.txt"), "w",
+                              encoding="utf-8") as _af:
+                        _af.write(f"Q: {_ask}\nA: {_atext}")
+                except OSError:
+                    pass
             except Exception as _e:
                 if window.available:
                     window.set_answer(f"(interview failed: {_e})")
