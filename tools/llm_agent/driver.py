@@ -535,6 +535,11 @@ periodically). For finer detail you have the recall/quests tools.
             to finish off wounded foes, "defend" (dodge more) when hurt, "flee"
             to retreat from a losing fight, "berserk" to never retreat.
   feed    - Eat food to refill your food level (prevents starving). params: none.
+  heal    - Use a bandage from your pack to restore HP when hurt. params: none.
+            Do this when your hp is well below max_hp and you are safe (not mid-
+            fight if avoidable). Needs a bandage in the party's inventory.
+  combat_pause - Pause the current combat (stop auto-fighting momentarily).
+            params: none. Rarely needed; use "combat" to toggle combat off.
   save    - Save the game so progress is not lost. params: none. (The driver
             also auto-saves periodically; you rarely need this.)
   wait    - Do nothing this turn. params: none.
