@@ -154,15 +154,18 @@ class ThoughtsWindow:
         quest_pw.add(rq_frame, weight=1)
         right.add(quest_pw, weight=2)
 
-        # Knowledge: Topics | Characters side by side (BOTH visible, no tabs).
-        know_pw = ttk.PanedWindow(right, orient="horizontal")
+        # Knowledge: Topics ABOVE Characters, each FULL WIDTH (both trees have
+        # wide content when branches expand, so side-by-side caused horizontal
+        # scrolling). Stack them vertically in a draggable sub-pane.
+        know_pw = ttk.PanedWindow(right, orient="vertical")
         self._paneds["know_pw"] = know_pw
         topic_frame = tk.LabelFrame(know_pw, text="Topics (LLM's notebook)",
                                     font=("Segoe UI", 9, "bold"))
         self._topic_tree = ttk.Treeview(topic_frame, columns=("meta",), show="tree headings")
         self._topic_tree.heading("#0", text="Topic / note")
         self._topic_tree.heading("meta", text="notes")
-        self._topic_tree.column("meta", width=60, anchor="e")
+        self._topic_tree.column("#0", width=380, anchor="w", stretch=True)
+        self._topic_tree.column("meta", width=60, anchor="e", stretch=False)
         _tsb = ttk.Scrollbar(topic_frame, orient="vertical", command=self._topic_tree.yview)
         self._topic_tree.configure(yscrollcommand=_tsb.set)
         self._topic_tree.pack(side="left", fill="both", expand=True)
@@ -174,7 +177,8 @@ class ThoughtsWindow:
         self._char_tree = ttk.Treeview(char_frame, columns=("meta",), show="tree headings")
         self._char_tree.heading("#0", text="Character / dialogue")
         self._char_tree.heading("meta", text="info")
-        self._char_tree.column("meta", width=60, anchor="e")
+        self._char_tree.column("#0", width=380, anchor="w", stretch=True)
+        self._char_tree.column("meta", width=60, anchor="e", stretch=False)
         _csb = ttk.Scrollbar(char_frame, orient="vertical", command=self._char_tree.yview)
         self._char_tree.configure(yscrollcommand=_csb.set)
         self._char_tree.pack(side="left", fill="both", expand=True)
@@ -182,16 +186,17 @@ class ThoughtsWindow:
         know_pw.add(char_frame, weight=1)
         right.add(know_pw, weight=3)
 
-        # Stats grid + Tool-call table side by side (draggable).
-        bottom_pw = ttk.PanedWindow(right, orient="horizontal")
-        self._paneds["bottom_pw"] = bottom_pw
-        stats_frame = tk.LabelFrame(bottom_pw, text="Stats & memory",
+        # Stats: its OWN full-width row so all rows are visible without scrolling
+        # (laid out as multi-column label:value pairs in _rebuild_stats_grid).
+        stats_frame = tk.LabelFrame(right, text="Stats & memory",
                                     font=("Segoe UI", 9, "bold"))
         self._stats_grid = tk.Frame(stats_frame)
         self._stats_grid.pack(fill="both", expand=True, padx=4, pady=2)
-        bottom_pw.add(stats_frame, weight=1)
+        right.add(stats_frame, weight=1)
 
-        tool_frame = tk.LabelFrame(bottom_pw, text="Tool calls",
+        # Tool calls: its OWN full-width row so all columns are visible without
+        # horizontal scrolling.
+        tool_frame = tk.LabelFrame(right, text="Tool calls",
                                    font=("Segoe UI", 9, "bold"))
         tsum = tk.Frame(tool_frame)
         tsum.pack(fill="x", padx=4, pady=(2, 0))
@@ -203,18 +208,17 @@ class ThoughtsWindow:
         self._tool_tree = ttk.Treeview(tool_frame, columns=cols, show="tree headings",
                                        height=6)
         self._tool_tree.heading("#0", text="tool")
-        self._tool_tree.column("#0", width=90, anchor="w")
+        self._tool_tree.column("#0", width=110, anchor="w", stretch=True)
         for c, txt, w in (("calls", "calls", 55), ("ok", "ok", 45),
                           ("err", "err", 45), ("errpct", "err%", 55)):
             self._tool_tree.heading(c, text=txt)
-            self._tool_tree.column(c, width=w, anchor="e")
+            self._tool_tree.column(c, width=w, anchor="e", stretch=False)
         _ttsb = ttk.Scrollbar(tool_frame, orient="vertical", command=self._tool_tree.yview)
         self._tool_tree.configure(yscrollcommand=_ttsb.set)
         self._tool_tree.pack(side="left", fill="both", expand=True, padx=(4, 0), pady=2)
         _ttsb.pack(side="right", fill="y")
         self._tool_tree.tag_configure("err", foreground="#c0392b")
-        bottom_pw.add(tool_frame, weight=1)
-        right.add(bottom_pw, weight=2)
+        right.add(tool_frame, weight=2)
 
         # Hint bar: type a hint and Send it to the agent for the next turn(s).
         hintrow = tk.Frame(self._root)
@@ -335,14 +339,15 @@ class ThoughtsWindow:
         # Create labels once; update values on subsequent calls.
         if not self._stat_labels:
             keys = list(kv.keys())
+            _NCOL = 3   # 3 columns keeps ~15 stats to ~5 short rows (no scroll)
             for i, k in enumerate(keys):
-                r, c = divmod(i, 2)
+                r, c = divmod(i, _NCOL)
                 cell = tk.Frame(grid, bd=1, relief="groove")
                 cell.grid(row=r, column=c, sticky="ew", padx=2, pady=1)
                 grid.grid_columnconfigure(c, weight=1)
                 tk.Label(cell, text=k, font=("Segoe UI", 8), fg="#555",
                          anchor="w").pack(side="left", padx=(4, 2))
-                val = tk.Label(cell, text=str(kv[k]), font=("Consolas", 10, "bold"),
+                val = tk.Label(cell, text=str(kv[k]), font=("Consolas", 9, "bold"),
                                anchor="e")
                 val.pack(side="right", padx=(2, 4))
                 self._stat_labels[k] = val
