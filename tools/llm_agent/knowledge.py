@@ -952,7 +952,7 @@ class KnowledgeBase:
                 if e.get("kind") == "move":
                     out.append(e.get("text", ""))
                 else:
-                    _why = f'  ["{e["reason"]}"]' if e.get("reason") else ""
+                    _why = f'  (I intended: "{e["reason"]}")' if e.get("reason") else ""
                     out.append(f"[T{e.get('turn', 0)}] {e.get('text','')}{_why}")
             else:  # legacy plain-string entries
                 out.append(str(e))
@@ -1001,7 +1001,7 @@ class KnowledgeBase:
         n = e.get("count", 1)
         prog = "" if e.get("progressed") else " (NO progress - blocked/looping)"
         cnt = f" x{n}" if n > 1 else ""
-        why = f'  ["{e["reason"]}"]' if e.get("reason") else ""
+        why = f'  (I intended: "{e["reason"]}")' if e.get("reason") else ""
         return f"[{span}] move toward {e.get('target')}{cnt}{prog}{why}"
 
     # ----- hint history (operator guidance - persistent, high value) -----

@@ -405,12 +405,18 @@ periodically). For finer detail you have the recall/quests tools.
       Use this to remember what you have learned and what was said earlier.
   action_log: YOUR TEMPORAL MEMORY - a turn-by-turn log of your recent actions
       with OUTCOMES and the REASON you gave, one per line as
-      "[T<turn>] <action> -> <outcome>  [\"<your reason>\"]", plus repeated moves
-      collapsed as "[T88-T130] move toward X x22 (NO progress)" and
-      ">>> now working: <quest>" markers where you switched quests. READ THIS to
-      see what you've been doing AND WHY over time: if the same action/reason
+      "[T<turn>] <action> -> <outcome>  (I intended: \"<your reason>\")", plus
+      repeated moves collapsed as "[T88-T130] move toward X x22 (NO progress)"
+      and ">>> now working: <quest>" markers where you switched quests. READ THIS
+      to see what you've been doing AND WHY over time: if the same action/reason
       repeats across many turns with no useful result, you are in a FRUITLESS
       LOOP - stop and do something different (that rationale is not working).
+      CRITICAL: the "(I intended: ...)" text is only what you WANTED/CLAIMED that
+      turn - it is NOT proof anything happened. Only the "-> <outcome>" part (and
+      your inventory/notes) is real. Do NOT treat a past intention as a completed
+      fact: e.g. writing "I lowered the gate" does NOT mean the gate is lowered
+      unless an OUTCOME confirmed it. If you can't find a confirming outcome, it
+      did not happen - go do it for real.
   current_quest: the quest you told me you are working on (via set_current_quest).
       Shown so you stay focused; if it's stalling across many log lines, switch.
   already_searched_empty (list) - bodies/containers you ALREADY searched and
