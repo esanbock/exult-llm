@@ -705,6 +705,30 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             "not producing progress, STOP repeating it: review your quests/notes "
             "(quests/recall tools), question your assumptions (is this goal even "
             "real?), and try a different lead.")
+        # Navigation aid: if you're looping trying to REACH a place, you may be
+        # heading the wrong way. List the buildings/landmarks you actually know
+        # (goto them BY NAME), and remind about the map tool. Buildings are now
+        # recognized by their contents (e.g. a stable by its horses/trough), so
+        # your objective may already be a known place.
+        if kb is not None:
+            _pp2 = state.get("player") or {}
+            _blds = [pl for pl in kb.places_view(_pp2.get("tx", 0), _pp2.get("ty", 0),
+                                                 limit=25)
+                     if pl.get("kind") in ("building", "landmark")]
+            if _blds:
+                view["navigation_hint"] = {
+                    "note": ("If you are struggling to REACH a place, do NOT keep "
+                             "walking toward stairs/walls hoping they lead there. "
+                             "goto a KNOWN landmark BY NAME from this list, or use "
+                             "the 'map' tool for a town overview. A building is "
+                             "reached by walking to it on the GROUND, not by "
+                             "climbing stairs."),
+                    "known_landmarks": [
+                        {"name": pl.get("name"), "dir": _compass(pl.get("dx", 0),
+                                                                 pl.get("dy", 0)),
+                         "dist": abs(pl.get("dx", 0)) + abs(pl.get("dy", 0))}
+                        for pl in _blds[:10]],
+                }
     if state.get("last_move_failed"):
         view["MOVE_FAILED"] = (
             "Your LAST move did NOT change your position - it was BLOCKED (a wall, "
@@ -1446,6 +1470,34 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         elif any(w in nm for w in _LANDMARK_WORDS):
             kb.record_place(_o["name"], _ptx + _o.get("dx", 0),
                             _pty + _o.get("dy", 0), kind="landmark")
+
+    # FUNCTIONAL BUILDING INFERENCE: many buildings are not labeled with their
+    # purpose - a human recognizes a stable by its horses/trough/hay, a smithy
+    # by its anvil/forge/bellows, etc. Detect characteristic contents in view
+    # and record the building as a navigable landmark so the agent can "goto
+    # stables" instead of wandering. Keyed on distinctive item sets.
+    _FUNCTION_MARKERS = {
+        "stables": ("horse", "water trough", "horseshoe", "hay", "trough",
+                    "stall", "saddle"),
+        "smithy": ("anvil", "forge", "bellows", "tongs"),
+        "kitchen": ("oven", "hearth", "cauldron", "cooking"),
+    }
+    _people = state.get("nearby") or []
+    for _bld, _markers in _FUNCTION_MARKERS.items():
+        _hits = [_o for _o in (state.get("objects") or [])
+                 if any(m in (_o.get("name") or "").lower() for m in _markers)]
+        # A single stray horseshoe isn't a stable; require 2+ distinct markers
+        # (or a horse, which is decisive for a stable).
+        _distinct = {next(m for m in _markers if m in (_o.get("name") or "").lower())
+                     for _o in _hits}
+        _decisive = _bld == "stables" and any(
+            "horse" in (n.get("name") or "").lower() for n in _people + _hits)
+        if len(_distinct) >= 2 or _decisive:
+            # Center the landmark on the marker cluster (average offset).
+            _dx = sum(_o.get("dx", 0) for _o in _hits) // max(1, len(_hits))
+            _dy = sum(_o.get("dy", 0) for _o in _hits) // max(1, len(_hits))
+            kb.record_place(_bld, _ptx + _dx, _pty + _dy, kind="building",
+                            note=f"recognized by its {', '.join(sorted(_distinct))}")
 
     # Persist notable OBSERVATIONS (deduped): ambient speech overheard, plus
     # notable objects seen (bodies, chests, keys, etc). This gives the agent a
