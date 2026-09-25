@@ -1166,7 +1166,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         # Long temporal memory - the agent's main loop-perception tool. Default
         # wide (600) since runs sit at ~55-60% context; shrink under squeeze so
         # we stay safe if the prompt ever grows toward the limit.
-        _alog_n = 600 if lvl == 0 else (400 if lvl == 1 else 200)
+        _alog_n = 350 if lvl == 0 else (250 if lvl == 1 else 150)
         # Operator override from the GUI 'Turn memory' box (if set). Still capped
         # down under real context pressure (squeeze) so we never blow the limit.
         _ov = state.get("_turn_window_override")
@@ -1212,15 +1212,16 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             _sc = kb.activity_scorecard()
             _talked = _sc.get("talked to people", 0)
             _searched = _sc.get("containers/things searched", 0)
-            _picked = _sc.get("items picked up / taken", 0)
-            if _talked >= 8 and (_searched + _picked) == 0:
+            _opened = _sc.get("things opened", 0)
+            if _talked >= 8 and (_searched + _opened) == 0:
                 view["INVESTIGATE_NOW"] = (
-                    f"You have TALKED {_talked} times but SEARCHED 0 things and "
-                    "PICKED UP 0 items. Talking alone will NOT solve this - the "
+                    f"You have TALKED {_talked} times but SEARCHED 0 containers "
+                    "and OPENED 0 things. Talking alone will NOT solve this - the "
                     "clue/item you need is a PHYSICAL thing to find. STOP asking "
-                    "questions now: ENTER a building you haven't, and SEARCH its "
-                    "containers (chests, desks, barrels). Open doors ('+'), go "
-                    "inside, search everything. Do this for SEVERAL turns.")
+                    "questions: ENTER a building, walk RIGHT UP to a chest/desk/"
+                    "barrel (adjacent, ~1 tile), and 'search' it. If a door is "
+                    "locked, 'unlock' it. Do this for SEVERAL turns, trying "
+                    "DIFFERENT buildings you haven't entered.")
         except Exception:
             pass
         # CONVERSATION FOCUS: tag each answer option as already-explored vs open,
