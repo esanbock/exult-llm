@@ -2269,6 +2269,34 @@ namespace LLM_agent {
 					best = obj;
 				}
 			}
+			// If not found in the world (and a name was given), also check the
+			// avatar's OWN inventory - a human double-clicks carried items too
+			// (drink a potion, read a scroll, use a tool/sextant in the pack).
+			if (!best && !wlow.empty()) {
+				Container_game_object* pack = av->get_readied(backpack)
+						? av->get_readied(backpack)->as_container()
+						: nullptr;
+				if (pack) {
+					std::vector<Container_game_object*> stack{pack};
+					while (!stack.empty() && !best) {
+						Container_game_object* c = stack.back();
+						stack.pop_back();
+						Object_iterator it(c->get_objects());
+						Game_object* inner;
+						while ((inner = it.get_next()) != nullptr) {
+							std::string l = inner->get_name();
+							std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+							if (!l.empty() && l.find(wlow) != std::string::npos) {
+								best = inner;
+								break;
+							}
+							if (Container_game_object* ic = inner->as_container()) {
+								stack.push_back(ic);
+							}
+						}
+					}
+				}
+			}
 			if (!best) {
 				// Report visible-but-far so the agent can walk over (like take).
 				if (!wlow.empty()) {

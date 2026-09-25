@@ -450,8 +450,10 @@ periodically). For finer detail you have the recall/quests tools.
             LEVER or SWITCH (opens/closes gates, bridges, drawbridges - puzzle
             mechanisms), a SEXTANT (reports your current coordinates), a
             CARRIAGE or CART (ride it), a BOAT/SHIP or RAFT (board it), a BED
-            (sleep), a PLAQUE/BOOK, a moongate, etc. If unsure how to operate
-            something you see, try "use" on it and observe what happens.
+            (sleep), a PLAQUE/BOOK, a moongate, etc. "use" also works on an item
+            you CARRY (by name): drink a potion, read a scroll, use a tool or
+            sextant from your pack. If unsure how to operate something you see,
+            try "use" on it and observe what happens.
   read    - Read a nearby SIGN or readable object (a human double-clicks it).
             Returns its "text". params: omit to read the nearest sign, or
             {"name":"<obj>"} to read a specific object. Signs give shop names,
