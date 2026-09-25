@@ -347,3 +347,13 @@ tools/llm_agent/driver_out.log
 tools/llm_agent/driver_err.log
 tools/llm_agent/__pycache__/
 tools/llm_agent/agent_memory.json
+
+# LLM-agent operator secrets / local runtime files (never commit)
+tools/llm_agent/.env
+tools/llm_agent/*.secret
+tools/llm_agent/twitch.env
+tools/llm_agent/agent_answer.txt
+tools/llm_agent/obs_answer.txt
+tools/llm_agent/ask_queue.txt
+tools/llm_agent/ask.txt
+tools/llm_agent/hint.txt

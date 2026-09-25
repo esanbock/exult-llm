@@ -158,13 +158,33 @@ class TwitchBridge:
             self._poll_answer()
 
 
+def _load_env_file():
+    """Optionally load credentials from a gitignored 'twitch.env' next to this
+    file (KEY=VALUE lines), so they never live in code, chat, or git. Values
+    already set in the real environment take precedence."""
+    path = os.path.join(HERE, "twitch.env")
+    if not os.path.isfile(path):
+        return
+    try:
+        for line in open(path, encoding="utf-8"):
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+    except OSError:
+        pass
+
+
 def main():
+    _load_env_file()
     oauth = os.environ.get("TWITCH_OAUTH", "")
     nick = os.environ.get("TWITCH_NICK", "")
     channel = os.environ.get("TWITCH_CHANNEL", "")
     if not (oauth and nick and channel):
-        print("Set TWITCH_OAUTH, TWITCH_NICK, TWITCH_CHANNEL environment "
-              "variables first. See the header of this file for details.")
+        print("Set TWITCH_OAUTH, TWITCH_NICK, TWITCH_CHANNEL - either as "
+              "environment variables or in a gitignored 'twitch.env' file next "
+              "to this script (KEY=VALUE lines). See the header for details.")
         return
     TwitchBridge(oauth, nick, channel).run()
 
