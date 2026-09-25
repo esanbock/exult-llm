@@ -669,6 +669,38 @@ OUTPUT RULES (critical - follow exactly):
 """
 
 
+# --- Live-editable operator guidance -------------------------------------
+# Operators can add/tweak GUIDANCE at runtime WITHOUT restarting: whatever is in
+# prompt_extra.txt (next to this module, or set via the GUI "Edit prompt"
+# window) is appended to the system prompt each turn. We re-read it only when
+# the file's mtime changes, so it's cheap. The core protocol/schema/tool docs
+# stay in SYSTEM_PROMPT (immutable) so live edits can never break JSON parsing.
+_PROMPT_EXTRA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "prompt_extra.txt")
+_prompt_extra_cache = {"mtime": None, "text": ""}
+
+
+def get_effective_system_prompt() -> str:
+    """SYSTEM_PROMPT + any operator guidance from prompt_extra.txt (live)."""
+    try:
+        mt = os.path.getmtime(_PROMPT_EXTRA_PATH)
+    except OSError:
+        mt = None
+    if mt != _prompt_extra_cache["mtime"]:
+        _prompt_extra_cache["mtime"] = mt
+        try:
+            _prompt_extra_cache["text"] = (
+                open(_PROMPT_EXTRA_PATH, encoding="utf-8").read().strip()
+                if mt is not None else "")
+        except OSError:
+            _prompt_extra_cache["text"] = ""
+    extra = _prompt_extra_cache["text"]
+    if extra:
+        return (SYSTEM_PROMPT
+                + "\n\n# OPERATOR GUIDANCE (added live - honor these)\n" + extra)
+    return SYSTEM_PROMPT
+
+
 def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: str = "", alert: str = "", squeeze: int = 0) -> str:
     """Compact the observation to keep the prompt small and focused.
 
@@ -2053,7 +2085,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if window.available:
             state["_turn_window_override"] = window.get_turn_window()
         _user = summarize_state(state, kb, session.pop("last_look", ""), alert, squeeze)
-        res = ollama.chat_ex(SYSTEM_PROMPT, _user)
+        res = ollama.chat_ex(get_effective_system_prompt(), _user)
         reply = res["content"]
         reason, action = parse_reply(reply)
         # Honor the blocked-breaker: if the last few moves were blocked (e.g.
@@ -2093,7 +2125,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if window.available:
             window.set_context_dump(
                 f"===== TURN {kb.turn_counter} =====\n"
-                f"----- SYSTEM PROMPT -----\n{SYSTEM_PROMPT}\n\n"
+                f"----- SYSTEM PROMPT -----\n{get_effective_system_prompt()}\n\n"
                 f"----- USER (per-turn state) -----\n{_user}\n\n"
                 f"----- MODEL REPLY -----\n{reply}\n")
         # Tool-call stats: count this turn and whether the model's reply parsed
