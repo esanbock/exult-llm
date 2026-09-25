@@ -86,6 +86,37 @@ def main():
         diag.append("NO TURNS logged - driver may be down or just started")
     print("DIAGNOSIS: " + ("; ".join(diag) if diag else "healthy"))
 
+    # ---- CHECKPOINT PROGRESS (operator-only; TextQuests-style objective read) -
+    # Trinsic escape sequence, inferred from OBSERVABLE evidence (notes,
+    # transcripts, looted events, action log) - NOT from the LLM's self-reported
+    # quests (which inflate on false 'done'). This gives a truer progress read
+    # than quest counts. It is diagnostic and never shown to the LLM.
+    hay = []
+    for r in mem.get("npcs", {}).values():
+        hay += [t.get("said", "") for t in r.get("transcript", [])]
+        hay += list(r.get("notes", []))
+    hay += [e.get("text", "") if isinstance(e, dict) else str(e)
+            for e in mem.get("action_history", [])]
+    hay_s = " ".join(hay).lower()
+    log_s = "\n".join(lines).lower()
+    looted = "looted" in log_s
+    checkpoints = [
+        ("met the Mayor / got the task", "finnigan" in hay_s or "investigate" in hay_s),
+        ("gathered a murder clue (hook/gargoyle)", "hook" in hay_s or "gargoyle" in hay_s),
+        ("actually LOOTED a container/body", looted),
+        ("found the report clue in a chest", "chest" in hay_s and looted),
+        ("obtained the gate PASSWORD", "password" in hay_s and
+            ("received" in hay_s or "got the password" in hay_s or "proper password" in hay_s)),
+        ("obtained the ship DEED", "deed" in hay_s and
+            ("received" in hay_s or "have the deed" in hay_s or "got the deed" in hay_s)),
+        ("LEFT Trinsic", "left trinsic" in hay_s or "outside trinsic" in hay_s
+            or "britain" in hay_s and "outside" in hay_s),
+    ]
+    done_n = sum(1 for _, ok in checkpoints if ok)
+    print(f"CHECKPOINTS {done_n}/{len(checkpoints)} (Trinsic escape):")
+    for name, ok in checkpoints:
+        print(f"  [{'x' if ok else ' '}] {name}")
+
     # Last few reasons for context.
     reasons = []
     for l in pos_lines[-6:]:

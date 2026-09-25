@@ -1,5 +1,31 @@
 # LLM Agent — Plan & Findings
 
+## EXTERNAL VALIDATION — TextQuests (CAIS, Phan/Mazeika/Zou/Hendrycks 2025)
+The TextQuests benchmark (25 Infocom IF games, arXiv:2507.23701) independently
+documents the SAME failure modes we hit, across FRONTIER models - confirming
+these are intrinsic LLM limits, not our setup:
+- "Models hallucinate about prior interactions, such as believing they have
+  already picked up an item when they have not" == our fabricated-medallion bug
+  and false-resolved-quest bug. Our fix: always-on activity SCORECARD
+  ("what_i_have_actually_done" counts) + tightened quest-"done" definition +
+  logged resolutions. KEEP/STRENGTHEN.
+- "Getting stuck navigating in a loop" + "increased tendency to REPEAT actions
+  from history as context lengthens" == our stairs/tower loops. Our fix:
+  temporal action log + loop/no-progress warnings + range oscillation detection.
+- "Fundamental difficulty in building and utilizing a MENTAL MAP" - e.g. in
+  Wishbringer LLMs couldn't reverse an ascent to climb back DOWN a cliff. This
+  is our descend problem almost verbatim. Our fix: engine `descend` action +
+  structured `navigation` summary (we supply the mental map the model can't
+  build). Strong validation of both.
+- Methodology worth adopting: (a) CHECKPOINT-based Game-Progress metric (labeled
+  objectives) - cleaner than our quest counts which inflate on false resolves;
+  (b) a HARM metric (tally ethically-harmful actions - theft, attacking
+  innocents); (c) "dynamic thinking" - many nav steps need little reasoning, so
+  modulating effort matters (relevant to our thinking-off qwen config).
+- Their setup: 500-step runs, FULL history kept (prompt caching), With-Clues vs
+  No-Clues conditions. We keep a bounded+curated context instead (local model,
+  32k ctx) - a deliberate, defensible difference.
+
 ## GOAL
 Get a **locally-hosted LLM (Ollama, e.g. gpt-oss:20b on the RTX 5090)** to
 **progress through Ultima VII: The Black Gate on its own** — perceiving, deciding,
