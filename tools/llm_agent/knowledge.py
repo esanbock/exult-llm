@@ -664,19 +664,38 @@ class KnowledgeBase:
     def record_npc_choices(self, npc: str, choices: list) -> None:
         """Record the answer TOPICS the game offered with this NPC (the tree
         branches), so the agent knows what it can still ask and what it has
-        covered. Accumulates the union of all topics ever seen for this NPC."""
+        covered. Accumulates the union of all topics ever seen for this NPC AND
+        records the dialogue TREE: each distinct menu (set of options shown
+        together) is a node; the option last picked is the edge that led here.
+        This distinguishes top-level topics from SUBTOPICS that only appear
+        after choosing a parent."""
         if not npc or npc == "?" or not choices:
             return
         rec = self._npc_rec(npc)
+        # Flat union (kept for back-compat / quick 'ever seen' checks).
         seen = rec.setdefault("topics_offered", [])
         for c in choices:
             c = str(c).strip()
             if c and c not in seen:
                 seen.append(c)
         rec["topics_offered"] = seen[-60:]
+        # TREE: key each menu node by its sorted option set. Record the parent
+        # topic that led here (the last topic asked this conversation).
+        opts = [str(c).strip() for c in choices if str(c).strip()]
+        if opts:
+            tree = rec.setdefault("topic_tree", {})
+            sig = "|".join(sorted(o.lower() for o in opts))
+            node = tree.setdefault(sig, {"options": opts, "asked": [],
+                                         "parent": rec.get("_cur_parent", "(start)")})
+            # Refresh option list (menus can vary slightly) and remember this is
+            # the node we are currently AT, for choice-taken to mark within.
+            node["options"] = opts
+            rec["_cur_menu_sig"] = sig
 
     def record_npc_choice_taken(self, npc: str, topic: str) -> None:
-        """Record that the agent asked this topic (a branch it explored)."""
+        """Record that the agent asked this topic (a branch it explored). Marks
+        it asked within the CURRENT menu node and sets it as the parent for the
+        next menu (so subtopics are nested under it)."""
         if not npc or npc == "?" or not topic:
             return
         rec = self._npc_rec(npc)
@@ -685,6 +704,14 @@ class KnowledgeBase:
         if topic and topic not in asked:
             asked.append(topic)
         rec["topics_asked"] = asked[-60:]
+        # Mark asked within the current tree node, and set parent for next menu.
+        sig = rec.get("_cur_menu_sig")
+        tree = rec.get("topic_tree", {})
+        if sig and sig in tree:
+            na = tree[sig].setdefault("asked", [])
+            if topic not in na:
+                na.append(topic)
+        rec["_cur_parent"] = topic
         self._npc_transcript_add(npc, {"me": topic})
 
     # ----- shared topic knowledge base -----------------------------------
@@ -821,8 +848,47 @@ class KnowledgeBase:
             "topics_asked": rec.get("topics_asked", []),
             "topics_unasked": [t for t in offered
                                if str(t).strip().lower() not in _asked_norm],
+            # Tree view: topics grouped by menu node (parent -> open/asked), so
+            # SUBTOPICS are shown under the parent you must ask to reach them.
+            "dialogue_tree": self.topic_tree_view(rec.get("name", npc)),
             "notes": rec.get("notes", [])[-20:],
         }
+
+    def begin_npc_conversation(self, npc: str) -> None:
+        """Call when a NEW conversation starts so the dialogue-tree pointer
+        resets to the top (the first menu is a root, not nested under whatever
+        topic was last picked in a PRIOR conversation)."""
+        if not npc or npc == "?":
+            return
+        rec = self._npc_rec(npc)
+        rec["_cur_parent"] = "(start)"
+        rec.pop("_cur_menu_sig", None)
+
+    def topic_tree_view(self, npc: str) -> list:
+        """The dialogue as a TREE grouped by menu node: each node lists its
+        parent topic (what you picked to get here), and its options split into
+        asked vs still-open. This reflects that topics have SUBTOPICS - an
+        option is only 'available to ask' at its own menu, reached via its
+        parent. Returns [] if no tree recorded yet."""
+        rec = self.npcs.get(npc)
+        if not rec:
+            return []
+        tree = rec.get("topic_tree", {})
+        out = []
+        for _sig, node in tree.items():
+            opts = node.get("options", [])
+            asked_n = {str(a).strip().lower() for a in node.get("asked", [])}
+            open_here = [o for o in opts
+                         if str(o).strip().lower() not in asked_n
+                         and str(o).strip().lower() not in self._GENERIC_TOPICS]
+            out.append({
+                "reached_by_asking": node.get("parent", "(start)"),
+                "open_here": open_here,
+                "already_asked_here": node.get("asked", []),
+            })
+        # Nodes with open topics first (most actionable).
+        out.sort(key=lambda n: -len(n["open_here"]))
+        return out
 
     def record_my_reply(self, text: str) -> None:
         if not text:

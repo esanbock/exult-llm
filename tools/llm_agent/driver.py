@@ -352,7 +352,13 @@ periodically). For finer detail you have the recall/quests tools.
       long or repetitive, CONSOLIDATE them: add "consolidate_notes":{"npc":
       "<name>","notes":"<cleaned, merged notes>"} to replace them with a tidy
       version (prune duplicates, keep what matters). "recall" gives the full
-      transcript + asked/unasked topics for one person on demand.
+      transcript + asked/unasked topics for one person on demand, including a
+      "dialogue_tree": conversations are a TREE, not a flat list - picking a
+      topic can reveal SUBTOPICS. Each tree node shows "reached_by_asking" (the
+      parent topic you pick to get there), "open_here" (subtopics still unasked
+      at that node), and "already_asked_here". To reach a subtopic, first ask
+      its parent. A topic being "open_here" under a parent means you must
+      navigate into that parent's menu to ask it.
   known_places: your MENTAL MAP of discovered locations (landmarks, buildings,
       gates, shops, etc.), nearest first, each {name, kind, dx, dy}. You can
       "goto" any of these by name to travel back to them - useful for returning
@@ -3357,6 +3363,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if tname:
             kb.mark_talked(tname)
             session["current_npc"] = tname
+            # New conversation: reset the dialogue-tree pointer to the top so the
+            # first menu is a root, not nested under a prior conversation's topic.
+            kb.begin_npc_conversation(tname)
         result = exult.talk(tname)
     else:
         # If answering a dialogue choice, record which TOPIC branch we took for
