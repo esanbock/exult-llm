@@ -103,7 +103,7 @@ class TwitchBridge:
         if msg:
             _append_line(ASK_QUEUE, msg)
             print(f"[twitch] {user}: {msg}")
-            self.chat(f"@{user} sent your message to the AI - reply soon.")
+            # No ack posted - only the AI's actual answer goes to chat.
 
     def _poll_answer(self):
         """If the driver wrote a new answer, post it to chat + OBS file."""
