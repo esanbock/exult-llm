@@ -1797,8 +1797,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                       f"  [kind={_kind}{(' title='+_qtitle) if _qtitle else ''}]")
                 # Route the answer to the ORIGINATING channel only, keeping the
                 # operator's private GUI chat separate from public Twitch chat.
-                _tag = {"EPHEMERAL": "[just answering - nothing changed]",
-                        "HINT": "[noted as a HINT - I'll act on it soon]",
+                # Only tag the answer when something actually CHANGED (a hint
+                # noted or a quest added). A pure question needs no tag.
+                _tag = {"HINT": "[noted as a HINT - I'll act on it soon]",
                         "QUEST": f"[added a QUEST: {_qtitle or _ask[:40]}]"}.get(_kind, "")
                 _shown = (_atext or "(no answer)") + ("\n" + _tag if _tag else "")
                 if _ask_from == "operator":
