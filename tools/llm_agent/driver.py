@@ -2942,7 +2942,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             _oscillating = False
         _force_step = _oscillating
         _cur_tz_here = (state.get("player") or {}).get("tz", 0) or 0
-        if _force_step and _cur_tz_here > 0:
+        # Don't force a DESCEND if the agent is mid-CLIMB (its reason says it
+        # wants to go UP). Otherwise this yanks it off the stairs each step.
+        _climbing = any(w in (reason or "").lower()
+                        for w in ("up stair", "upstair", "go up", "climb up",
+                                  "ascend", "upper floor", "upstairs"))
+        if _force_step and _cur_tz_here > 0 and not _climbing:
             # Stuck oscillating while UP HIGH: use the engine 'descend'. If a
             # prior descend found no reachable way down from here, CROSS the
             # platform to a new edge (rotating) rather than thrashing in place -
@@ -3643,10 +3648,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         print(f"[{step:03d}] escape-latch: ARMED (fixation) -> {session['escape_target']}")
 
     _at_ground = _cur_tz_now == 0
-    _wants_descend = any(w in (reason or "").lower()
-                         for w in ("descend", "climb down", "go down", "down to ground",
-                                   "to ground level", "down the stairs", "down the fortress",
-                                   "down from"))
+    # If the agent is trying to go UP/climb/upstairs, it must NOT be treated as
+    # wanting to descend - otherwise the descend-guard yanks it back to ground
+    # every time it climbs one step (the "climb one stair, get pulled down"
+    # loop). Upward intent overrides all descend logic.
+    _wants_up = any(w in (reason or "").lower()
+                    for w in ("up stair", "upstair", "go up", "climb up", "ascend",
+                              "up the stair", "upper floor", "upstairs", "go upstairs"))
+    _wants_descend = (not _wants_up) and any(
+        w in (reason or "").lower()
+        for w in ("descend", "climb down", "go down", "down to ground",
+                  "to ground level", "down the stairs", "down the fortress",
+                  "down from"))
     if _at_ground and _wants_descend:
         n = session.get("false_descend", 0) + 1
         session["false_descend"] = n
