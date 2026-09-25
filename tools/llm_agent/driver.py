@@ -3833,6 +3833,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if tname:
             kb.mark_talked(tname)
             session["current_npc"] = tname
+            # Remember WHERE we talked to them, so a later "goto <npc>" can
+            # navigate BACK instead of failing 'unresolved' and looping. Use the
+            # NPC's own tile if it's actually in view; else our tile (we talk to
+            # people we're next to). Only records a real, present NPC's spot.
+            _ptt = state.get("player") or {}
+            _match = next((n for n in (state.get("nearby") or [])
+                           if (n.get("name") or "").lower() == tname.lower()), None)
+            if _match and _match.get("tx") is not None:
+                kb.see_npc(tname, _match.get("tx"), _match.get("ty"))
+            elif _match and _ptt.get("tx") is not None:
+                kb.see_npc(tname, _ptt.get("tx") + _match.get("dx", 0),
+                           _ptt.get("ty") + _match.get("dy", 0))
             # New conversation: reset the dialogue-tree pointer to the top so the
             # first menu is a root, not nested under a prior conversation's topic.
             kb.begin_npc_conversation(tname)
