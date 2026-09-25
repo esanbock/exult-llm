@@ -566,9 +566,16 @@ periodically). For finer detail you have the recall/quests tools.
      Consider each quest's prereqs_unmet when ordering, but you decide.
      You are free to reprioritise as you learn more (update_quest priority).
      - ADD a quest (or inline "new_quest") whenever you decide on a goal.
-     - RESOLVE quests you complete: the moment a goal is achieved (you got the
-       password, spoke to the person, found the item, solved the puzzle), add
+     - RESOLVE quests you complete: the moment a goal is TRULY achieved (you
+       actually HAVE the password, you actually HOLD the item, the door is
+       actually open, the person is actually dead), add
        "resolve_quest":"<quest id or title>" (or update_quest status:"done").
+       Only mark done what you have VERIFIABLY accomplished - not a goal you have
+       merely DECIDED HOW to pursue. Deciding on a plan (e.g. "sell sextants to
+       afford the deed") is NOT completing the goal ("get the deed"); leave the
+       goal OPEN until you actually have the deed in hand. Falsely closing a
+       goal makes you forget to finish it. If a goal turns out impossible or
+       irrelevant, use drop_quest (that is different from done).
        An unresolved log you never close becomes useless - keep it accurate so
        "focus" always shows what truly remains.
      - REFER BACK: before acting, check whether your intended action matches an
@@ -1912,6 +1919,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 kb.resolve_quest(_rq)
                 kb.reset_talk_gate()
                 kb.record_tool("resolve_quest", True)
+                # Log the resolution WITH the reason so a premature/false
+                # "done" is visible in the temporal memory and can be noticed.
+                kb.record_action(f"marked quest DONE: {_rq}", reason=reason or "")
                 print(f"[{step:03d}] inline resolve_quest: {_rq}")
             # Inline drop_quest: REMOVE a redundant/obsolete quest (not the same
             # as resolving - use this to consolidate duplicates or discard a goal
