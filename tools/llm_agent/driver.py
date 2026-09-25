@@ -1735,21 +1735,47 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 _ctx = summarize_state(state, kb, "", "", session.get("squeeze", 0))
                 _iprompt = (
                     "You are the SAME character/agent playing this game. Your "
-                    "operator is INTERVIEWING you (this is NOT a game turn - do "
-                    "NOT output an action or JSON). Answer their question in plain "
-                    "English, honestly and specifically, based on your current "
-                    "situation, memory, and reasoning below. If you are unsure or "
-                    "were mistaken, say so. Keep it under 3 sentences (a viewer is "
-                    "reading it on a live stream).\n\n"
+                    "operator/viewer sent you a MESSAGE (this is NOT a game turn - "
+                    "do NOT output a game action). Two things:\n"
+                    "1) ANSWER them in plain English, honestly and specifically, "
+                    "based on your current situation/memory/reasoning below. Under "
+                    "3 sentences (a viewer reads it on a live stream). If unsure "
+                    "or mistaken, say so.\n"
+                    "2) DECIDE if their message is GUIDANCE you should act on in "
+                    "your gameplay (a tip/instruction/correction), versus just a "
+                    "question about your thinking.\n"
+                    "Reply EXACTLY in this form:\n"
+                    "ANSWER: <your reply>\n"
+                    "ACTIONABLE: <yes or no>\n\n"
                     "=== YOUR CURRENT SITUATION ===\n" + _ctx +
-                    "\n\n=== OPERATOR'S QUESTION ===\n" + _ask +
-                    "\n\nYour answer:")
+                    "\n\n=== THEIR MESSAGE ===\n" + _ask + "\n")
                 _ans = ollama.chat_ex("You are a helpful game-playing agent "
-                                      "explaining your own reasoning.", _iprompt)
-                _atext = (_ans.get("content") or "").strip() if isinstance(_ans, dict) else str(_ans)
-                print(f"[{step:03d}] INTERVIEW Q: {_ask}\n         A: {_atext[:300]}")
+                                      "explaining your reasoning and deciding if a "
+                                      "message is actionable guidance.", _iprompt)
+                _raw = (_ans.get("content") or "").strip() if isinstance(_ans, dict) else str(_ans)
+                # Parse ANSWER / ACTIONABLE (fall back to whole text as answer).
+                _atext = _raw
+                _actionable = False
+                import re as _re
+                _ma = _re.search(r"ANSWER:\s*(.+?)(?:\nACTIONABLE:|$)", _raw, _re.S | _re.I)
+                if _ma:
+                    _atext = _ma.group(1).strip()
+                _mc = _re.search(r"ACTIONABLE:\s*(yes|no)", _raw, _re.I)
+                if _mc:
+                    _actionable = _mc.group(1).lower() == "yes"
+                print(f"[{step:03d}] MESSAGE: {_ask}\n         A: {_atext[:240]}"
+                      f"  [actionable={_actionable}]")
                 if window.available:
                     window.set_answer(_atext or "(no answer)")
+                # If the LLM judged the message actionable, ALSO treat it as a
+                # hint: record it and keep it active for a few turns so it steers
+                # gameplay. This removes the need for a separate 'hint' command -
+                # one message channel; the model decides how to use it.
+                if _actionable:
+                    session["hint"] = _ask
+                    session["hint_ttl"] = 3
+                    kb.record_hint(_ask, step)
+                    print(f"[{step:03d}] (message judged actionable -> recorded as hint)")
                 # Write the Q&A to a file so the Twitch bridge can post the answer
                 # back to chat, and OBS can show it as a text source.
                 try:

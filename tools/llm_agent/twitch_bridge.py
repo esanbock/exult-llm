@@ -92,18 +92,18 @@ class TwitchBridge:
     def _handle_privmsg(self, user: str, text: str):
         t = text.strip()
         low = t.lower()
+        # Unified channel: !ask and !hint both go to the agent, which decides for
+        # itself whether the message is a question to answer or guidance to act
+        # on. (!hint kept as a friendly alias.)
+        msg = None
         if low.startswith("!ask"):
-            q = t[4:].strip()
-            if q:
-                _append_line(ASK_QUEUE, q)
-                print(f"[twitch] {user} !ask: {q}")
-                self.chat(f"@{user} queued your question for the AI - answer soon.")
-        elif ALLOW_HINTS and low.startswith("!hint"):
-            h = t[5:].strip()
-            if h:
-                _append_line(HINT_FILE, h)
-                print(f"[twitch] {user} !hint: {h}")
-                self.chat(f"@{user} passed your hint to the AI.")
+            msg = t[4:].strip()
+        elif low.startswith("!hint"):
+            msg = t[5:].strip()
+        if msg:
+            _append_line(ASK_QUEUE, msg)
+            print(f"[twitch] {user}: {msg}")
+            self.chat(f"@{user} sent your message to the AI - reply soon.")
 
     def _poll_answer(self):
         """If the driver wrote a new answer, post it to chat + OBS file."""

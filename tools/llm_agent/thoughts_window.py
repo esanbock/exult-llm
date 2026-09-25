@@ -227,19 +227,20 @@ class ThoughtsWindow:
         self._tool_tree.tag_configure("err", foreground="#c0392b")
         right.add(tool_frame, weight=2)
 
-        # Consolidated OPERATOR row: one input used for BOTH hints (steer the
-        # agent) and questions (interview it). The full threaded conversation
-        # lives in a separate persistent Chat window (Open chat) so it is not
-        # lost in the turn-log noise.
+        # Consolidated OPERATOR row: ONE message channel. Whatever you type is
+        # sent to the agent, which ANSWERS it and decides for itself whether it
+        # is actionable guidance (a tip to follow) or just a question - so there
+        # is no separate hint command. The threaded conversation lives in the
+        # persistent Chat window (Open chat).
         oprow = tk.Frame(self._root)
         oprow.pack(fill="x", padx=8, pady=(2, 4))
         tk.Label(oprow, text="To agent:", font=("Segoe UI", 10, "bold"),
                  fg="#1a5276").pack(side="left")
         self._op_entry = tk.Entry(oprow, font=("Segoe UI", 10))
         self._op_entry.pack(side="left", fill="x", expand=True, padx=6)
-        self._op_entry.bind("<Return>", lambda e: self._send_ask())     # Enter = Ask
-        tk.Button(oprow, text="Ask", command=self._send_ask).pack(side="left")
-        tk.Button(oprow, text="Hint", command=self._send_hint).pack(side="left", padx=(4, 0))
+        self._op_entry.bind("<Return>", lambda e: self._send_ask())
+        tk.Button(oprow, text="Send", command=self._send_ask,
+                  font=("Segoe UI", 9, "bold")).pack(side="left")
         tk.Button(oprow, text="Open chat", command=self._show_chat,
                   font=("Segoe UI", 9, "bold")).pack(side="left", padx=(8, 0))
         self._op_status = tk.Label(oprow, text="", font=("Segoe UI", 8), fg="#1a5276")
@@ -283,14 +284,11 @@ class ThoughtsWindow:
             w.configure(state="normal")
             w.delete("1.0", "end")
             for who, text in self._chat_log:
-                tag = {"you-hint": "hint", "you-ask": "ask",
-                       "agent": "agent"}.get(who, "")
-                label = {"you-hint": "YOU (hint)", "you-ask": "YOU (ask)",
-                         "agent": "AGENT"}.get(who, who)
+                tag = {"you": "you", "agent": "agent"}.get(who, "")
+                label = {"you": "YOU", "agent": "AGENT"}.get(who, who)
                 w.insert("end", f"{label}: ", (tag,))
                 w.insert("end", f"{text}\n\n")
-            w.tag_configure("hint", foreground="#117a2b", font=("Segoe UI", 10, "bold"))
-            w.tag_configure("ask", foreground="#1a5276", font=("Segoe UI", 10, "bold"))
+            w.tag_configure("you", foreground="#1a5276", font=("Segoe UI", 10, "bold"))
             w.tag_configure("agent", foreground="#7d3c98", font=("Segoe UI", 10, "bold"))
             w.see("end")
             w.configure(state="disabled")
@@ -312,8 +310,8 @@ class ThoughtsWindow:
         if txt:
             self._asks.put(txt)
             self._op_entry.delete(0, "end")
-            self._op_status.config(text="asking... (answer next turn)")
-            self._chat_add("you-ask", txt)
+            self._op_status.config(text="sent (answer next turn)")
+            self._chat_add("you", txt)
             self._show_chat()   # surface the chat so the answer isn't missed
 
     def _show_chat(self) -> None:
@@ -340,18 +338,12 @@ class ThoughtsWindow:
         ce = tk.Entry(entry_row, font=("Segoe UI", 10))
         ce.pack(side="left", fill="x", expand=True, padx=4, pady=4)
 
-        def _ask_here():
+        def _send_here():
             t = ce.get().strip()
             if t:
-                self._asks.put(t); ce.delete(0, "end"); self._chat_add("you-ask", t)
-
-        def _hint_here():
-            t = ce.get().strip()
-            if t:
-                self._hints.put(t); ce.delete(0, "end"); self._chat_add("you-hint", t)
-        ce.bind("<Return>", lambda e: _ask_here())
-        tk.Button(entry_row, text="Ask", command=_ask_here).pack(side="left")
-        tk.Button(entry_row, text="Hint", command=_hint_here).pack(side="left", padx=4)
+                self._asks.put(t); ce.delete(0, "end"); self._chat_add("you", t)
+        ce.bind("<Return>", lambda e: _send_here())
+        tk.Button(entry_row, text="Send", command=_send_here).pack(side="left")
 
         def _on_close():
             self._chat_win = None
