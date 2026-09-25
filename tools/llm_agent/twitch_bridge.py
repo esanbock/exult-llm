@@ -75,8 +75,8 @@ class TwitchBridge:
         self._send_raw(f"NICK {self.nick}")
         self._send_raw(f"JOIN {self.channel}")
         print(f"[twitch] connected as {self.nick}, joined {self.channel}")
-        self.chat(f"Agent bridge online. Use !ask <question> to interview the AI"
-                  + (" or !hint <tip> to help it." if ALLOW_HINTS else "."))
+        # No startup greeting posted to chat - the bridge stays silent and only
+        # posts the AI's actual answers to viewer !ask messages.
 
     def _send_raw(self, line: str):
         self.sock.sendall((line + "\r\n").encode("utf-8"))
