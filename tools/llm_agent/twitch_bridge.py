@@ -6,9 +6,10 @@ with no third-party dependencies (stdlib sockets only), listens for viewer
 commands, and pipes them to the running agent driver via small queue files that
 the driver already consumes:
 
-  !ask  <question>   -> appended to ask_queue.txt  (driver interviews the agent,
-                        out-of-band; does NOT affect gameplay)
-  !hint <text>       -> appended to hint.txt        (driver steers the agent)
+  !ask <anything>    -> appended to ask_queue.txt. The AI answers it AND decides
+                        for itself whether it's just a question, a hint to act
+                        on, or a new quest - so viewers need only this one
+                        command.
 
 When the driver answers a question it writes Q&A to agent_answer.txt; this bridge
 watches that file and:
@@ -92,14 +93,12 @@ class TwitchBridge:
     def _handle_privmsg(self, user: str, text: str):
         t = text.strip()
         low = t.lower()
-        # Unified channel: !ask and !hint both go to the agent, which decides for
-        # itself whether the message is a question to answer or guidance to act
-        # on. (!hint kept as a friendly alias.)
+        # Single command: !ask <anything>. The AI decides for itself whether the
+        # message is a question to answer, a hint to act on, or a new quest - so
+        # viewers only need one command. (!hint removed - it was redundant.)
         msg = None
         if low.startswith("!ask"):
             msg = t[4:].strip()
-        elif low.startswith("!hint"):
-            msg = t[5:].strip()
         if msg:
             _append_line(ASK_QUEUE, msg)
             print(f"[twitch] {user}: {msg}")
