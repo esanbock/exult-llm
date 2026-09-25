@@ -1,5 +1,34 @@
 # LLM Agent — Plan & Findings
 
+## SESSION FINDINGS (fixation, hallucination, physical-investigation)
+Investigating why the agent never finishes the Trinsic escape (needs: key ->
+open a house chest -> report -> password -> deed -> leave):
+- SELF-REINFORCING HALLUCINATION: the model wrote "I lowered the gate / opened
+  the chest / got the deed" in its own reason text; that got logged, then it
+  RE-READ its own past claim as fact. Fix: action_log now renders the reason as
+  "(I intended: ...)" (a claim, not an event) + prompt rule "only the -> outcome
+  is real". Fresh runs since keep ACCURATE summaries (no fabricated successes).
+- CONVERSATION-ONLY STALL: it talked endlessly and searched 0 containers for
+  hundreds of turns. Added always-on INVESTIGATE_NOW alert (talked>=8 &
+  searched+opened==0 -> "stop talking, enter a building, search a chest").
+- OUTDOOR-LANDMARK LOOP (the big one): 'goto stables' resolved to an outdoor
+  landmark tile it was already on -> "target is here" -> re-goto same landmark,
+  forever, never entering buildings. Fixes: when a landmark is reached with
+  nothing searchable, mark it EXHAUSTED; then INTERCEPT repeated goto to an
+  exhausted landmark and force exploration of a NEW building. Also: at a reached
+  landmark, search an adjacent container or go THROUGH a nearby door.
+- RESULT: the fixation-breaker WORKED - after ~hours stuck at 0 searches, the
+  agent finally SEARCHED + LOOTED containers (checkpoint "actually LOOTED" now
+  passes) and explored 170+ distinct tiles. BUT it does not SUSTAIN systematic
+  searching - it reverts to talking/wandering, so it hasn't found the specific
+  locked chest among many houses. This is the intrinsic ceiling (matches
+  TextQuests): with fair perception + full tools + explicit always-on nudges +
+  loop-breakers, the model investigates SOME, but lacks the disciplined,
+  building-by-building search a human does to find the one needed chest.
+- Context tuning: action-log window 600->350 (context had hit 82-86%); settles
+  ~62-67%. Checkpoint metric in monitor.py is the honest progress gauge (immune
+  to the model's false quest-resolutions).
+
 ## EXTERNAL VALIDATION — TextQuests (CAIS, Phan/Mazeika/Zou/Hendrycks 2025)
 The TextQuests benchmark (25 Infocom IF games, arXiv:2507.23701) independently
 documents the SAME failure modes we hit, across FRONTIER models - confirming
