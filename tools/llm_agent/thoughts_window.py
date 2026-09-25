@@ -35,6 +35,9 @@ class ThoughtsWindow:
         # Operator QUESTIONS to the agent (out-of-band interview, not game turns).
         self._asks: "queue.Queue[str]" = queue.Queue()
         self._last_answer = ""          # latest agent interview answer
+        self._chat_log: list = []       # persistent operator<->agent transcript
+        self._chat_win = None           # the Chat Toplevel (created on demand)
+        self._chat_text = None          # the Chat transcript widget
         # Rolling combined turn log (last N turns). Each entry pairs the
         # reasoning with the action/result it produced.
         self._MAX_TURNS = 12
@@ -224,47 +227,40 @@ class ThoughtsWindow:
         self._tool_tree.tag_configure("err", foreground="#c0392b")
         right.add(tool_frame, weight=2)
 
-        # Hint bar: type a hint and Send it to the agent for the next turn(s).
-        hintrow = tk.Frame(self._root)
-        hintrow.pack(fill="x", padx=8, pady=(2, 8))
-        tk.Label(hintrow, text="Hint:", font=("Segoe UI", 10, "bold")).pack(side="left")
-        self._hint_entry = tk.Entry(hintrow, font=("Segoe UI", 10))
-        self._hint_entry.pack(side="left", fill="x", expand=True, padx=6)
-        self._hint_entry.bind("<Return>", lambda e: self._send_hint())
-        tk.Button(hintrow, text="Send hint", command=self._send_hint).pack(side="left")
-        tk.Button(hintrow, text="Show context",
-                  command=self._show_context).pack(side="left", padx=(6, 0))
-        tk.Button(hintrow, text="Show map",
-                  command=self._show_map).pack(side="left", padx=(6, 0))
-        tk.Button(hintrow, text="Show inventory",
-                  command=self._show_inventory).pack(side="left", padx=(6, 0))
-        self._hint_status = tk.Label(hintrow, text="", font=("Segoe UI", 8), fg="green")
-        self._hint_status.pack(side="left", padx=6)
-
-        # ASK row: interview the agent about its reasoning ("why are you carrying
-        # a pitchfork?"). This queries the LLM out-of-band with its current game
-        # context - it does NOT advance the game or alter the agent's memory.
-        askrow = tk.Frame(self._root)
-        askrow.pack(fill="x", padx=8, pady=(0, 6))
-        tk.Label(askrow, text="Ask:", font=("Segoe UI", 10, "bold"),
+        # Consolidated OPERATOR row: one input used for BOTH hints (steer the
+        # agent) and questions (interview it). The full threaded conversation
+        # lives in a separate persistent Chat window (Open chat) so it is not
+        # lost in the turn-log noise.
+        oprow = tk.Frame(self._root)
+        oprow.pack(fill="x", padx=8, pady=(2, 4))
+        tk.Label(oprow, text="To agent:", font=("Segoe UI", 10, "bold"),
                  fg="#1a5276").pack(side="left")
-        self._ask_entry = tk.Entry(askrow, font=("Segoe UI", 10))
-        self._ask_entry.pack(side="left", fill="x", expand=True, padx=6)
-        self._ask_entry.bind("<Return>", lambda e: self._send_ask())
-        tk.Button(askrow, text="Ask agent", command=self._send_ask).pack(side="left")
-        self._ask_status = tk.Label(askrow, text="", font=("Segoe UI", 8), fg="#1a5276")
-        self._ask_status.pack(side="left", padx=6)
-        # Turn-memory (action-log window) size control: raise it to give the
-        # agent more temporal memory (smarter, more context) or lower it if
-        # context% is running high (leaner). 0 = use the driver default.
-        tk.Label(askrow, text="  Turn memory:", font=("Segoe UI", 9, "bold")
+        self._op_entry = tk.Entry(oprow, font=("Segoe UI", 10))
+        self._op_entry.pack(side="left", fill="x", expand=True, padx=6)
+        self._op_entry.bind("<Return>", lambda e: self._send_ask())     # Enter = Ask
+        tk.Button(oprow, text="Ask", command=self._send_ask).pack(side="left")
+        tk.Button(oprow, text="Hint", command=self._send_hint).pack(side="left", padx=(4, 0))
+        tk.Button(oprow, text="Open chat", command=self._show_chat,
+                  font=("Segoe UI", 9, "bold")).pack(side="left", padx=(8, 0))
+        self._op_status = tk.Label(oprow, text="", font=("Segoe UI", 8), fg="#1a5276")
+        self._op_status.pack(side="left", padx=6)
+
+        # Utility + turn-memory row.
+        utilrow = tk.Frame(self._root)
+        utilrow.pack(fill="x", padx=8, pady=(0, 8))
+        tk.Button(utilrow, text="Show context",
+                  command=self._show_context).pack(side="left")
+        tk.Button(utilrow, text="Show map",
+                  command=self._show_map).pack(side="left", padx=(6, 0))
+        tk.Button(utilrow, text="Show inventory",
+                  command=self._show_inventory).pack(side="left", padx=(6, 0))
+        tk.Label(utilrow, text="  Turn memory:", font=("Segoe UI", 9, "bold")
                  ).pack(side="left")
         self._turnmem_var = tk.StringVar(value="default")
-        _tm = ttk.Combobox(askrow, textvariable=self._turnmem_var, width=8,
-                           state="readonly",
-                           values=("default", "100", "200", "300", "450",
-                                   "600", "800", "1000"))
-        _tm.pack(side="left", padx=4)
+        ttk.Combobox(utilrow, textvariable=self._turnmem_var, width=8,
+                     state="readonly",
+                     values=("default", "100", "200", "300", "450",
+                             "600", "800", "1000")).pack(side="left", padx=4)
 
         self._root.after(100, self._drain)
         # Restore the user's saved divider (sash) positions once the window has
@@ -272,21 +268,97 @@ class ThoughtsWindow:
         # need real dimensions first). A short delay lets geometry settle.
         self._root.after(400, self._restore_sashes)
 
+    def _chat_add(self, who: str, text: str) -> None:
+        """Append a line to the persistent operator<->agent chat transcript and,
+        if the chat window is open, render it live."""
+        self._chat_log.append((who, text))
+        del self._chat_log[:-200]
+        self._render_chat()
+
+    def _render_chat(self) -> None:
+        w = getattr(self, "_chat_text", None)
+        if w is None:
+            return
+        try:
+            w.configure(state="normal")
+            w.delete("1.0", "end")
+            for who, text in self._chat_log:
+                tag = {"you-hint": "hint", "you-ask": "ask",
+                       "agent": "agent"}.get(who, "")
+                label = {"you-hint": "YOU (hint)", "you-ask": "YOU (ask)",
+                         "agent": "AGENT"}.get(who, who)
+                w.insert("end", f"{label}: ", (tag,))
+                w.insert("end", f"{text}\n\n")
+            w.tag_configure("hint", foreground="#117a2b", font=("Segoe UI", 10, "bold"))
+            w.tag_configure("ask", foreground="#1a5276", font=("Segoe UI", 10, "bold"))
+            w.tag_configure("agent", foreground="#7d3c98", font=("Segoe UI", 10, "bold"))
+            w.see("end")
+            w.configure(state="disabled")
+        except Exception:
+            pass
+
     def _send_hint(self) -> None:
-        txt = self._hint_entry.get().strip()
+        txt = self._op_entry.get().strip()
         if txt:
             self._hints.put(txt)
-            self._hint_entry.delete(0, "end")
-            self._hint_status.config(text="sent")
+            self._op_entry.delete(0, "end")
+            self._op_status.config(text="hint sent")
+            self._chat_add("you-hint", txt)
             if self._root is not None:
-                self._root.after(1500, lambda: self._hint_status.config(text=""))
+                self._root.after(1500, lambda: self._op_status.config(text=""))
 
     def _send_ask(self) -> None:
-        txt = self._ask_entry.get().strip()
+        txt = self._op_entry.get().strip()
         if txt:
             self._asks.put(txt)
-            self._ask_entry.delete(0, "end")
-            self._ask_status.config(text="asking... (answers next turn)")
+            self._op_entry.delete(0, "end")
+            self._op_status.config(text="asking... (answer next turn)")
+            self._chat_add("you-ask", txt)
+            self._show_chat()   # surface the chat so the answer isn't missed
+
+    def _show_chat(self) -> None:
+        """Open (or focus) the persistent operator<->agent CHAT window: a
+        threaded transcript of hints sent and questions asked + the agent's
+        answers, separate from the turn-log noise. You can also type here."""
+        if self._root is None:
+            return
+        w = getattr(self, "_chat_win", None)
+        if w is not None:
+            try:
+                w.deiconify(); w.lift(); self._render_chat(); return
+            except Exception:
+                self._chat_win = None
+        win = tk.Toplevel(self._root)
+        self._chat_win = win
+        win.title("Agent chat (hints + interview)")
+        win.geometry("640x560")
+        self._chat_text = scrolledtext.ScrolledText(win, wrap="word",
+                                                    font=("Segoe UI", 10))
+        self._chat_text.pack(fill="both", expand=True)
+        entry_row = tk.Frame(win)
+        entry_row.pack(fill="x")
+        ce = tk.Entry(entry_row, font=("Segoe UI", 10))
+        ce.pack(side="left", fill="x", expand=True, padx=4, pady=4)
+
+        def _ask_here():
+            t = ce.get().strip()
+            if t:
+                self._asks.put(t); ce.delete(0, "end"); self._chat_add("you-ask", t)
+
+        def _hint_here():
+            t = ce.get().strip()
+            if t:
+                self._hints.put(t); ce.delete(0, "end"); self._chat_add("you-hint", t)
+        ce.bind("<Return>", lambda e: _ask_here())
+        tk.Button(entry_row, text="Ask", command=_ask_here).pack(side="left")
+        tk.Button(entry_row, text="Hint", command=_hint_here).pack(side="left", padx=4)
+
+        def _on_close():
+            self._chat_win = None
+            self._chat_text = None
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+        self._render_chat()
 
     def _show_context(self) -> None:
         """Open a separate window showing the full context sent to the model
@@ -352,20 +424,6 @@ class ThoughtsWindow:
         btnrow.pack(fill="x")
         tk.Button(btnrow, text="Refresh", command=_fill).pack(side="left", padx=6, pady=4)
         tk.Button(btnrow, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
-
-    def _show_answer(self, qa: str) -> None:
-        """Popup showing an operator Question and the agent's Answer (from an
-        out-of-band interview - does not affect the game)."""
-        if self._root is None:
-            return
-        win = tk.Toplevel(self._root)
-        win.title("Agent interview")
-        win.geometry("640x440")
-        txt = scrolledtext.ScrolledText(win, wrap="word", font=("Segoe UI", 10))
-        txt.pack(fill="both", expand=True)
-        txt.insert("end", qa)
-        txt.configure(state="disabled")
-        tk.Button(win, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
 
     def _append_turn_entry(self, action_result=None) -> None:
         """Merge reasoning + action/result into ONE entry per turn. Reasoning
@@ -513,12 +571,13 @@ class ThoughtsWindow:
                     self._last_inventory = payload
                 elif kind == "answer":
                     self._last_answer = payload
-                    if hasattr(self, "_ask_status"):
-                        self._ask_status.config(text="answered")
+                    self._chat_add("agent", payload)
+                    if hasattr(self, "_op_status"):
+                        self._op_status.config(text="answered")
                         if self._root is not None:
                             self._root.after(2000,
-                                             lambda: self._ask_status.config(text=""))
-                    self._show_answer(payload)
+                                             lambda: self._op_status.config(text=""))
+                    self._show_chat()
                 elif kind == "topics_tree":
                     self._rebuild_topics(payload)
                 elif kind == "npc_tree":

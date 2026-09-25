@@ -1731,10 +1731,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 _atext = (_ans.get("content") or "").strip() if isinstance(_ans, dict) else str(_ans)
                 print(f"[{step:03d}] INTERVIEW Q: {_ask}\n         A: {_atext[:300]}")
                 if window.available:
-                    window.set_answer(f"Q: {_ask}\n\nA: {_atext}")
+                    window.set_answer(_atext or "(no answer)")
             except Exception as _e:
                 if window.available:
-                    window.set_answer(f"Q: {_ask}\n\n(interview failed: {_e})")
+                    window.set_answer(f"(interview failed: {_e})")
             return   # interview iteration: do NOT advance the game this cycle
         # Pull any user hint typed into the GUI; keep it active for a few turns
         # AND record it permanently so the agent can recall it later.
