@@ -317,6 +317,8 @@ class ThoughtsWindow:
         btnrow.pack(fill="x")
         tk.Button(btnrow, text="Refresh", command=_fill).pack(side="left", padx=6, pady=4)
         tk.Button(btnrow, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
+
+    def _append_turn_entry(self, action_result=None) -> None:
         """Merge reasoning + action/result into ONE entry per turn. Reasoning
         (think) usually arrives first and creates/updates the entry; the action
         arrives next and completes it. If they land out of order we still pair
