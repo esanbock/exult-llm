@@ -1962,6 +1962,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if args.dry_run:
         reason, action = scripted_reply(step, state)
     else:
+        # OPERATOR SAVE: if the GUI Save-game button was pressed, save the game
+        # now (the driver owns the engine socket) and ack back to the GUI.
+        if window.available and window.consume_save_request():
+            try:
+                _sr = exult.act({"type": "save"})
+                _ok = bool(isinstance(_sr, dict) and _sr.get("ok"))
+                print(f"[{step:03d}] operator SAVE -> {_sr}")
+                window.set_save_ack(_ok)
+            except Exception as _e:
+                print(f"[{step:03d}] operator SAVE failed: {_e}")
+                window.set_save_ack(False)
+            return   # saving is a non-game side-effect; don't advance this cycle
         # OPERATOR INTERVIEW: if the human asked the agent a question, answer it
         # out-of-band using the CURRENT game context - WITHOUT advancing the game
         # or altering the agent's memory. This lets us probe its reasoning

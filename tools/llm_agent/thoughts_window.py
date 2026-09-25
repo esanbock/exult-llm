@@ -34,6 +34,7 @@ class ThoughtsWindow:
         self._hints: "queue.Queue[str]" = queue.Queue()
         # Operator QUESTIONS to the agent (out-of-band interview, not game turns).
         self._asks: "queue.Queue[str]" = queue.Queue()
+        self._save_requested = False    # GUI Save-game button -> driver polls
         self._last_answer = ""          # latest agent interview answer
         self._chat_log: list = []       # persistent operator<->agent transcript
         self._chat_win = None           # the Chat Toplevel (created on demand)
@@ -287,6 +288,12 @@ class ThoughtsWindow:
                   command=self._show_map).pack(side="left", padx=(6, 0))
         tk.Button(utilrow, text="Show inventory",
                   command=self._show_inventory).pack(side="left", padx=(6, 0))
+        tk.Button(utilrow, text="Save game",
+                  command=self._request_save,
+                  font=("Segoe UI", 9, "bold")).pack(side="left", padx=(6, 0))
+        self._save_status = tk.Label(utilrow, text="", font=("Segoe UI", 8),
+                                     fg="green")
+        self._save_status.pack(side="left", padx=4)
         tk.Label(utilrow, text="  Turn memory:", font=("Segoe UI", 9, "bold")
                  ).pack(side="left")
         self._turnmem_var = tk.StringVar(value="default")
@@ -649,6 +656,24 @@ class ThoughtsWindow:
         except queue.Empty:
             return None
 
+    def _request_save(self) -> None:
+        """GUI Save button: flag a save for the driver to execute next turn
+        (the driver owns the engine socket)."""
+        self._save_requested = True
+        if hasattr(self, "_save_status"):
+            self._save_status.config(text="saving...", fg="#1a5276")
+
+    def consume_save_request(self) -> bool:
+        """Driver polls this each turn; returns True once if a save was
+        requested, then clears the flag."""
+        if self._save_requested:
+            self._save_requested = False
+            return True
+        return False
+
+    def set_save_ack(self, ok: bool) -> None:
+        self._q.put(("save_ack", ok))
+
     def get_turn_window(self) -> Optional[int]:
         """Operator-selected action-log window size (turns of temporal memory),
         or None to use the driver default. Set via the GUI 'Turn memory' box."""
@@ -699,6 +724,14 @@ class ThoughtsWindow:
                     self._last_area_map = payload
                 elif kind == "inventory":
                     self._last_inventory = payload
+                elif kind == "save_ack":
+                    if hasattr(self, "_save_status"):
+                        self._save_status.config(
+                            text=("saved!" if payload else "save failed"),
+                            fg=("green" if payload else "red"))
+                        if self._root is not None:
+                            self._root.after(3000,
+                                             lambda: self._save_status.config(text=""))
                 elif kind == "answer":
                     self._last_answer = payload
                     self._chat_add("agent", payload)
