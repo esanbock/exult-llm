@@ -343,10 +343,6 @@ periodically). For finer detail you have the recall/quests tools.
   recent_dialogue: a running transcript of the last conversation exchanges
       ({"npc":name,"said":...} for NPC lines, {"me":...} for your replies).
       Use this to remember what you have learned and what was said earlier.
-  game_notebook: the GAME'S OWN journal, written automatically as the story
-      advances (the canonical record a human re-reads in the in-game notebook).
-      Trust it: it summarizes key plot facts and tasks you have encountered.
-      Use it to stay oriented on the main story and to cross-check your quests.
   action_log: YOUR TEMPORAL MEMORY - a turn-by-turn log of your recent actions
       with OUTCOMES and the REASON you gave, one per line as
       "[T<turn>] <action> -> <outcome>  [\"<your reason>\"]", plus repeated moves
@@ -930,12 +926,6 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
                        f"{_open_left} open topic(s) remain."))
     if last_look:
         view["look_description"] = last_look
-    # In-game NOTEBOOK (the game's own quest journal, auto-written as the plot
-    # advances). Canonical record of what the story has told you - a human
-    # re-reads this. Always show it when non-empty.
-    _gnb = state.get("game_notebook")
-    if _gnb:
-        view["game_notebook"] = _gnb
     if alert:
         view["alert"] = alert
     if state.get("recalled") is not None:
