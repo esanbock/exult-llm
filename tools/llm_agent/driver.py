@@ -837,6 +837,17 @@ def _action_phrase(action) -> str:
     if not isinstance(action, dict):
         return str(action)
     t = action.get("type", "?")
+    # Some models double-nest ({"type":"action","action":"move",...}) or wrap a
+    # target ({"target":{"x":..,"y":..}}). Normalize common cases so the Action
+    # column shows a phrase, not a raw dict.
+    if t in ("action", "tool", "command") and isinstance(action.get("action"), str):
+        t = action["action"]
+    _tgt = action.get("target")
+    if isinstance(_tgt, dict) and action.get("tx") is None:
+        if _tgt.get("x") is not None:
+            action = dict(action, tx=_tgt.get("x"), ty=_tgt.get("y"))
+        elif _tgt.get("name"):
+            action = dict(action, name=_tgt.get("name"))
     if t == "move":
         return f"move {action.get('dir', '')}".strip()
     if t == "goto":
@@ -1317,7 +1328,14 @@ def parse_reply(text: str) -> tuple[str, dict]:
                     pass
     if not isinstance(obj, dict):
         return ("(could not parse reply)", {"type": "wait"})
-    reason = str(obj.get("reason", ""))
+    # Accept the model's rationale under any of the common field names it emits
+    # (some models use "reasoning"/"thought"/"rationale" instead of "reason").
+    reason = ""
+    for _rk in ("reason", "reasoning", "thought", "rationale", "explanation"):
+        _rv = obj.get(_rk)
+        if isinstance(_rv, str) and _rv.strip():
+            reason = _rv.strip()
+            break
     action = obj.get("action")
     if not isinstance(action, dict):
         # Maybe the model returned a bare action.
@@ -2400,7 +2418,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             print(f"[{step:03d}] WARNING: prompt {pt} tok near context limit {ctx_max}")
         if window.available:
             window.set_context(pct, f"{pt} prompt + {res.get('response_tokens',0)} resp / {ctx_max} tok ({pct}%)")
-            window.set_thinking(reason if reason else reply)
+            # Reasoning column: ONLY the parsed short reason (never the raw JSON
+            # reply, which is noise). Empty reason -> blank, not the reply dump.
+            window.set_thinking(reason if reason else "")
             # Raw model thinking (reasoning-model chain-of-thought) if present -
             # goes to the Thought column; empty for think-off models like qwen.
             _thk = res.get("thinking") if isinstance(res, dict) else None
