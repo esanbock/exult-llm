@@ -65,6 +65,28 @@ General principles (apply to ANY situation, not one specific puzzle):
   * FOLLOW LEADS: when someone mentions a person, place, item, or event, treat
     it as a lead worth pursuing. Use your journal to remember what you learned.
 
+INTERACTION RULES (how the world works - know these so you don't waste turns):
+  * PROXIMITY: to take, pickup, search, or open something you must be RIGHT NEXT
+    to it (about 1 tile away). If you are farther, first "goto" the target's tile
+    (or its dx,dy), THEN act. A failed take/search will tell you if the item is
+    too far and give the tile to goto. To TALK you only need the person in view,
+    but being close is more reliable - goto them first.
+  * KEYS OPEN LOCKS: locked DOORS and locked CHESTS/containers cannot just be
+    opened - you need the right KEY. Keys are items you find (on the ground, on
+    bodies, in other containers) - PICK THEM UP and keep them. To open a lock:
+    stand next to it and use "unlock" (it tries your keys); if you have the
+    matching key it opens, then "open"/"search" it. If unlock says no key fits,
+    go FIND the key (often near who/what the lock belongs to) and come back. Do
+    not abandon a locked chest/door - the key is usually findable.
+  * DOORS: '+' = closed (a passage, not a wall - "open" it or "goto" beyond it),
+    '/' = open. Locked doors need a key as above.
+  * CONTAINERS: chests, desks, drawers, cabinets, bags, barrels, crates, sacks
+    are all searchable ("search" opens the nearest; "take" pulls items out). A
+    body of a slain creature/person is also searchable/lootable.
+  * COMBAT: enemies show HOSTILE. "attack" (by name or nearest hostile) engages
+    one; "combat" toggles auto-fight. You must be near a foe to hit it (melee)
+    or have a ranged weapon. Flee fights you cannot win.
+
 RPG PLAYER WISDOM (genre habits a seasoned player relies on):
   * EXHAUST DIALOGUE: work through the WHOLE conversation tree with each person -
     ask every available topic (especially names, jobs, and any proper noun).
@@ -408,6 +430,12 @@ periodically). For finer detail you have the recall/quests tools.
             searching, use "take" to grab items, then "close" it.
   close   - Close an open container/body gump (like pressing the checkmark).
             params: none. Do this when done looting so you can move again.
+  unlock  - Use your KEYS on the nearest locked DOOR or CONTAINER (chest, etc.)
+            to unlock it. params: none. Stand right next to the locked thing
+            first. Succeeds only if you are carrying a key that FITS this lock;
+            if not, it tells you so - go FIND the key (often on the ground, a
+            body, or in another container near who it belongs to), pick it up,
+            then unlock again. After unlocking, use "open"/"search" normally.
   read    - Read a nearby SIGN or readable object (a human double-clicks it).
             Returns its "text". params: omit to read the nearest sign, or
             {"name":"<obj>"} to read a specific object. Signs give shop names,
@@ -3354,7 +3382,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # vs only talking. Only count genuine (ok) engine actions.
         if _ok is not False and _atype in (
                 "search", "pickup", "take", "open", "read", "talk",
-                "close", "equip", "unequip", "drop", "attack", "combat"):
+                "close", "equip", "unequip", "drop", "attack", "combat",
+                "unlock", "use_key"):
             kb.record_activity(_atype)
     session["last_action_type"] = _atype
     # Blocked-move / unreachable-target breaker: a move that comes back

@@ -2159,6 +2159,73 @@ namespace LLM_agent {
 			return "{\"ok\":true,\"did\":\"open\"}";
 		}
 
+		if (type == "unlock" || type == "use_key") {
+			// Try the party's KEYS on the nearest locked door/container (the
+			// headless equivalent of Exult's 'Try keys'). Finds the nearest
+			// locked object within reach, reads its lock quality, looks for a
+			// matching key (shape 641) in the party, and uses it. A human does
+			// this by using a key on the lock.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			const Tile_coord at = av->get_tile();
+			Game_object_vector objs;
+			Game_object::find_nearby(objs, at, -1, 3, 128);
+			Game_object* locked = nullptr;
+			int          best_d = 1 << 30;
+			for (Game_object* obj : objs) {
+				if (!obj) {
+					continue;
+				}
+				const Shape_info& info = obj->get_info();
+				// Target the nearest DOOR or CONTAINER (like Exult's Try-Keys,
+				// which doesn't pre-check locked-ness - it just tries the keys;
+				// a non-locked or non-matching target simply won't unlock).
+				const bool is_door = info.is_door();
+				const bool is_cont = info.get_shape_class() == Shape_info::container;
+				if (!is_door && !is_cont) {
+					continue;
+				}
+				const Tile_coord ot = obj->get_tile();
+				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+				if (d < best_d) {
+					best_d = d;
+					locked = obj;
+				}
+			}
+			if (!locked) {
+				return "{\"ok\":false,\"error\":\"no locked door or container "
+					   "within reach - stand right next to the locked thing\"}";
+			}
+			const int qual = locked->get_quality();    // key quality must match
+			Actor*    party[10];
+			const int party_cnt = gwin->get_party(&party[0], 1);
+			for (int i = 0; i < party_cnt; i++) {
+				Game_object_vector keys;
+				if (party[i]->get_objects(keys, 641, qual, c_any_framenum)) {
+					for (auto* k : keys) {
+						if (k->inside_locked()) {
+							continue;
+						}
+						Usecode_machine* uc = gwin->get_usecode();
+						Game_object*     oldtarg;
+						Tile_coord*      oldtile;
+						uc->save_intercept(oldtarg, oldtile);
+						uc->intercept_click_on_item(locked);
+						k->activate();
+						uc->restore_intercept(oldtarg, oldtile);
+						return "{\"ok\":true,\"did\":\"unlock\",\"note\":\"used a "
+							   "matching key on the lock\"}";
+					}
+				}
+			}
+			return "{\"ok\":false,\"error\":\"you have no key that fits this lock. "
+				   "Find the right key (on the ground, a body, or another "
+				   "container - often near who/what it belongs to) and pick it "
+				   "up, then try unlock again.\"}";
+		}
+
 		if (type == "set_number") {
 			Slider_gump* sg = Slider_gump::get_active();
 			if (!sg) {
