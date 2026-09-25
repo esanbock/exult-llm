@@ -736,8 +736,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
              "dir": _compass(n.get("dx", 0), n.get("dy", 0)),
              "status": (kb.talk_status(n.get("name")) if kb and n.get("name") else "new"),
              **({"HOSTILE": True} if n.get("hostile") else {}),
-             **({"condition": n["condition"]} if n.get("condition") else {}),
-             **({"different_level": True} if n.get("same_level") is False else {})}
+             **({"condition": n["condition"]} if n.get("condition") else {})}
             for n in nearby[:near_n] if not n.get("in_party")
         ],
         # Party companions are shown separately - they follow you and have no
@@ -754,8 +753,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
              **({"contents": o.get("contents")} if o.get("contents") else {}),
              **({"corpse_not_lootable": True} if o.get("corpse") else {}),
              **({"owned": True} if o.get("owned") else {}),
-             **({"town_exit": True} if o.get("town_exit") else {}),
-             **({"different_level": True} if o.get("same_level") is False else {})}
+             **({"town_exit": True} if o.get("town_exit") else {})}
             for o in objects[:obj_n]
         ],
         "grid_legend": state.get("grid_legend"),
@@ -1039,8 +1037,7 @@ def format_dialog(state: dict) -> str:
             _ax = n.get("tx") if n.get("tx") is not None else _px + n.get("dx", 0)
             _ay = n.get("ty") if n.get("ty") is not None else _py + n.get("dy", 0)
             _az = _pz + (n.get("dz", 0) or 0)
-            _lvl = "" if _az == _pz else (" !UP" if _az > _pz else " !DOWN")
-            lines.append(f"  {n.get('name')}  ({_ax},{_ay},{_az})  {_compass(n.get('dx',0), n.get('dy',0))}{_lvl}")
+            lines.append(f"  {n.get('name')}  ({_ax},{_ay},{_az})  {_compass(n.get('dx',0), n.get('dy',0))}")
     objects = state.get("objects") or []
     if objects:
         lines.append("")
@@ -1049,8 +1046,7 @@ def format_dialog(state: dict) -> str:
             _ax = _px + o.get("dx", 0)
             _ay = _py + o.get("dy", 0)
             _az = _pz + (o.get("dz", 0) or 0)
-            _lvl = "" if _az == _pz else (" !UP" if _az > _pz else " !DOWN")
-            lines.append(f"  {o.get('name')}  ({_ax},{_ay},{_az})  {_compass(o.get('dx',0), o.get('dy',0))}{_lvl}")
+            lines.append(f"  {o.get('name')}  ({_ax},{_ay},{_az})  {_compass(o.get('dx',0), o.get('dy',0))}")
     return "\n".join(lines) if lines else "(nothing notable on screen)"
 
 
