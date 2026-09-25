@@ -864,7 +864,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         dh = kb.dialogue_view(dlg_n)
         if dh:
             view["recent_dialogue"] = dh
-        ah = kb.action_view(300)   # long temporal memory: we have context to spare
+        # Long temporal memory - the agent's main loop-perception tool. Default
+        # wide (600) since runs sit at ~55-60% context; shrink under squeeze so
+        # we stay safe if the prompt ever grows toward the limit.
+        _alog_n = 600 if lvl == 0 else (400 if lvl == 1 else 200)
+        ah = kb.action_view(_alog_n)
         if ah:
             view["action_log"] = ah
         if kb.current_quest:
@@ -2402,15 +2406,28 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _force_step = _oscillating
         _cur_tz_here = (state.get("player") or {}).get("tz", 0) or 0
         if _force_step and _cur_tz_here > 0:
-            # Stuck oscillating while UP HIGH (e.g. wedged at the wall gateway):
-            # the reliable escape is the engine 'descend' action, which walks to
-            # the NEAREST reachable lower ground. Using the same descent path as
-            # the descend-guard means the two guards no longer fight (the old
-            # far-tile goto pathed unreliably off a wall-top and thrashed).
+            # Stuck oscillating while UP HIGH: use the engine 'descend'. If a
+            # prior descend found no reachable way down from here, CROSS the
+            # platform to a new edge (rotating) rather than thrashing in place -
+            # same logic as the descend-guard, so the two never fight.
             session["wedge_recent"] = []
-            action = {"type": "descend"}
-            reason = "(guard) stuck up high; engine-descend to nearest ground"
-            print(f"[{step:03d}] wedge-escape: elevated trap -> engine descend")
+            _df = session.get("descend_fail", 0)
+            if _df >= 1:
+                _dirs = ["n", "e", "s", "w", "ne", "se", "sw", "nw"]
+                _d = _dirs[(_df - 1) % len(_dirs)]
+                _off = {"n": (0, -6), "s": (0, 6), "e": (6, 0), "w": (-6, 0),
+                        "ne": (5, -5), "se": (5, 5), "sw": (-5, 5), "nw": (-5, -5)}[_d]
+                _ppw = state.get("player") or {}
+                action = {"type": "goto",
+                          "tx": _ppw.get("tx", 0) + _off[0],
+                          "ty": _ppw.get("ty", 0) + _off[1]}
+                reason = f"(guard) descent blocked; crossing platform {_d} to find the ramp"
+                session["descend_fail"] = _df + 1
+                print(f"[{step:03d}] wedge-escape: reposition {_d} (descend fail#{_df})")
+            else:
+                action = {"type": "descend"}
+                reason = "(guard) stuck up high; engine-descend to nearest ground"
+                print(f"[{step:03d}] wedge-escape: elevated trap -> engine descend")
         elif best and best_d >= 3 and _force_step:
             # We're trapped in a tiny pocket but the flood-fill sees a far open
             # tile: commit a goto straight to it and clear the recent buffer so
@@ -3094,15 +3111,30 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             reason = "(guard) already at ground; stop descending, explore"
             print(f"[{step:03d}] ground-guard: already at tz0; redirect from descend")
     elif _cur_tz_now > 0 and _wants_descend:
-        # Elevated and wanting down: use the engine 'descend' action, which
-        # walks to the NEAREST reachable lower ground (the engine knows every
-        # tile's elevation). This replaced the old 'goto a far ground tile'
-        # approach, which pathed unreliably off a wall-top and fought the wedge
-        # guard, causing the stairs loop.
-        action = {"type": "descend"}
-        reason = f"(guard) descending to nearest ground from tz{_cur_tz_now}"
-        session["descending_now"] = True
-        print(f"[{step:03d}] descend-guard: engine descend from tz{_cur_tz_now}")
+        # Elevated and wanting down: use the engine 'descend' action. If descend
+        # has FAILED here (no reachable way down from this exact spot - a large
+        # battlement whose ramp is elsewhere), don't keep re-issuing descend in
+        # place; WALK decisively across the platform to a new edge (rotating
+        # direction each attempt), then descend will find the ramp from there.
+        _df = session.get("descend_fail", 0)
+        if _df >= 1:
+            _dirs = ["n", "e", "s", "w", "ne", "se", "sw", "nw"]
+            _d = _dirs[(_df - 1) % len(_dirs)]
+            # A long stride (goto ~6 tiles that direction) to actually change edge.
+            _off = {"n": (0, -6), "s": (0, 6), "e": (6, 0), "w": (-6, 0),
+                    "ne": (5, -5), "se": (5, 5), "sw": (-5, 5), "nw": (-5, -5)}[_d]
+            _pp0 = state.get("player") or {}
+            action = {"type": "goto",
+                      "tx": _pp0.get("tx", 0) + _off[0],
+                      "ty": _pp0.get("ty", 0) + _off[1]}
+            reason = f"(guard) descent blocked here; crossing platform {_d} to find the ramp"
+            session["descend_fail"] = _df + 1
+            print(f"[{step:03d}] descend-guard: reposition {_d} (fail#{_df})")
+        else:
+            action = {"type": "descend"}
+            reason = f"(guard) descending to nearest ground from tz{_cur_tz_now}"
+            session["descending_now"] = True
+            print(f"[{step:03d}] descend-guard: engine descend from tz{_cur_tz_now}")
     elif not _wants_descend:
         session["false_descend"] = 0
 
@@ -3290,6 +3322,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # Tool-call stats: count the action type and its outcome (ok/err).
     _atype = action.get("type") if isinstance(action, dict) else "?"
     _ok = result.get("ok") if isinstance(result, dict) else None
+    # DESCEND outcome tracking: if the engine reports no REACHABLE way down from
+    # this spot, remember it so the guard walks to a different platform edge and
+    # retries, instead of the wedge guard thrashing in place (fortress-gateway
+    # trap). Clear the counter on a successful descent.
+    if _atype == "descend":
+        if isinstance(result, dict) and result.get("ok") and not result.get("already_ground"):
+            session["descend_fail"] = 0
+        elif isinstance(result, dict) and result.get("ok") is False:
+            session["descend_fail"] = session.get("descend_fail", 0) + 1
     # Skip if this was a memory/info tool (recall/quests/map/look/annotate) that
     # was already recorded under its real name before being converted to a wait.
     if not (isinstance(action, dict) and action.get("_counted")):

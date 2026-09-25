@@ -2071,38 +2071,59 @@ namespace LLM_agent {
 				}
 				return false;
 			};
-			int best_tx = -1, best_ty = -1, best_z = at.tz, best_d = 1 << 30;
-			for (int r = 1; r <= 8; ++r) {
+			int best_tx = -1, best_ty = -1, best_z = at.tz;
+			// Collect ALL lower-ground candidates within a generous radius
+			// (a battlement/roof can be large, so the down-ramp may be far),
+			// sorted nearest-first and preferring the lowest elevation. Then
+			// verify each is actually REACHABLE with the pathfinder and commit
+			// to the first that is - this fixes the fortress-gateway trap where
+			// the tile cache said tz0 was standable but no path existed, so the
+			// avatar 'succeeded' yet never moved.
+			struct Cand { int tx, ty, z, d; };
+			std::vector<Cand> cands;
+			for (int r = 1; r <= 20; ++r) {
 				for (int dx = -r; dx <= r; ++dx) {
 					for (int dy = -r; dy <= r; ++dy) {
 						if (std::max(std::abs(dx), std::abs(dy)) != r) {
-							continue;    // only the current ring
+							continue;
 						}
 						const int tx = at.tx + dx, ty = at.ty + dy;
 						int z = at.tz;
 						if (standable_z(tx, ty, z) && z < at.tz) {
-							const int d = std::abs(dx) + std::abs(dy);
-							// Prefer closer, and among those prefer lower z.
-							if (z < best_z || (z == best_z && d < best_d)) {
-								best_z = z;
-								best_tx = tx;
-								best_ty = ty;
-								best_d = d;
-							}
+							cands.push_back({tx, ty, z, std::abs(dx) + std::abs(dy)});
 						}
 					}
 				}
-				// Found a ground (tz 0) tile in this ring - good enough, stop.
-				if (best_tx >= 0 && best_z == 0) {
+				// Once we have several ground candidates, stop widening.
+				if (cands.size() >= 12) {
 					break;
 				}
 			}
-			if (best_tx < 0) {
-				return "{\"ok\":false,\"error\":\"no lower ground within reach - "
-					   "try moving to a different edge first\"}";
+			// Nearest first; break ties toward lower elevation.
+			std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
+				return a.d != b.d ? a.d < b.d : a.z < b.z;
+			});
+			bool committed = false;
+			for (const Cand& c : cands) {
+				// walk_path_to_tile returns true only if a real A* path exists.
+				if (av->walk_path_to_tile(Tile_coord(c.tx, c.ty, c.z),
+										  1000 / 4, 0)) {
+					best_tx = c.tx;
+					best_ty = c.ty;
+					best_z = c.z;
+					committed = true;
+					break;
+				}
 			}
-			// Walk there (goto pathfinds the descent, stepping down safely).
-			av->walk_to_tile(Tile_coord(best_tx, best_ty, best_z), 1000 / 4, 0);
+			if (!committed) {
+				// No reachable descent found from here. Tell the agent to move
+				// to a different edge of the platform and try again - it is NOT
+				// physically trapped, the ramp is just elsewhere.
+				return "{\"ok\":false,\"error\":\"no REACHABLE way down from this "
+					   "spot - the ramp/stairs down are elsewhere on this level. "
+					   "Walk to a different edge (try moving several steps in one "
+					   "direction) then descend again.\"}";
+			}
 			std::ostringstream os;
 			os << "{\"ok\":true,\"did\":\"descend\","
 			   << json_int("to_tx", best_tx) << ',' << json_int("to_ty", best_ty)

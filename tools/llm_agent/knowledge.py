@@ -838,8 +838,12 @@ class KnowledgeBase:
     # doing. We have lots of context to spare (~35-40% used), so keep a LONG
     # horizon (150 entries) + a turn number + the quest per entry, so the agent
     # can see even LONG-PERIOD loops (e.g. cycling the same witnesses over dozens
-    # of turns) and switch strategy itself.
-    ACTION_WINDOW = 300
+    # of turns) and switch strategy itself. Widened to 600 (from 300) because
+    # runs plateau at ~55-60% context - the action log is the agent's primary
+    # loop-perception memory, so more of it is high value. Movement collapse
+    # keeps this compact (repeated moves fold into one counted line), so 600
+    # RAW entries render as far fewer lines.
+    ACTION_WINDOW = 600
 
     def record_action(self, text: str, turn: int = -1, reason: str = "") -> None:
         if not text:
