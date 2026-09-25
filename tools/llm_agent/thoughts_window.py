@@ -54,6 +54,8 @@ class ThoughtsWindow:
         # module, falling back to a sensible default.
         self._geom_file = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), ".gui_geometry")
+        self._sash_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), ".gui_sashes")
         _geo = "1500x1000"
         try:
             with open(self._geom_file, encoding="utf-8") as _gf:
@@ -96,6 +98,9 @@ class ThoughtsWindow:
         right = ttk.PanedWindow(outer, orient="vertical")
         outer.add(left, weight=3)
         outer.add(right, weight=4)
+        # Register paned windows so we can persist/restore their sash (divider)
+        # positions across sessions (see _save_sashes/_restore_sashes).
+        self._paneds = {"outer": outer, "left": left, "right": right}
 
         def _text_pane(parent, key, label, mono=False, wrap="word", weight=1):
             frame = tk.LabelFrame(parent, text=label, font=("Segoe UI", 9, "bold"))
@@ -130,6 +135,7 @@ class ThoughtsWindow:
 
         # Quests: Open | Finished side by side (draggable).
         quest_pw = ttk.PanedWindow(right, orient="horizontal")
+        self._paneds["quest_pw"] = quest_pw
         oq_frame = tk.LabelFrame(quest_pw, text="Open quests (priority-sorted)",
                                  font=("Segoe UI", 9, "bold"))
         oq_txt = scrolledtext.ScrolledText(oq_frame, height=8, wrap="word",
@@ -150,6 +156,7 @@ class ThoughtsWindow:
 
         # Knowledge: Topics | Characters side by side (BOTH visible, no tabs).
         know_pw = ttk.PanedWindow(right, orient="horizontal")
+        self._paneds["know_pw"] = know_pw
         topic_frame = tk.LabelFrame(know_pw, text="Topics (LLM's notebook)",
                                     font=("Segoe UI", 9, "bold"))
         self._topic_tree = ttk.Treeview(topic_frame, columns=("meta",), show="tree headings")
@@ -177,6 +184,7 @@ class ThoughtsWindow:
 
         # Stats grid + Tool-call table side by side (draggable).
         bottom_pw = ttk.PanedWindow(right, orient="horizontal")
+        self._paneds["bottom_pw"] = bottom_pw
         stats_frame = tk.LabelFrame(bottom_pw, text="Stats & memory",
                                     font=("Segoe UI", 9, "bold"))
         self._stats_grid = tk.Frame(stats_frame)
@@ -224,6 +232,10 @@ class ThoughtsWindow:
         self._hint_status.pack(side="left", padx=6)
 
         self._root.after(100, self._drain)
+        # Restore the user's saved divider (sash) positions once the window has
+        # been laid out and sized (sash coords are pixel-based, so the panes
+        # need real dimensions first). A short delay lets geometry settle.
+        self._root.after(400, self._restore_sashes)
 
     def _send_hint(self) -> None:
         txt = self._hint_entry.get().strip()
@@ -492,6 +504,62 @@ class ThoughtsWindow:
             if self._root is not None and getattr(self, "_geom_file", None):
                 with open(self._geom_file, "w", encoding="utf-8") as _gf:
                     _gf.write(self._root.geometry())
+        except Exception:
+            pass
+        # Also persist the divider (sash) positions alongside geometry.
+        self._save_sashes()
+
+    def _save_sashes(self) -> None:
+        """Persist each PanedWindow's sash (divider) positions so the user's
+        chosen box proportions survive close/reopen. Stored as
+        '<name>=<pos0>,<pos1>,...' lines (pixel coords along the pane's orient
+        axis)."""
+        try:
+            if self._root is None or not getattr(self, "_sash_file", None):
+                return
+            paneds = getattr(self, "_paneds", {})
+            lines = []
+            for name, pw in paneds.items():
+                try:
+                    n = len(pw.panes())
+                except Exception:
+                    continue
+                coords = []
+                for i in range(max(0, n - 1)):
+                    try:
+                        # ttk.PanedWindow.sashpos(i) returns the i-th sash offset
+                        coords.append(str(pw.sashpos(i)))
+                    except Exception:
+                        pass
+                if coords:
+                    lines.append(f"{name}={','.join(coords)}")
+            if lines:
+                with open(self._sash_file, "w", encoding="utf-8") as _sf:
+                    _sf.write("\n".join(lines))
+        except Exception:
+            pass
+
+    def _restore_sashes(self) -> None:
+        """Restore saved sash positions. Retries a couple of times because the
+        pane sizes may not be final on the first pass right after show."""
+        try:
+            if self._root is None or not getattr(self, "_sash_file", None):
+                return
+            if not os.path.isfile(self._sash_file):
+                return
+            saved = {}
+            with open(self._sash_file, encoding="utf-8") as _sf:
+                for line in _sf:
+                    if "=" in line:
+                        k, v = line.strip().split("=", 1)
+                        saved[k] = [int(x) for x in v.split(",") if x.strip()]
+            paneds = getattr(self, "_paneds", {})
+            for name, pw in paneds.items():
+                for i, pos in enumerate(saved.get(name, [])):
+                    try:
+                        pw.sashpos(i, pos)
+                    except Exception:
+                        pass
         except Exception:
             pass
 
