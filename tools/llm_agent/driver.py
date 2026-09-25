@@ -4152,12 +4152,37 @@ def run_loop(args, window: ThoughtsWindow, ollama, exult_proc=None) -> None:
             window.close()
 
 
+def _load_agent_env() -> None:
+    """Load operator/deployment config from a gitignored 'agent.env' (KEY=VALUE)
+    next to this module, into os.environ (without overriding already-set vars).
+    Keeps deployment-specific values (LLM host, model, bridge host/port) OUT of
+    the tracked source. Real env vars take precedence."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent.env")
+    if not os.path.isfile(path):
+        return
+    try:
+        for line in open(path, encoding="utf-8"):
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+    except OSError:
+        pass
+
+
 def main() -> int:
+    _load_agent_env()
     ap = argparse.ArgumentParser(description="Drive Exult with an Ollama LLM.")
-    ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=45999)
-    ap.add_argument("--model", default="gemma4:latest")
-    ap.add_argument("--ollama-host", default="http://127.0.0.1:11434")
+    # Defaults come from agent.env / environment (deployment-specific), with
+    # only GENERIC loopback fallbacks in code - no server names, model, or
+    # secrets are baked into the tracked source.
+    ap.add_argument("--host", default=os.environ.get("AGENT_BRIDGE_HOST", "127.0.0.1"))
+    ap.add_argument("--port", type=int,
+                    default=int(os.environ.get("AGENT_BRIDGE_PORT", "45999")))
+    ap.add_argument("--model", default=os.environ.get("AGENT_MODEL", ""))
+    ap.add_argument("--ollama-host",
+                    default=os.environ.get("AGENT_OLLAMA_HOST", "http://127.0.0.1:11434"))
     ap.add_argument("--steps", type=int, default=50)
     ap.add_argument("--delay", type=float, default=1.5, help="seconds between turns")
     ap.add_argument("--dry-run", action="store_true", help="skip Ollama; scripted moves")
@@ -4190,6 +4215,10 @@ def main() -> int:
 
     ollama = None
     if not args.dry_run:
+        if not args.model:
+            print("[!] No model specified. Set AGENT_MODEL in agent.env, or pass "
+                  "--model <name>, or use --dry-run.", file=sys.stderr)
+            return 2
         ollama = OllamaClient(model=args.model, host=args.ollama_host,
                               num_ctx=args.num_ctx, allow_think=args.think)
         if not ollama.is_up():
