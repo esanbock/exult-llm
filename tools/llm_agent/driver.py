@@ -2401,6 +2401,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if window.available:
             window.set_context(pct, f"{pt} prompt + {res.get('response_tokens',0)} resp / {ctx_max} tok ({pct}%)")
             window.set_thinking(reason if reason else reply)
+            # Raw model thinking (reasoning-model chain-of-thought) if present -
+            # goes to the Thought column; empty for think-off models like qwen.
+            _thk = res.get("thinking") if isinstance(res, dict) else None
+            if _thk:
+                window.set_thought(_thk)
 
     if window.available and args.dry_run:
         window.set_thinking(reason)
@@ -3856,7 +3861,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # Show the chosen ANSWER TEXT instead of the opaque index.
         if isinstance(_disp, dict) and _disp.get("type") == "answer" and session.get("answer_text"):
             _disp = {"type": "answer", "chose": session["answer_text"]}
-        window.set_action(_action_phrase(_disp))
+        # Short, human result for the turn-log table (not the full JSON).
+        _shortres = ""
+        if isinstance(result, dict):
+            if result.get("error"):
+                _shortres = "blocked: " + str(result["error"])[:40]
+            elif result.get("looted"):
+                _shortres = "looted " + str(result["looted"])[:30]
+            elif result.get("item"):
+                _shortres = "got " + str(result["item"])[:24]
+            elif result.get("did"):
+                _shortres = "ok" if result.get("ok", True) else "failed"
+        window.set_action({"action": _action_phrase(_disp), "result": _shortres})
         session.pop("answer_text", None)
     if (isinstance(action, dict) and action.get("type") == "move"
             and isinstance(result, dict) and result.get("blocked")):

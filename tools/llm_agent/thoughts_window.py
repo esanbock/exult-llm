@@ -40,7 +40,7 @@ class ThoughtsWindow:
         self._chat_text = None          # the Chat transcript widget
         # Rolling combined turn log (last N turns). Each entry pairs the
         # reasoning with the action/result it produced.
-        self._MAX_TURNS = 12
+        self._MAX_TURNS = 20
         self._cur_turn = 0
         self._turn_log: list = []       # [(turn, reason, action_result)]
         self._pending_reason = ""       # reason awaiting its action this turn
@@ -132,9 +132,27 @@ class ThoughtsWindow:
         map_txt.pack(side="top", fill="both", expand=True)
         self._panes["map"] = map_txt
         left.add(map_frame, weight=3)
-        _text_pane(left, "turnlog",
-                   f"Turn log - reasoning -> action -> result (last {self._MAX_TURNS})",
-                   weight=3)
+        # Turn log as a TABLE (columns: Turn | Action | Reasoning | Thought |
+        # Result), newest at the bottom, scrolling, capped at _MAX_TURNS rows.
+        tl_frame = tk.LabelFrame(left, text=f"Turn log (last {self._MAX_TURNS})",
+                                 font=("Segoe UI", 9, "bold"))
+        _tlcols = ("action", "reason", "thought", "result")
+        self._turnlog_tree = ttk.Treeview(tl_frame, columns=_tlcols,
+                                          show="tree headings", height=8)
+        self._turnlog_tree.heading("#0", text="Turn")
+        self._turnlog_tree.column("#0", width=50, anchor="w", stretch=False)
+        for _c, _lbl, _w in (("action", "Action", 150),
+                             ("reason", "Reasoning", 240),
+                             ("thought", "Thought", 220),
+                             ("result", "Result", 120)):
+            self._turnlog_tree.heading(_c, text=_lbl)
+            self._turnlog_tree.column(_c, width=_w, anchor="w")
+        _tlsb = ttk.Scrollbar(tl_frame, orient="vertical",
+                              command=self._turnlog_tree.yview)
+        self._turnlog_tree.configure(yscrollcommand=_tlsb.set)
+        self._turnlog_tree.pack(side="left", fill="both", expand=True)
+        _tlsb.pack(side="right", fill="y")
+        left.add(tl_frame, weight=3)
         _text_pane(left, "dialog", "Dialog / characters / objects on screen", weight=2)
 
         # RIGHT: inspector.
@@ -516,46 +534,51 @@ class ThoughtsWindow:
         tk.Button(btnrow, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
 
     def _append_turn_entry(self, action_result=None) -> None:
-        """Merge reasoning + action/result into ONE entry per turn. Reasoning
-        (think) usually arrives first and creates/updates the entry; the action
-        arrives next and completes it. If they land out of order we still pair
-        them by the current turn number."""
+        """Merge reasoning + action/thought/result into ONE row per turn.
+        Reasoning (think) usually arrives first and creates/updates the row; the
+        action arrives next and completes it. action_result may be a plain
+        action string or a dict {action, thought, result}."""
         log = self._turn_log
-        # Find an existing entry for this turn to complete, else make one.
+        # Each entry: [turn, action, reason, thought, result]
         entry = None
         if log and log[-1][0] == self._cur_turn:
             entry = log[-1]
         if entry is None:
-            entry = [self._cur_turn, self._pending_reason, ""]
+            entry = [self._cur_turn, "", self._pending_reason, "", ""]
             log.append(entry)
             del log[:-self._MAX_TURNS]
         else:
-            # update reason if we just got one
             if self._pending_reason:
-                entry[1] = self._pending_reason
+                entry[2] = self._pending_reason
         if action_result is not None:
-            entry[2] = action_result
+            if isinstance(action_result, dict):
+                entry[1] = action_result.get("action", "") or entry[1]
+                if action_result.get("thought"):
+                    entry[3] = action_result["thought"]
+                if action_result.get("result"):
+                    entry[4] = action_result["result"]
+            else:
+                entry[1] = str(action_result)
             self._pending_reason = ""
         self._render_turn_log()
 
     def _render_turn_log(self) -> None:
-        w = self._panes.get("turnlog")
-        if w is None:
+        tree = getattr(self, "_turnlog_tree", None)
+        if tree is None:
             return
-        w.delete("1.0", "end")
-        for turn, reason, act in self._turn_log:
-            w.insert("end", f"[{turn}] ", ("turnnum",))
-            w.insert("end", f"{reason}\n" if reason else "(no reasoning)\n")
-            if act:
-                w.insert("end", f"      \u2192 {act}\n", ("act",))
-            w.insert("end", "\n")
-        # Style tags (configure once).
-        try:
-            w.tag_configure("turnnum", foreground="#2c3e50", font=("Segoe UI", 10, "bold"))
-            w.tag_configure("act", foreground="#2e7d32", font=("Consolas", 9))
-        except Exception:
-            pass
-        w.see("end")
+        tree.delete(*tree.get_children(""))
+
+        def _clip(s, n):
+            s = " ".join(str(s).split())   # collapse whitespace/newlines
+            return s if len(s) <= n else s[:n - 1] + "\u2026"
+        for turn, action, reason, thought, result in self._turn_log:
+            tree.insert("", "end", text=str(turn),
+                        values=(_clip(action, 40), _clip(reason, 70),
+                                _clip(thought, 60), _clip(result, 30)))
+        # Auto-scroll to the newest (last) row.
+        kids = tree.get_children("")
+        if kids:
+            tree.see(kids[-1])
 
     def _rebuild_stats_grid(self, kv: dict) -> None:
         """Render distinct labelled value boxes in a 2-column grid."""
@@ -644,6 +667,12 @@ class ThoughtsWindow:
                     # Reasoning arrives first; hold it until its action lands.
                     self._pending_reason = payload
                     self._append_turn_entry()
+                elif kind == "thought":
+                    # Raw model thinking -> current turn's Thought column.
+                    log = self._turn_log
+                    if log and log[-1][0] == self._cur_turn:
+                        log[-1][3] = str(payload)
+                        self._render_turn_log()
                 elif kind == "action":
                     # Pair the action/result with the reasoning from this turn.
                     self._append_turn_entry(action_result=payload)
@@ -875,6 +904,9 @@ class ThoughtsWindow:
 
     def set_action(self, text: str) -> None:
         self._q.put(("action", text))
+
+    def set_thought(self, text: str) -> None:
+        self._q.put(("thought", text))
 
     def set_dialog(self, text: str) -> None:
         self._q.put(("dialog", text))
