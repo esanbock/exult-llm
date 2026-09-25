@@ -874,7 +874,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         # and the operator's hint history so earlier steering isn't forgotten.
         if kb.episodic_summary:
             view["story_so_far"] = kb.episodic_summary
-        rh = kb.recent_hints(5)
+        # Operator/viewer HINTS, but AGE-BOUNDED so chat guidance scrolls out
+        # with the turn-memory window instead of accumulating forever. Anything
+        # important enough to keep became a QUEST (persists in the quest log).
+        _hint_age = state.get("_turn_window_override") or 300
+        rh = kb.recent_hints_within(_hint_age, kb.turn_counter, limit=5)
         if rh:
             view["operator_hints"] = rh
         # Notable things seen / overheard, deduped (persistent observation mem).
@@ -1754,36 +1758,67 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     "Reply EXACTLY as:\nANSWER: <reply>\nACTIONABLE: <yes|no>\n\n"
                     "=== YOUR SITUATION ===\n" + _ctx +
                     "\n\n=== THEIR MESSAGE ===\n" + _ask + "\n")
+                _iprompt = (
+                    "You are the character/agent playing Ultima VII. A viewer sent "
+                    "you a MESSAGE. Do TWO things:\n"
+                    "1) ANSWER in plain English (under 3 sentences, honest, first "
+                    "person). If unsure or mistaken, say so.\n"
+                    "2) CLASSIFY the message as exactly one of:\n"
+                    "   EPHEMERAL - just a question about your thoughts; change "
+                    "nothing.\n"
+                    "   HINT - a short-term tip to act on soon (e.g. 'try the "
+                    "north door'); you'll keep it in mind for a few turns.\n"
+                    "   QUEST - a NEW lasting goal or major direction (e.g. 'your "
+                    "real objective is to find Batlin in Britain'); worth adding "
+                    "to your quest log permanently.\n"
+                    "Reply EXACTLY as:\nANSWER: <reply>\nKIND: <EPHEMERAL|HINT|QUEST>"
+                    "\nTITLE: <if QUEST, a short quest title; else ->>\n\n"
+                    "=== YOUR SITUATION ===\n" + _ctx +
+                    "\n\n=== THEIR MESSAGE ===\n" + _ask + "\n")
                 _ans = ollama.chat_ex("You are a game-playing agent explaining "
                                       "your reasoning in plain English.",
                                       _iprompt, force_json=False)
                 _raw = (_ans.get("content") or "").strip() if isinstance(_ans, dict) else str(_ans)
-                # Parse ANSWER / ACTIONABLE (fall back to whole text as answer).
+                # Parse ANSWER / KIND / TITLE (fall back to whole text as answer).
                 _atext = _raw
-                _actionable = False
+                _kind = "EPHEMERAL"
+                _qtitle = ""
                 import re as _re
-                _ma = _re.search(r"ANSWER:\s*(.+?)(?:\nACTIONABLE:|$)", _raw, _re.S | _re.I)
+                _ma = _re.search(r"ANSWER:\s*(.+?)(?:\nKIND:|$)", _raw, _re.S | _re.I)
                 if _ma:
                     _atext = _ma.group(1).strip()
-                _mc = _re.search(r"ACTIONABLE:\s*(yes|no)", _raw, _re.I)
-                if _mc:
-                    _actionable = _mc.group(1).lower() == "yes"
-                print(f"[{step:03d}] MESSAGE: {_ask}\n         A: {_atext[:240]}"
-                      f"  [actionable={_actionable}]")
+                _mk = _re.search(r"KIND:\s*(EPHEMERAL|HINT|QUEST)", _raw, _re.I)
+                if _mk:
+                    _kind = _mk.group(1).upper()
+                _mt = _re.search(r"TITLE:\s*(.+)", _raw, _re.I)
+                if _mt:
+                    _qtitle = _mt.group(1).strip().strip("->").strip()
+                print(f"[{step:03d}] MESSAGE: {_ask}\n         A: {_atext[:200]}"
+                      f"  [kind={_kind}{(' title='+_qtitle) if _qtitle else ''}]")
                 # Route the answer to the ORIGINATING channel only, keeping the
                 # operator's private GUI chat separate from public Twitch chat.
+                _tag = {"EPHEMERAL": "[just answering - nothing changed]",
+                        "HINT": "[noted as a HINT - I'll act on it soon]",
+                        "QUEST": f"[added a QUEST: {_qtitle or _ask[:40]}]"}.get(_kind, "")
+                _shown = (_atext or "(no answer)") + ("\n" + _tag if _tag else "")
                 if _ask_from == "operator":
                     if window.available:
-                        window.set_answer(_atext or "(no answer)")
-                # If the LLM judged the message actionable, ALSO treat it as a
-                # hint: record it and keep it active for a few turns so it steers
-                # gameplay. This removes the need for a separate 'hint' command -
-                # one message channel; the model decides how to use it.
-                if _actionable:
+                        window.set_answer(_shown)
+                # Persist based on the agent's OWN classification:
+                #  EPHEMERAL -> nothing stored (pure interview).
+                #  HINT      -> active hint for a few turns (transient steering).
+                #  QUEST     -> a durable new quest in the log (long-term goal).
+                if _kind == "HINT":
                     session["hint"] = _ask
                     session["hint_ttl"] = 3
                     kb.record_hint(_ask, step)
-                    print(f"[{step:03d}] (message judged actionable -> recorded as hint)")
+                    print(f"[{step:03d}] (message -> transient HINT)")
+                elif _kind == "QUEST":
+                    _title = _qtitle or _ask[:60]
+                    kb.add_quest(title=_title, priority=2,
+                                 notes=f"From operator/viewer message: {_ask}")
+                    kb.record_hint(_ask, step)   # also note it as guidance
+                    print(f"[{step:03d}] (message -> new QUEST: {_title})")
                 # For TWITCH-sourced messages only, write the Q&A to a file so the
                 # Twitch bridge can post it back to chat + OBS. Operator/GUI chat
                 # stays private and is NOT written here.
@@ -1792,7 +1827,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                         _dir = os.path.dirname(os.path.abspath(__file__))
                         with open(os.path.join(_dir, "agent_answer.txt"), "w",
                                   encoding="utf-8") as _af:
-                            _af.write(f"Q: {_ask}\nA: {_atext}")
+                            _af.write(f"Q: {_ask}\nA: {_shown}")
                     except OSError:
                         pass
             except Exception as _e:

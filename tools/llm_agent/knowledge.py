@@ -1022,6 +1022,20 @@ class KnowledgeBase:
         agent remembers steering it was given earlier - not just this turn."""
         return [h.get("text", "") for h in self.hints[-limit:]]
 
+    def recent_hints_within(self, max_age_turns: int, now_turn: int,
+                            limit: int = 5) -> list:
+        """Operator hints given within the last `max_age_turns` turns (newest
+        last, capped at `limit`). Ages OLD hints OUT of context so chat guidance
+        does not accumulate forever - it scrolls out like the action log. A hint
+        the agent turned into a QUEST persists in the quest log instead, so
+        aging the hint text out here loses nothing durable."""
+        out = []
+        for h in self.hints:
+            step = h.get("step", 0) or 0
+            if now_turn - step <= max_age_turns:
+                out.append(h.get("text", ""))
+        return out[-limit:]
+
     def hints_pretty(self, limit: int = 12) -> str:
         if not self.hints:
             return "(no hints given yet)"
