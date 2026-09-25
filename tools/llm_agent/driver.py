@@ -3455,7 +3455,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                         "That item was someone's property - taking it is theft.")
                     session["last_bump"] = _w
             else:
-                outcome = " -> could not take"
+                _err = result.get("error", "") if isinstance(result, dict) else ""
+                outcome = f" -> could not take: {_err}" if _err else " -> could not take"
+                # If the item is just TOO FAR, surface the guidance prominently
+                # so the agent walks over on its own (no auto-nav puppeteering).
+                if _err and "too far" in _err.lower():
+                    session["last_bump"] = _err
         elif atype == "equip":
             outcome = (f" -> equipped {result.get('item') or action.get('name')}"
                        if _ok else " -> could not equip")

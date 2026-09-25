@@ -1787,6 +1787,55 @@ namespace LLM_agent {
 				}
 			}
 			if (!found) {
+				// Not in reach. But is the named item VISIBLE farther away? If
+				// so, tell the agent exactly that (distance + compass dir) so it
+				// can decide to walk closer first - rather than a vague failure.
+				if (!wlow.empty()) {
+					Game_object_vector far_objs;
+					Game_object::find_nearby(far_objs, at, -1, 24, 128);
+					Game_object* fbest = nullptr;
+					int fbest_d = 1 << 30;
+					for (Game_object* obj : far_objs) {
+						if (!obj || obj->as_actor()) {
+							continue;
+						}
+						std::string l = obj->get_name();
+						if (l.empty()) {
+							continue;
+						}
+						std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+						// match loose item OR a container that holds it
+						bool hit = l.find(wlow) != std::string::npos;
+						if (hit) {
+							const Tile_coord ot = obj->get_tile();
+							const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+							if (d < fbest_d) {
+								fbest_d = d;
+								fbest = obj;
+							}
+						}
+					}
+					if (fbest) {
+						const Tile_coord ot = fbest->get_tile();
+						const int ddx = ot.tx - at.tx, ddy = ot.ty - at.ty;
+						std::string dir;
+						if (ddy < -1) dir += "north";
+						else if (ddy > 1) dir += "south";
+						if (ddx > 1) dir += (dir.empty() ? "east" : "east");
+						else if (ddx < -1) dir += (dir.empty() ? "west" : "west");
+						std::ostringstream fe;
+						fe << "{\"ok\":false,\"error\":\"'" << json_escape(wlow)
+						   << "' is TOO FAR to take (" << fbest_d << " tiles "
+						   << (dir.empty() ? "away" : dir)
+						   << "). Walk closer first: goto tile ("
+						   << ot.tx << "," << ot.ty << ") or move toward it, then "
+						   << "take again. You must be within ~1 tile of it.\","
+						   << json_int("target_tx", ot.tx) << ','
+						   << json_int("target_ty", ot.ty) << ','
+						   << json_int("dist", fbest_d) << "}";
+						return fe.str();
+					}
+				}
 				return "{\"ok\":false,\"error\":\"no such item in a nearby "
 					   "container or on the ground within reach\"}";
 			}
