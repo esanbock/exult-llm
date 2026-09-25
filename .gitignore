@@ -373,3 +373,5 @@ tools/llm_agent/prompt_sections.json
 tools/llm_agent/agent.env
 exult_stdout.txt
 exult_stderr.txt
+data/shortcutbar.vga
+data/shortcutbar_vga.h
