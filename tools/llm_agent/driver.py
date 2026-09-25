@@ -1205,6 +1205,22 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         # human player has, and it does NOT reveal any puzzle solution.
         try:
             view["what_i_have_actually_done"] = kb.activity_scorecard()
+            # ESCALATING NUDGE: if you've talked a lot but NEVER searched or
+            # picked anything up, you are stuck in conversation-only mode. Many
+            # quests need a PHYSICAL clue/item you must FIND. Push hard toward
+            # exploring buildings and searching containers.
+            _sc = kb.activity_scorecard()
+            _talked = _sc.get("talked to people", 0)
+            _searched = _sc.get("containers/things searched", 0)
+            _picked = _sc.get("items picked up / taken", 0)
+            if _talked >= 8 and (_searched + _picked) == 0:
+                view["INVESTIGATE_NOW"] = (
+                    f"You have TALKED {_talked} times but SEARCHED 0 things and "
+                    "PICKED UP 0 items. Talking alone will NOT solve this - the "
+                    "clue/item you need is a PHYSICAL thing to find. STOP asking "
+                    "questions now: ENTER a building you haven't, and SEARCH its "
+                    "containers (chests, desks, barrels). Open doors ('+'), go "
+                    "inside, search everything. Do this for SEVERAL turns.")
         except Exception:
             pass
         # CONVERSATION FOCUS: tag each answer option as already-explored vs open,
