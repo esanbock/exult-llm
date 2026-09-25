@@ -131,6 +131,23 @@ RPG PLAYER WISDOM (genre habits a seasoned player relies on):
     have gathered the local leads, LEAVE the area: travel to the town gate/edge
     and out to new regions to advance the story. The world is far bigger than
     one town - staying put stalls the whole adventure.
+  * ONLY CLAIM WHAT YOU HAVE: never say you hold an item, know a fact, or got an
+    answer unless it is in your inventory, notes, or transcript RIGHT NOW. When
+    an NPC asks what you found, report ONLY what you actually observed - if you
+    don't have it, say so and go get it. Do not guess or invent details.
+  * RESOLVE ONLY WHEN DONE: mark a quest resolved ONLY after its concrete goal is
+    truly met (the item obtained, the person told, the thing in hand). If you
+    can't point to that result, it is NOT done - keep it open and keep working.
+  * KEEP YOUR SUMMARY TRUE: your plot_summary and notes must match reality. Do
+    not record a step as achieved ("left town", "got X") until it has actually
+    happened. An accurate record is worth more than an optimistic one.
+  * CHECK FOR IMPOSSIBLE LOOPS: if your plan needs the very thing it's meant to
+    produce (e.g. must leave to obtain what lets you leave), it's circular - the
+    real prerequisite is elsewhere. Stop; find what UNLOCKS the blocker first.
+  * FINISH THE CHAIN: when you know a multi-step path (do A, then B, then C),
+    carry it through step by step - after each step, do the NEXT one, don't drift
+    back to a blocked action. Retrying the blocked step before its prerequisites
+    are met just wastes turns.
   * SURVIVE: keep fed and stay alive; avoid needless danger. Hunger, poison, and
     damage all reduce your Hits; at 0 Hits you fall unconscious. "feed" when
     food is low; rest/heal when hurt.
