@@ -791,7 +791,13 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             f"met) for {_tsp} turns. Whatever you are doing is NOT working. STOP "
             "and change strategy completely: go somewhere you have NOT been, talk "
             "to someone NEW, or pick a different quest. Do not keep repeating the "
-            "same attempt.")
+            "same attempt. ALSO RE-CHECK YOUR ASSUMPTIONS: if you are blocked "
+            "waiting on a prerequisite, VERIFY you actually have it - review your "
+            "FINISHED quests (quests finished:true). A quest you marked DONE may "
+            "NOT truly be complete (e.g. you closed 'get the password' but never "
+            "actually received it) - if so, that goal is still OPEN; go finish it "
+            "for real. Also re-read your NPC notes: the person who blocks you "
+            "usually TOLD you exactly what you still need and WHO gives it.")
     if state.get("stuck_in_place"):
         view["STUCK_WARNING"] = (
             "You have NOT MOVED for ~10 turns - you are re-trying variations of "
