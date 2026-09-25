@@ -705,30 +705,15 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             "not producing progress, STOP repeating it: review your quests/notes "
             "(quests/recall tools), question your assumptions (is this goal even "
             "real?), and try a different lead.")
-        # Navigation aid: if you're looping trying to REACH a place, you may be
-        # heading the wrong way. List the buildings/landmarks you actually know
-        # (goto them BY NAME), and remind about the map tool. Buildings are now
-        # recognized by their contents (e.g. a stable by its horses/trough), so
-        # your objective may already be a known place.
-        if kb is not None:
-            _pp2 = state.get("player") or {}
-            _blds = [pl for pl in kb.places_view(_pp2.get("tx", 0), _pp2.get("ty", 0),
-                                                 limit=25)
-                     if pl.get("kind") in ("building", "landmark")]
-            if _blds:
-                view["navigation_hint"] = {
-                    "note": ("If you are struggling to REACH a place, do NOT keep "
-                             "walking toward stairs/walls hoping they lead there. "
-                             "goto a KNOWN landmark BY NAME from this list, or use "
-                             "the 'map' tool for a town overview. A building is "
-                             "reached by walking to it on the GROUND, not by "
-                             "climbing stairs."),
-                    "known_landmarks": [
-                        {"name": pl.get("name"), "dir": _compass(pl.get("dx", 0),
-                                                                 pl.get("dy", 0)),
-                         "dist": abs(pl.get("dx", 0)) + abs(pl.get("dy", 0))}
-                        for pl in _blds[:10]],
-                }
+        # If the stall is navigational, point at the always-on 'navigation'
+        # block: goto a known place BY NAME rather than walking toward stairs/
+        # walls. (The full landmark list with bearings is always in context.)
+        view["navigation_reminder"] = (
+            "If you are stuck trying to REACH somewhere: see the 'navigation' "
+            "block for known places with bearings/distances and goto one BY "
+            "NAME. Do NOT climb stairs/walls to reach a building - walk to it on "
+            "the ground. If your target is not a known place yet, EXPLORE a "
+            "direction you have not been (blank areas on the map).")
     if state.get("last_move_failed"):
         view["MOVE_FAILED"] = (
             "Your LAST move did NOT change your position - it was BLOCKED (a wall, "
@@ -873,6 +858,26 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             view["action_log"] = ah
         if kb.current_quest:
             view["current_quest"] = kb.current_quest
+        # ALWAYS-ON navigation summary: structured, text-first list of known
+        # landmarks with tile, compass bearing, and distance from you, nearest
+        # first. LLMs reason over this far better than an ASCII map, and having
+        # it always present means the agent does NOT need to call the map tool
+        # just to orient. goto any of these BY NAME.
+        try:
+            _pp_nav = state.get("player") or {}
+            _nav = kb.navigation_summary(_pp_nav.get("tx", 0), _pp_nav.get("ty", 0))
+            if _nav:
+                view["navigation"] = {
+                    "you_are_at": [_pp_nav.get("tx", 0), _pp_nav.get("ty", 0)],
+                    "known_places_nearest_first": _nav,
+                    "how_to_use": ("goto any place BY NAME (e.g. {\"type\":\"goto\","
+                                   "\"name\":\"stables\"}) - it pathfinds there. "
+                                   "A building is reached on the GROUND, not by "
+                                   "climbing stairs. Use the 'map' tool only for a "
+                                   "visual overview of explored vs unexplored areas."),
+                }
+        except Exception:
+            pass
         # ALWAYS-ON activity scorecard: shows lifetime counts of physical
         # investigation (searched / picked up / opened / read) vs talking, so a
         # stateless model can NOTICE if it has been talking without ever
@@ -1972,7 +1977,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _pp = state.get("player") or {}
         session["area_map"] = kb.render_area_map(
             _pp.get("tx", 0), _pp.get("ty", 0),
-            region=str(state.get("map_num", "world")))
+            region=str(state.get("map_num", "world")),
+            radius_cells=16, cell_override=4)   # finer detail; we have context room
         kb.record_action("checked the area map")
         if window.available:
             window.set_action("[map] reviewed the area map")

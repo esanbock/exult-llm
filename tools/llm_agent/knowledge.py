@@ -1244,42 +1244,77 @@ class KnowledgeBase:
             if len(cells) > 4000:      # keep it bounded across a huge world
                 del cells[:len(cells) - 4000]
 
+    def navigation_summary(self, here_tx: int, here_ty: int,
+                           limit: int = 14) -> list:
+        """A STRUCTURED, text-first navigation aid - what a human's mental map
+        gives you and what an LLM reasons over far better than ASCII art: every
+        known landmark as {name, tile, dir, dist, reachable_hint}, nearest
+        first. The agent can 'goto <name>' directly; it does NOT need to parse
+        the grid. Distances are tile counts; dir is an 8-way compass bearing."""
+        def _bearing(dx: int, dy: int) -> str:
+            # screen/world: +x = east, +y = south
+            ns = "N" if dy < -1 else ("S" if dy > 1 else "")
+            ew = "E" if dx > 1 else ("W" if dx < -1 else "")
+            return (ns + ew) or "here"
+        out = []
+        for r in self.places.values():
+            nm = r.get("name", "")
+            tx, ty = r.get("tx", 0), r.get("ty", 0)
+            dx, dy = tx - here_tx, ty - here_ty
+            dist = abs(dx) + abs(dy)
+            out.append({
+                "name": nm,
+                "tile": [tx, ty],
+                "dir": _bearing(dx, dy),
+                "dist": dist,
+                "kind": r.get("kind", ""),
+                **({"note": r["note"]} if r.get("note") else {}),
+            })
+        out.sort(key=lambda e: e["dist"])
+        return out[:limit]
+
     def render_area_map(self, here_tx: int, here_ty: int, region: str = "world",
-                        radius_cells: int = 9) -> str:
+                        radius_cells: int = 12, cell_override: int = 0) -> str:
         """Town-scale ASCII overview centered on the avatar: '.' explored cell,
-        ' ' unexplored, '@' you, and single letters for known landmarks (legend
-        below). Coarse (each cell = MAP_CELL tiles) so it shows the whole town/
-        area at a glance for orientation - complements the fine screen grid."""
-        cell = self.MAP_CELL
+        ' ' unexplored, '@' you, and MNEMONIC 2-letter tags for known landmarks
+        (legend below). Finer cells (default via cell_override) show more detail;
+        complements the structured navigation_summary and the fine screen grid."""
+        cell = cell_override or self.MAP_CELL
         hcx, hcy = here_tx // cell, here_ty // cell
         visited = set(self.visited_cells.get(region, []))
-        # Assign a letter to each known place; build a cell->char overlay.
+        # MNEMONIC tags: first 2 letters of the name (e.g. 'St' stables, 'Fo'
+        # fortress, 'Ma' mayor) - far clearer than arbitrary single letters.
         overlay = {}
         legend = []
         used = set()
         for r in self.places.values():
             nm = r.get("name", "")
             pcx, pcy = r.get("tx", 0) // cell, r.get("ty", 0) // cell
-            ch = next((c.upper() for c in nm if c.isalpha() and c.upper() not in used), "*")
-            used.add(ch)
-            overlay[(pcx, pcy)] = ch
-            legend.append(f"{ch}={nm}")
+            base = "".join(c for c in nm if c.isalnum())[:2].title() or "*"
+            tag = base
+            _n = 1
+            while tag in used:
+                _n += 1
+                tag = f"{base[0]}{_n}"
+            used.add(tag)
+            overlay[(pcx, pcy)] = tag
+            legend.append(f"{tag}={nm}")
         rows = []
         for cy in range(hcy - radius_cells, hcy + radius_cells + 1):
             line = []
             for cx in range(hcx - radius_cells, hcx + radius_cells + 1):
                 if cx == hcx and cy == hcy:
-                    line.append("@")
+                    line.append(" @")
                 elif (cx, cy) in overlay:
-                    line.append(overlay[(cx, cy)])
+                    line.append(overlay[(cx, cy)][:2].rjust(2))
                 elif f"{cx},{cy}" in visited:
-                    line.append(".")
+                    line.append(" .")
                 else:
-                    line.append(" ")
+                    line.append("  ")
             rows.append("".join(line))
         grid = "\n".join(rows)
         return (f"AREA MAP (each cell ~{cell} tiles; @ = you at ({here_tx},{here_ty}); "
-                f"'.' = explored, blank = unexplored):\n{grid}\n"
+                f"'.' = explored, blank = unexplored; 2-letter tags = landmarks):\n{grid}\n"
                 + ("landmarks: " + "  ".join(legend) if legend else ""))
 
     # ----- automatic knowledge capture -----------------------------------
