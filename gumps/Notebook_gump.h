@@ -96,6 +96,11 @@ public:
 	bool         handle_kbd_event(void* ev) override;
 	static void  add_gflag_text(int gflag, const std::string& text);
 
+	// Agent bridge: read all notebook entry texts (the in-game quest journal)
+	// so an automated player can perceive what the game has recorded, like a
+	// human re-reading the notebook. Returns entries newest-last.
+	static std::vector<std::string> get_all_text();
+
 	static void add_gflag_text(int gflag) {
 		if (!initialized_auto_text) {
 			read_auto_text();

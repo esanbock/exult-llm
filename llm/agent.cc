@@ -41,6 +41,7 @@
 #include "party.h"
 #include "Gump_manager.h"
 #include "Sign_gump.h"
+#include "Notebook_gump.h"
 #include "Slider_gump.h"
 #include "contain.h"
 #include "objiter.h"
@@ -968,6 +969,28 @@ namespace LLM_agent {
 			}
 		}
 		os << ']';
+
+		// In-game NOTEBOOK: the game's own quest journal (auto-populated as the
+		// story advances when autonotes is on). A human player re-reads this;
+		// surface it so the agent has the canonical record of plot progress.
+		{
+			std::vector<std::string> nb = Notebook_gump::get_all_text();
+			os << ',' << "\"game_notebook\":[";
+			bool nfirst = true;
+			// Cap to the most recent entries to bound context.
+			const size_t start = nb.size() > 30 ? nb.size() - 30 : 0;
+			for (size_t i = start; i < nb.size(); ++i) {
+				if (nb[i].empty()) {
+					continue;
+				}
+				if (!nfirst) {
+					os << ',';
+				}
+				nfirst = false;
+				os << '"' << json_escape(nb[i]) << '"';
+			}
+			os << ']';
+		}
 
 		// Active numeric-input prompt (slider + checkmark), e.g. "how many?".
 		Slider_gump* sg = Slider_gump::get_active();

@@ -851,6 +851,24 @@ void Notebook_gump::add_gflag_text(int gflag, const string& text) {
 }
 
 /*
+ *  Agent bridge: return all notebook entry texts (the in-game quest journal),
+ *  oldest first. Ensures the notebook has been read from gamedat first.
+ */
+std::vector<std::string> Notebook_gump::get_all_text() {
+	if (!initialized) {
+		initialize();
+	}
+	std::vector<std::string> out;
+	out.reserve(notes.size());
+	for (auto* note : notes) {
+		if (note && !note->text.empty()) {
+			out.push_back(note->text);
+		}
+	}
+	return out;
+}
+
+/*
  *  Add a new note with proper line breaking. Reuses One_note's line breaking
  * logic.
  */
