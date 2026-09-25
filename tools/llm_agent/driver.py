@@ -477,7 +477,14 @@ periodically). For finer detail you have the recall/quests tools.
             conversation_active). params: none. This is how you read through a
             character's multi-page dialogue until choices appear.
   dismiss - Close/cancel a menu, sign, or popup. params: none.
-  combat  - Toggle combat/attack mode on or off. params: none.
+  combat  - Toggle combat/attack mode on or off. params: none. In combat mode
+            you and your party auto-fight nearby enemies per your combat mode.
+  attack  - Focus-attack a SPECIFIC creature (like clicking an enemy to target
+            it): sets it as your target and turns combat mode on so you engage
+            it. params: {"name":"<creature>"} to attack the nearest matching
+            one, or OMIT name to attack the nearest HOSTILE creature. Use this
+            for monsters/enemies OUTSIDE town (wolves, trolls, gargoyles, etc.).
+            Do NOT attack townsfolk - that turns the town against you.
   set_combat_mode - Set how you and your party fight in combat. params:
             {"mode": one of "nearest"|"weakest"|"strongest"|"berserk"|"defend"|
             "flank"|"flee"|"protect"|"random"|"manual"}. Guide: "attack weakest"
@@ -670,6 +677,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
              "tz": (p.get("tz", 0) or 0) + (n.get("dz", 0) or 0),
              "dir": _compass(n.get("dx", 0), n.get("dy", 0)),
              "status": (kb.talk_status(n.get("name")) if kb and n.get("name") else "new"),
+             **({"HOSTILE": True} if n.get("hostile") else {}),
              **({"condition": n["condition"]} if n.get("condition") else {}),
              **({"different_level": True} if n.get("same_level") is False else {})}
             for n in nearby[:near_n] if not n.get("in_party")
@@ -3346,7 +3354,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # vs only talking. Only count genuine (ok) engine actions.
         if _ok is not False and _atype in (
                 "search", "pickup", "take", "open", "read", "talk",
-                "close", "equip", "unequip", "drop"):
+                "close", "equip", "unequip", "drop", "attack", "combat"):
             kb.record_activity(_atype)
     session["last_action_type"] = _atype
     # Blocked-move / unreachable-target breaker: a move that comes back

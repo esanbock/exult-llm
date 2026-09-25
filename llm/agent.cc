@@ -641,6 +641,19 @@ namespace LLM_agent {
 				os << ',' << json_bool("same_level", nt.tz == at.tz);
 				os << ',' << json_bool("in_party", npc->get_party_id() >= 0);
 				os << ',' << json_bool("dead", npc->is_dead());
+				// HOSTILE: evil/chaotic alignment = a creature that is or will be
+				// an enemy (monsters, brigands). Lets the agent decide to attack
+				// or flee - a human recognizes a wolf/troll on sight. Party and
+				// dead excluded.
+				{
+					const int al = npc->get_effective_alignment();
+					const bool hostile = !npc->is_dead()
+							&& npc->get_party_id() < 0
+							&& (al == Actor::evil || al == Actor::chaotic);
+					if (hostile) {
+						os << ',' << json_bool("hostile", true);
+					}
+				}
 				// Status the agent should know before trying to interact - most
 				// importantly SLEEPING (can't be talked to). Report the most
 				// relevant single status word.
@@ -1118,6 +1131,67 @@ namespace LLM_agent {
 		if (type == "combat") {
 			ActionCombat(nullptr);
 			return "{\"ok\":true,\"did\":\"combat\"}";
+		}
+
+		if (type == "attack") {
+			// Focus-attack a SPECIFIC creature (like a human clicking an enemy
+			// to target it). Finds the target by name, else the nearest hostile
+			// actor, sets it as the avatar's combat target, and turns combat
+			// mode ON so the avatar engages it. params: {"name":"<who>"}
+			// optional; omit to attack the nearest hostile.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			string want;
+			get_string(action_json, "name", want);
+			std::string wlow = want;
+			std::transform(wlow.begin(), wlow.end(), wlow.begin(), ::tolower);
+			const Tile_coord at = av->get_tile();
+			std::vector<Actor*> npcs;
+			gwin->get_nearby_npcs(npcs);
+			Actor* best = nullptr;
+			int    best_d = 1 << 30;
+			for (Actor* npc : npcs) {
+				if (!npc || npc == av || npc->is_dead() || npc->is_in_party()) {
+					continue;
+				}
+				const std::string nm = npc->get_name();
+				if (!wlow.empty()) {
+					std::string nlow = nm;
+					std::transform(nlow.begin(), nlow.end(), nlow.begin(), ::tolower);
+					if (nlow.find(wlow) == std::string::npos) {
+						continue;
+					}
+				} else {
+					// No name given: only auto-pick HOSTILE creatures (evil or
+					// chaotic alignment), so 'attack' doesn't assault townsfolk
+					// (neutral/good).
+					const int al = npc->get_effective_alignment();
+					if (al != Actor::evil && al != Actor::chaotic) {
+						continue;
+					}
+				}
+				const Tile_coord ot = npc->get_tile();
+				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+				if (d < best_d) {
+					best_d = d;
+					best = npc;
+				}
+			}
+			if (!best) {
+				return "{\"ok\":false,\"error\":\"no "
+					   + std::string(wlow.empty() ? "hostile creature" : "such target")
+					   + " nearby to attack\"}";
+			}
+			const std::string tnm = best->get_name();
+			// Target it and ensure combat mode is engaged so we actually fight.
+			av->set_target(best, true);
+			if (!gwin->in_combat()) {
+				ActionCombat(nullptr);
+			}
+			return "{\"ok\":true,\"did\":\"attack\"," + json_str("target", tnm)
+				   + "," + json_int("dist", best_d) + "}";
 		}
 
 		if (type == "set_combat_mode") {
