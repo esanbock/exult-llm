@@ -442,6 +442,16 @@ periodically). For finer detail you have the recall/quests tools.
             if not, it tells you so - go FIND the key (often on the ground, a
             body, or in another container near who it belongs to), pick it up,
             then unlock again. After unlocking, use "open"/"search" normally.
+  use     - INTERACT with a world object (the generic "double-click" - a human's
+            main way to operate things). params: {"name":"<object>"} for a
+            specific one, else the nearest usable object. Stand next to it first.
+            Use this for the MANY interactive objects that aren't covered by a
+            specific verb, e.g.: a WELL (fill a bucket / draw water), a WINCH or
+            LEVER or SWITCH (opens/closes gates, bridges, drawbridges - puzzle
+            mechanisms), a SEXTANT (reports your current coordinates), a
+            CARRIAGE or CART (ride it), a BOAT/SHIP or RAFT (board it), a BED
+            (sleep), a PLAQUE/BOOK, a moongate, etc. If unsure how to operate
+            something you see, try "use" on it and observe what happens.
   read    - Read a nearby SIGN or readable object (a human double-clicks it).
             Returns its "text". params: omit to read the nearest sign, or
             {"name":"<obj>"} to read a specific object. Signs give shop names,
@@ -3402,7 +3412,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if _ok is not False and _atype in (
                 "search", "pickup", "take", "open", "read", "talk",
                 "close", "equip", "unequip", "drop", "attack", "combat",
-                "unlock", "use_key"):
+                "unlock", "use_key", "use"):
             kb.record_activity(_atype)
     session["last_action_type"] = _atype
     # Blocked-move / unreachable-target breaker: a move that comes back
@@ -3465,7 +3475,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     atype = action.get("type") if isinstance(action, dict) else None
     _ok = result.get("ok") if isinstance(result, dict) else None
     if atype in ("talk", "open", "pickup", "search", "combat", "feed", "take", "read",
-                 "equip", "unequip", "drop"):
+                 "equip", "unequip", "drop", "use", "unlock", "attack"):
         p0 = state.get("player") or {}
         detail = action.get("name") or action.get("dir") or ""
         outcome = ""
@@ -3520,6 +3530,25 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                        if _ok else " -> could not drop")
         elif atype == "talk":
             outcome = " (conversed)" if _ok else " -> could not talk"
+        elif atype == "use":
+            if _ok:
+                outcome = f" -> used {result.get('object', detail)}"
+            else:
+                _e = result.get("error", "") if isinstance(result, dict) else ""
+                outcome = f" -> could not use: {_e}" if _e else " -> could not use"
+                if _e and "too far" in _e.lower():
+                    session["last_bump"] = _e
+        elif atype == "unlock":
+            if _ok:
+                outcome = " -> UNLOCKED it"
+            else:
+                _e = result.get("error", "") if isinstance(result, dict) else ""
+                outcome = f" -> could not unlock: {_e}" if _e else " -> could not unlock"
+                if _e:
+                    session["last_bump"] = _e
+        elif atype == "attack":
+            outcome = (f" -> attacking {result.get('target', detail)}"
+                       if _ok else " -> no target to attack")
         elif atype == "read":
             if _ok:
                 _txt = (result.get("text") or "").strip() if isinstance(result, dict) else ""

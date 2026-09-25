@@ -2226,6 +2226,82 @@ namespace LLM_agent {
 				   "up, then try unlock again.\"}";
 		}
 
+		if (type == "use") {
+			// GENERIC interaction = the player's double-click. In Ultima VII
+			// nearly every interactive object (well, winch, lever, switch,
+			// sextant, carriage, boat/ship, bed, plaque, moongate, etc.) does
+			// its thing via activate()->usecode when double-clicked. One tool
+			// covers them all: find the named (or nearest) object within reach
+			// and activate it. params: {"name":"<object>"} to pick a specific
+			// one, else the nearest non-scenery activatable object.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			string want;
+			get_string(action_json, "name", want);
+			std::string wlow = want;
+			std::transform(wlow.begin(), wlow.end(), wlow.begin(), ::tolower);
+			const Tile_coord at = av->get_tile();
+			Game_object_vector objs;
+			Game_object::find_nearby(objs, at, -1, 4, 128);
+			Game_object* best = nullptr;
+			int          best_d = 1 << 30;
+			for (Game_object* obj : objs) {
+				if (!obj || obj->as_actor()) {
+					continue;    // NPCs are 'talk'/'attack', not 'use'
+				}
+				const std::string nm = obj->get_name();
+				if (nm.empty()) {
+					continue;
+				}
+				if (!wlow.empty()) {
+					std::string nlow = nm;
+					std::transform(nlow.begin(), nlow.end(), nlow.begin(), ::tolower);
+					if (nlow.find(wlow) == std::string::npos) {
+						continue;
+					}
+				}
+				const Tile_coord ot = obj->get_tile();
+				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+				if (d < best_d) {
+					best_d = d;
+					best = obj;
+				}
+			}
+			if (!best) {
+				// Report visible-but-far so the agent can walk over (like take).
+				if (!wlow.empty()) {
+					Game_object_vector far_objs;
+					Game_object::find_nearby(far_objs, at, -1, 24, 128);
+					for (Game_object* obj : far_objs) {
+						if (!obj || obj->as_actor()) {
+							continue;
+						}
+						std::string l = obj->get_name();
+						std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+						if (!l.empty() && l.find(wlow) != std::string::npos) {
+							const Tile_coord ot = obj->get_tile();
+							std::ostringstream fe;
+							fe << "{\"ok\":false,\"error\":\"'" << json_escape(wlow)
+							   << "' is too far to use. goto tile (" << ot.tx << ","
+							   << ot.ty << ") first, then use.\","
+							   << json_int("target_tx", ot.tx) << ','
+							   << json_int("target_ty", ot.ty) << "}";
+							return fe.str();
+						}
+					}
+				}
+				return "{\"ok\":false,\"error\":\"no usable object within reach "
+					   "(stand next to the well/lever/winch/etc. and try again)\"}";
+			}
+			const std::string nm = best->get_name();
+			// Double-click activation: runs the object's usecode (fill bucket,
+			// toggle gate, read sextant, board carriage/boat, etc.).
+			best->activate(Usecode_machine::double_click);
+			return "{\"ok\":true,\"did\":\"use\"," + json_str("object", nm) + "}";
+		}
+
 		if (type == "set_number") {
 			Slider_gump* sg = Slider_gump::get_active();
 			if (!sg) {
