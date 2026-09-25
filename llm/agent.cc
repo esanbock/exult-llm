@@ -2026,6 +2026,91 @@ namespace LLM_agent {
 			return "{\"ok\":true,\"did\":\"set_number\"," + json_int("value", v) + "}";
 		}
 
+		if (type == "descend") {
+			// Reliably get DOWN from an elevated surface (wall-top, roof,
+			// stairs) to the ground. The driver's old approach - goto a far
+			// ground tile - pathed unreliably from a wall-top and fought the
+			// wedge guard, causing loops. Here the engine, which knows every
+			// tile's elevation, walks the avatar toward the NEAREST reachable
+			// lower ground: it BFS-scans outward for the closest tile at tz 0
+			// (or the lowest tz found) that is standable, and goto-paths there.
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
+			const Tile_coord at = av->get_tile();
+			if (at.tz == 0) {
+				return "{\"ok\":true,\"did\":\"descend\",\"already_ground\":true,"
+					   "\"note\":\"already at ground level (tz 0)\"}";
+			}
+			Game_map* gmap = gwin->get_map();
+			if (!gmap) {
+				return "{\"ok\":false,\"error\":\"no map\"}";
+			}
+			// Spiral/ring search outward (up to 8 tiles) for the closest
+			// standable tile whose elevation is LOWER than where we stand,
+			// preferring tz 0. A tile is a valid descent target if the avatar
+			// can stand on it at a lower lift.
+			auto standable_z = [&](int tx, int ty, int& out_z) -> bool {
+				Map_chunk* ch = gmap->get_chunk(tx / c_tiles_per_chunk,
+												ty / c_tiles_per_chunk);
+				if (!ch) {
+					return false;
+				}
+				ch->setup_cache();
+				const int lx = tx % c_tiles_per_chunk;
+				const int ly = ty % c_tiles_per_chunk;
+				// Probe from ground upward for the lowest standable lift < at.tz.
+				for (int z = 0; z < at.tz; ++z) {
+					int nl = z;
+					if (!ch->is_blocked(2, z, lx, ly, nl, av->get_type_flags(),
+										2 /*max_drop*/, 0 /*no rise*/)) {
+						out_z = nl;
+						return true;
+					}
+				}
+				return false;
+			};
+			int best_tx = -1, best_ty = -1, best_z = at.tz, best_d = 1 << 30;
+			for (int r = 1; r <= 8; ++r) {
+				for (int dx = -r; dx <= r; ++dx) {
+					for (int dy = -r; dy <= r; ++dy) {
+						if (std::max(std::abs(dx), std::abs(dy)) != r) {
+							continue;    // only the current ring
+						}
+						const int tx = at.tx + dx, ty = at.ty + dy;
+						int z = at.tz;
+						if (standable_z(tx, ty, z) && z < at.tz) {
+							const int d = std::abs(dx) + std::abs(dy);
+							// Prefer closer, and among those prefer lower z.
+							if (z < best_z || (z == best_z && d < best_d)) {
+								best_z = z;
+								best_tx = tx;
+								best_ty = ty;
+								best_d = d;
+							}
+						}
+					}
+				}
+				// Found a ground (tz 0) tile in this ring - good enough, stop.
+				if (best_tx >= 0 && best_z == 0) {
+					break;
+				}
+			}
+			if (best_tx < 0) {
+				return "{\"ok\":false,\"error\":\"no lower ground within reach - "
+					   "try moving to a different edge first\"}";
+			}
+			// Walk there (goto pathfinds the descent, stepping down safely).
+			av->walk_to_tile(Tile_coord(best_tx, best_ty, best_z), 1000 / 4, 0);
+			std::ostringstream os;
+			os << "{\"ok\":true,\"did\":\"descend\","
+			   << json_int("to_tx", best_tx) << ',' << json_int("to_ty", best_ty)
+			   << ',' << json_int("to_tz", best_z) << ',' << json_int("from_tz", at.tz)
+			   << "}";
+			return os.str();
+		}
+
 		if (type == "move") {
 			string dir;
 			get_string(action_json, "dir", dir);

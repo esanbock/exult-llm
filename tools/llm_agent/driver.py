@@ -383,6 +383,12 @@ periodically). For finer detail you have the recall/quests tools.
             so repeating goto to a far target makes steady progress; you do NOT
             need a clear line.
   stop    - Stop walking. params: none.
+  descend - Get DOWN off an elevated surface (a wall walkway, roof, or stairs)
+            to the ground. params: none. Use this whenever your elevation
+            (tz/level) is above 0 and you want to be back on the ground - it
+            walks you to the nearest reachable lower ground automatically. Much
+            more reliable than trying to "move" or "goto" your way down off a
+            wall. If it says already_ground you are already at tz 0.
   talk    - START a conversation with a nearby NPC. params: {"name": "<NPC name>"}
             This is the ONLY way to begin dialog. Walking next to an NPC does
             NOT start dialog. You do NOT need to be adjacent - it finds the
@@ -2345,14 +2351,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _cur_tz_here = (state.get("player") or {}).get("tz", 0) or 0
         if _force_step and _cur_tz_here > 0:
             # Stuck oscillating while UP HIGH (e.g. wedged at the wall gateway):
-            # the reliable escape is to DESCEND to ground. goto a far ground tile
-            # with tz:0 (engine walks down the ramp). This breaks the elevated
-            # dead-end so the agent can pursue prerequisites at ground level.
+            # the reliable escape is the engine 'descend' action, which walks to
+            # the NEAREST reachable lower ground. Using the same descent path as
+            # the descend-guard means the two guards no longer fight (the old
+            # far-tile goto pathed unreliably off a wall-top and thrashed).
             session["wedge_recent"] = []
-            _gt = (1079, 2214)   # Trinsic start/ground area (verified descendable)
-            action = {"type": "goto", "tx": _gt[0], "ty": _gt[1], "tz": 0}
-            reason = "(guard) stuck up high; descending to ground to break the trap"
-            print(f"[{step:03d}] wedge-escape: elevated trap -> descend to {_gt}")
+            action = {"type": "descend"}
+            reason = "(guard) stuck up high; engine-descend to nearest ground"
+            print(f"[{step:03d}] wedge-escape: elevated trap -> engine descend")
         elif best and best_d >= 3 and _force_step:
             # We're trapped in a tiny pocket but the flood-fill sees a far open
             # tile: commit a goto straight to it and clear the recent buffer so
@@ -3036,24 +3042,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             reason = "(guard) already at ground; stop descending, explore"
             print(f"[{step:03d}] ground-guard: already at tz0; redirect from descend")
     elif _cur_tz_now > 0 and _wants_descend:
-        # Elevated and wanting down: goto a GROUND tile with tz:0. The engine
-        # descends 1 level/step, so targeting a known ground destination (a
-        # remembered place, else the world-start area) at tz 0 walks the avatar
-        # back down reliably (verified tz4->0). This is the descend analog of
-        # the climb - use goto with an explicit ground Z rather than poking the
-        # stairs tile.
-        _pp0 = state.get("player") or {}
-        _here0 = (_pp0.get("tx", 0), _pp0.get("ty", 0))
-        _gp = None
-        for _pl in (kb.places_view(_here0[0], _here0[1], limit=12) if kb else []):
-            if abs(_pl.get("dx", 0)) + abs(_pl.get("dy", 0)) >= 12:  # must be FAR
-                _gp = (_here0[0] + _pl.get("dx", 0), _here0[1] + _pl.get("dy", 0))
-                break
-        if _gp is None:
-            _gp = (1079, 2214)   # Trinsic start / murder-scene area (ground)
-        action = {"type": "goto", "tx": _gp[0], "ty": _gp[1], "tz": 0}
-        reason = f"(guard) descending: goto ground tile ({_gp[0]},{_gp[1]}) tz0"
-        print(f"[{step:03d}] descend-guard: goto ground {_gp} tz0 from tz{_cur_tz_now}")
+        # Elevated and wanting down: use the engine 'descend' action, which
+        # walks to the NEAREST reachable lower ground (the engine knows every
+        # tile's elevation). This replaced the old 'goto a far ground tile'
+        # approach, which pathed unreliably off a wall-top and fought the wedge
+        # guard, causing the stairs loop.
+        action = {"type": "descend"}
+        reason = f"(guard) descending to nearest ground from tz{_cur_tz_now}"
+        session["descending_now"] = True
+        print(f"[{step:03d}] descend-guard: engine descend from tz{_cur_tz_now}")
     elif not _wants_descend:
         session["false_descend"] = 0
 
