@@ -32,6 +32,9 @@ class ThoughtsWindow:
         self._panes = {}
         # Hints the user types are queued here for the driver to consume.
         self._hints: "queue.Queue[str]" = queue.Queue()
+        # Operator QUESTIONS to the agent (out-of-band interview, not game turns).
+        self._asks: "queue.Queue[str]" = queue.Queue()
+        self._last_answer = ""          # latest agent interview answer
         # Rolling combined turn log (last N turns). Each entry pairs the
         # reasoning with the action/result it produced.
         self._MAX_TURNS = 12
@@ -238,6 +241,31 @@ class ThoughtsWindow:
         self._hint_status = tk.Label(hintrow, text="", font=("Segoe UI", 8), fg="green")
         self._hint_status.pack(side="left", padx=6)
 
+        # ASK row: interview the agent about its reasoning ("why are you carrying
+        # a pitchfork?"). This queries the LLM out-of-band with its current game
+        # context - it does NOT advance the game or alter the agent's memory.
+        askrow = tk.Frame(self._root)
+        askrow.pack(fill="x", padx=8, pady=(0, 6))
+        tk.Label(askrow, text="Ask:", font=("Segoe UI", 10, "bold"),
+                 fg="#1a5276").pack(side="left")
+        self._ask_entry = tk.Entry(askrow, font=("Segoe UI", 10))
+        self._ask_entry.pack(side="left", fill="x", expand=True, padx=6)
+        self._ask_entry.bind("<Return>", lambda e: self._send_ask())
+        tk.Button(askrow, text="Ask agent", command=self._send_ask).pack(side="left")
+        self._ask_status = tk.Label(askrow, text="", font=("Segoe UI", 8), fg="#1a5276")
+        self._ask_status.pack(side="left", padx=6)
+        # Turn-memory (action-log window) size control: raise it to give the
+        # agent more temporal memory (smarter, more context) or lower it if
+        # context% is running high (leaner). 0 = use the driver default.
+        tk.Label(askrow, text="  Turn memory:", font=("Segoe UI", 9, "bold")
+                 ).pack(side="left")
+        self._turnmem_var = tk.StringVar(value="default")
+        _tm = ttk.Combobox(askrow, textvariable=self._turnmem_var, width=8,
+                           state="readonly",
+                           values=("default", "100", "200", "300", "450",
+                                   "600", "800", "1000"))
+        _tm.pack(side="left", padx=4)
+
         self._root.after(100, self._drain)
         # Restore the user's saved divider (sash) positions once the window has
         # been laid out and sized (sash coords are pixel-based, so the panes
@@ -252,6 +280,13 @@ class ThoughtsWindow:
             self._hint_status.config(text="sent")
             if self._root is not None:
                 self._root.after(1500, lambda: self._hint_status.config(text=""))
+
+    def _send_ask(self) -> None:
+        txt = self._ask_entry.get().strip()
+        if txt:
+            self._asks.put(txt)
+            self._ask_entry.delete(0, "end")
+            self._ask_status.config(text="asking... (answers next turn)")
 
     def _show_context(self) -> None:
         """Open a separate window showing the full context sent to the model
@@ -317,6 +352,20 @@ class ThoughtsWindow:
         btnrow.pack(fill="x")
         tk.Button(btnrow, text="Refresh", command=_fill).pack(side="left", padx=6, pady=4)
         tk.Button(btnrow, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
+
+    def _show_answer(self, qa: str) -> None:
+        """Popup showing an operator Question and the agent's Answer (from an
+        out-of-band interview - does not affect the game)."""
+        if self._root is None:
+            return
+        win = tk.Toplevel(self._root)
+        win.title("Agent interview")
+        win.geometry("640x440")
+        txt = scrolledtext.ScrolledText(win, wrap="word", font=("Segoe UI", 10))
+        txt.pack(fill="both", expand=True)
+        txt.insert("end", qa)
+        txt.configure(state="disabled")
+        tk.Button(win, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
 
     def _append_turn_entry(self, action_result=None) -> None:
         """Merge reasoning + action/result into ONE entry per turn. Reasoning
@@ -410,6 +459,23 @@ class ThoughtsWindow:
         except queue.Empty:
             return None
 
+    def get_ask(self) -> Optional[str]:
+        """Return the next queued operator QUESTION (or None). The driver
+        answers it out-of-band (interview), not as a game action."""
+        try:
+            return self._asks.get_nowait()
+        except queue.Empty:
+            return None
+
+    def get_turn_window(self) -> Optional[int]:
+        """Operator-selected action-log window size (turns of temporal memory),
+        or None to use the driver default. Set via the GUI 'Turn memory' box."""
+        try:
+            v = self._turnmem_var.get()
+            return int(v) if v and v != "default" else None
+        except Exception:
+            return None
+
     def _drain(self) -> None:
         try:
             while True:
@@ -445,6 +511,14 @@ class ThoughtsWindow:
                     self._last_area_map = payload
                 elif kind == "inventory":
                     self._last_inventory = payload
+                elif kind == "answer":
+                    self._last_answer = payload
+                    if hasattr(self, "_ask_status"):
+                        self._ask_status.config(text="answered")
+                        if self._root is not None:
+                            self._root.after(2000,
+                                             lambda: self._ask_status.config(text=""))
+                    self._show_answer(payload)
                 elif kind == "topics_tree":
                     self._rebuild_topics(payload)
                 elif kind == "npc_tree":
@@ -629,6 +703,10 @@ class ThoughtsWindow:
 
     def set_inventory(self, text: str) -> None:
         self._q.put(("inventory", text))
+
+    def set_answer(self, qa: str) -> None:
+        """Show the agent's answer to an operator interview question."""
+        self._q.put(("answer", qa))
 
     def set_thinking(self, text: str) -> None:
         self._q.put(("think", text))

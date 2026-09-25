@@ -936,6 +936,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         # wide (600) since runs sit at ~55-60% context; shrink under squeeze so
         # we stay safe if the prompt ever grows toward the limit.
         _alog_n = 600 if lvl == 0 else (400 if lvl == 1 else 200)
+        # Operator override from the GUI 'Turn memory' box (if set). Still capped
+        # down under real context pressure (squeeze) so we never blow the limit.
+        _ov = state.get("_turn_window_override")
+        if _ov:
+            _alog_n = _ov if lvl == 0 else min(_ov, _alog_n)
         ah = kb.action_view(_alog_n)
         if ah:
             view["action_log"] = ah
@@ -1693,6 +1698,44 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if args.dry_run:
         reason, action = scripted_reply(step, state)
     else:
+        # OPERATOR INTERVIEW: if the human asked the agent a question, answer it
+        # out-of-band using the CURRENT game context - WITHOUT advancing the game
+        # or altering the agent's memory. This lets us probe its reasoning
+        # ("why are you carrying a pitchfork?") separately from play.
+        _ask = window.get_ask() if window.available else None
+        if not _ask:
+            try:
+                af = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ask.txt")
+                if os.path.isfile(af):
+                    _q = open(af, encoding="utf-8").read().strip()
+                    if _q:
+                        _ask = _q
+                        open(af, "w", encoding="utf-8").close()
+            except OSError:
+                pass
+        if _ask:
+            try:
+                _ctx = summarize_state(state, kb, "", "", session.get("squeeze", 0))
+                _iprompt = (
+                    "You are the SAME character/agent playing this game. Your "
+                    "operator is INTERVIEWING you (this is NOT a game turn - do "
+                    "NOT output an action or JSON). Answer their question in plain "
+                    "English, honestly and specifically, based on your current "
+                    "situation, memory, and reasoning below. If you are unsure or "
+                    "were mistaken, say so.\n\n"
+                    "=== YOUR CURRENT SITUATION ===\n" + _ctx +
+                    "\n\n=== OPERATOR'S QUESTION ===\n" + _ask +
+                    "\n\nYour answer:")
+                _ans = ollama.chat_ex("You are a helpful game-playing agent "
+                                      "explaining your own reasoning.", _iprompt)
+                _atext = (_ans.get("content") or "").strip() if isinstance(_ans, dict) else str(_ans)
+                print(f"[{step:03d}] INTERVIEW Q: {_ask}\n         A: {_atext[:300]}")
+                if window.available:
+                    window.set_answer(f"Q: {_ask}\n\nA: {_atext}")
+            except Exception as _e:
+                if window.available:
+                    window.set_answer(f"Q: {_ask}\n\n(interview failed: {_e})")
+            return   # interview iteration: do NOT advance the game this cycle
         # Pull any user hint typed into the GUI; keep it active for a few turns
         # AND record it permanently so the agent can recall it later.
         h = None
@@ -1882,6 +1925,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # which topics we've already asked this NPC and which we have NOT.
         if state.get("conversation_in_progress"):
             state["_convo_npc"] = session.get("current_npc")
+        # Operator-adjustable temporal-memory window (GUI 'Turn memory' box).
+        if window.available:
+            state["_turn_window_override"] = window.get_turn_window()
         _user = summarize_state(state, kb, session.pop("last_look", ""), alert, squeeze)
         res = ollama.chat_ex(SYSTEM_PROMPT, _user)
         reply = res["content"]
