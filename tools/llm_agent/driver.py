@@ -1884,9 +1884,22 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 print(f"[{step:03d}] overheard {_who}: {_said}")
     for _o in (state.get("objects") or []):
         _onm = _o.get("name") or ""
-        if _o.get("body") or kb.is_notable_object(_onm):
+        _is_container = _o.get("container") or _o.get("body")
+        if _is_container or kb.is_notable_object(_onm):
             _ox, _oy = _ptx + _o.get("dx", 0), _pty + _o.get("dy", 0)
             kb.note_observation(f"{_onm} at ({_ox},{_oy})", kind="seen", step=step)
+            # ALSO record it as a goto-able PLACE so the agent can RETURN to it
+            # later ("goto chest", "goto parrot") instead of losing its location
+            # when it scrolls off the per-turn "objects nearby" list. This turns
+            # ephemeral sightings into durable, navigable memory. Skip ultra-
+            # common furniture that would clutter the map.
+            _low = _onm.lower()
+            _skip = any(w in _low for w in ("wall", "floor", "roof", "window",
+                                            "fence", "post", "garbage", "tree",
+                                            "table", "chair", "light source"))
+            if _onm and not _skip:
+                kb.record_place(_onm, _ox, _oy,
+                                kind=("container" if _is_container else "seen"))
 
     # Record NPC dialog into the journal + dialogue history (with speaker).
     npc_text = state.get("npc_text")

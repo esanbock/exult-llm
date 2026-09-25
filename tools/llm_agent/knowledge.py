@@ -1052,6 +1052,10 @@ class KnowledgeBase:
         "skeleton", "blood", "trap", "locked", "magic", "rune",
         "jewel", "jewelry", "necklace", "amulet", "crown", "coin", "treasure",
         "deed", "medallion", "map", "reagent",
+        # Distinctive scene features that make a ROOM/HOUSE memorable and worth
+        # returning to (a talking parrot, a caged bird, etc.) - so the agent can
+        # navigate back to "the house with the parrot".
+        "parrot", "bird", "cage",
     )
 
     def note_observation(self, text: str, kind: str = "seen", step: int = 0) -> bool:
