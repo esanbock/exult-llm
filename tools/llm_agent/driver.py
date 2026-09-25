@@ -3787,9 +3787,36 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         near_here = abs(tgt[0]-here[0]) + abs(tgt[1]-here[1]) <= 1
         last_was_goto = session.get("last_action_type") == "goto"
         if near_here:
-            # Target is basically where we stand - explore instead of no-op.
-            action = _explore_far(state, session, wedged)
-            reason = "(guard) goto target is here; exploring instead"
+            # Target reached. If there's a SEARCHABLE container/body adjacent,
+            # SEARCH it (the agent came here to investigate). Else if there's a
+            # nearby DOOR, go THROUGH it (the loot is usually INSIDE the
+            # building, not at the outdoor landmark tile). Else, mark this spot
+            # exhausted and explore a genuinely NEW direction - this breaks the
+            # "goto landmark -> already here -> re-goto same landmark" loop that
+            # traps the agent OUTSIDE a building it wants to search.
+            _sc_obj = state.get("objects") or []
+            _adj_cont = next((o for o in _sc_obj
+                              if (o.get("container") or o.get("body"))
+                              and abs(o.get("dx", 9)) <= 1 and abs(o.get("dy", 9)) <= 1), None)
+            _near_door = next((o for o in _sc_obj
+                               if "door" in (o.get("name", "").lower())
+                               and abs(o.get("dx", 9)) + abs(o.get("dy", 9)) <= 4), None)
+            if _adj_cont:
+                action = {"type": "search"}
+                reason = "(guard) at target with a container here; searching it"
+            elif _near_door:
+                _pp = state.get("player") or {}
+                action = {"type": "goto",
+                          "tx": _pp.get("tx", 0) + _near_door.get("dx", 0),
+                          "ty": _pp.get("ty", 0) + _near_door.get("dy", 0)}
+                reason = "(guard) at landmark; going THROUGH the door to search inside"
+            else:
+                # Nothing to search AT this landmark - it's a dead end for
+                # looting. Remember it so we don't keep re-targeting it, and
+                # explore somewhere NEW.
+                session.setdefault("exhausted_landmarks", set()).add(tuple(tgt))
+                action = _explore_far(state, session, True)
+                reason = "(guard) nothing to search at this landmark; exploring a NEW area"
         elif last_was_goto and not moved:
             # The previous goto didn't move us. Drive a reliable MOVE toward the
             # target's compass direction, preferring an open grid cell.
