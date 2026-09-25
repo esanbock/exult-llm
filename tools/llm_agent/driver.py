@@ -2942,35 +2942,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             _oscillating = False
         _force_step = _oscillating
         _cur_tz_here = (state.get("player") or {}).get("tz", 0) or 0
-        # Don't force a DESCEND if the agent is mid-CLIMB (its reason says it
-        # wants to go UP). Otherwise this yanks it off the stairs each step.
-        _climbing = any(w in (reason or "").lower()
-                        for w in ("up stair", "upstair", "go up", "climb up",
-                                  "ascend", "upper floor", "upstairs"))
-        if _force_step and _cur_tz_here > 0 and not _climbing:
-            # Stuck oscillating while UP HIGH: use the engine 'descend'. If a
-            # prior descend found no reachable way down from here, CROSS the
-            # platform to a new edge (rotating) rather than thrashing in place -
-            # same logic as the descend-guard, so the two never fight.
-            session["wedge_recent"] = []
-            _df = session.get("descend_fail", 0)
-            if _df >= 1:
-                _dirs = ["n", "e", "s", "w", "ne", "se", "sw", "nw"]
-                _d = _dirs[(_df - 1) % len(_dirs)]
-                _off = {"n": (0, -6), "s": (0, 6), "e": (6, 0), "w": (-6, 0),
-                        "ne": (5, -5), "se": (5, 5), "sw": (-5, 5), "nw": (-5, -5)}[_d]
-                _ppw = state.get("player") or {}
-                action = {"type": "goto",
-                          "tx": _ppw.get("tx", 0) + _off[0],
-                          "ty": _ppw.get("ty", 0) + _off[1]}
-                reason = f"(guard) descent blocked; crossing platform {_d} to find the ramp"
-                session["descend_fail"] = _df + 1
-                print(f"[{step:03d}] wedge-escape: reposition {_d} (descend fail#{_df})")
-            else:
-                action = {"type": "descend"}
-                reason = "(guard) stuck up high; engine-descend to nearest ground"
-                print(f"[{step:03d}] wedge-escape: elevated trap -> engine descend")
-        elif best and best_d >= 3 and _force_step:
+        # (Elevated force-descend REMOVED - it fought the agent's own stair
+        # navigation and caused up/down oscillation. When oscillating while
+        # elevated, just use the normal flood-fill / known-place escape below,
+        # same as at ground level.)
+        if best and best_d >= 3 and _force_step:
             # We're trapped in a tiny pocket but the flood-fill sees a far open
             # tile: commit a goto straight to it and clear the recent buffer so
             # we don't immediately re-trigger.
@@ -3648,58 +3624,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         print(f"[{step:03d}] escape-latch: ARMED (fixation) -> {session['escape_target']}")
 
     _at_ground = _cur_tz_now == 0
-    # If the agent is trying to go UP/climb/upstairs, it must NOT be treated as
-    # wanting to descend - otherwise the descend-guard yanks it back to ground
-    # every time it climbs one step (the "climb one stair, get pulled down"
-    # loop). Upward intent overrides all descend logic.
-    _wants_up = any(w in (reason or "").lower()
-                    for w in ("up stair", "upstair", "go up", "climb up", "ascend",
-                              "up the stair", "upper floor", "upstairs", "go upstairs"))
-    _wants_descend = (not _wants_up) and any(
+    _wants_descend = any(
         w in (reason or "").lower()
         for w in ("descend", "climb down", "go down", "down to ground",
-                  "to ground level", "down the stairs", "down the fortress",
-                  "down from"))
+                  "to ground level", "down the stairs", "down from"))
+    # DESCEND-GUARD REMOVED: it caused more harm than good (fought the agent's
+    # own stair navigation, dragging it tz->0 and causing endless up/down
+    # oscillation). The agent now handles elevation itself via move/goto/descend
+    # tools. We only leave a gentle FYI if it tries to "descend" while already at
+    # ground (a no-op it should stop trying) - but we do NOT force any action.
     if _at_ground and _wants_descend:
-        n = session.get("false_descend", 0) + 1
-        session["false_descend"] = n
         session["last_bump"] = (
-            "FACT: you are ALREADY at ground level (elevation 0). You cannot "
-            "'descend' - there is no lower level here. Stop trying to go down. "
-            "Whatever you're looking for at ground level, you are already on it - "
-            "walk to the PERSON or PLACE you want (e.g. the stables) directly.")
-        if n >= 2:
-            session["false_descend"] = 0
-            action = _explore_far(state, session, wedged)
-            reason = "(guard) already at ground; stop descending, explore"
-            print(f"[{step:03d}] ground-guard: already at tz0; redirect from descend")
-    elif _cur_tz_now > 0 and _wants_descend:
-        # Elevated and wanting down: use the engine 'descend' action. If descend
-        # has FAILED here (no reachable way down from this exact spot - a large
-        # battlement whose ramp is elsewhere), don't keep re-issuing descend in
-        # place; WALK decisively across the platform to a new edge (rotating
-        # direction each attempt), then descend will find the ramp from there.
-        _df = session.get("descend_fail", 0)
-        if _df >= 1:
-            _dirs = ["n", "e", "s", "w", "ne", "se", "sw", "nw"]
-            _d = _dirs[(_df - 1) % len(_dirs)]
-            # A long stride (goto ~6 tiles that direction) to actually change edge.
-            _off = {"n": (0, -6), "s": (0, 6), "e": (6, 0), "w": (-6, 0),
-                    "ne": (5, -5), "se": (5, 5), "sw": (-5, 5), "nw": (-5, -5)}[_d]
-            _pp0 = state.get("player") or {}
-            action = {"type": "goto",
-                      "tx": _pp0.get("tx", 0) + _off[0],
-                      "ty": _pp0.get("ty", 0) + _off[1]}
-            reason = f"(guard) descent blocked here; crossing platform {_d} to find the ramp"
-            session["descend_fail"] = _df + 1
-            print(f"[{step:03d}] descend-guard: reposition {_d} (fail#{_df})")
-        else:
-            action = {"type": "descend"}
-            reason = f"(guard) descending to nearest ground from tz{_cur_tz_now}"
-            session["descending_now"] = True
-            print(f"[{step:03d}] descend-guard: engine descend from tz{_cur_tz_now}")
-    elif not _wants_descend:
-        session["false_descend"] = 0
+            "FYI: you are already at GROUND level (elevation 0) - there is no "
+            "lower level to descend to here. If you want to go UP, step onto the "
+            "stairs; the floor you seek may be UPSTAIRS.")
 
     if (isinstance(action, dict) and action.get("type") == "goto" and "tx" in action
             and not state.get("conversation_in_progress")):
