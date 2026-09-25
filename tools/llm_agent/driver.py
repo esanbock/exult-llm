@@ -1732,26 +1732,31 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     pass
         if _ask:
             try:
-                _ctx = summarize_state(state, kb, "", "", session.get("squeeze", 0))
+                # Compact, PROSE-friendly context (not the full state JSON, which
+                # the model echoed). Give it what it needs to explain itself.
+                _pp = state.get("player") or {}
+                _recent = kb.action_view(12) if kb else []
+                _cur_q = kb.current_quest if kb else None
+                _ctx = (
+                    "Plot so far: " + (kb.episodic_summary or "(none yet)") + "\n"
+                    "Current focus quest: " + str(_cur_q) + "\n"
+                    "Position: " + f"({_pp.get('tx')},{_pp.get('ty')}) elevation {_pp.get('tz',0)}" + "\n"
+                    "Wearing: " + str(_pp.get("worn") or {}) + "\n"
+                    "Carrying: " + str(_pp.get("carrying") or []) + "\n"
+                    "Recent actions:\n  " + "\n  ".join(str(a) for a in _recent))
                 _iprompt = (
-                    "You are the SAME character/agent playing this game. Your "
-                    "operator/viewer sent you a MESSAGE (this is NOT a game turn - "
-                    "do NOT output a game action). Two things:\n"
-                    "1) ANSWER them in plain English, honestly and specifically, "
-                    "based on your current situation/memory/reasoning below. Under "
-                    "3 sentences (a viewer reads it on a live stream). If unsure "
-                    "or mistaken, say so.\n"
-                    "2) DECIDE if their message is GUIDANCE you should act on in "
-                    "your gameplay (a tip/instruction/correction), versus just a "
-                    "question about your thinking.\n"
-                    "Reply EXACTLY in this form:\n"
-                    "ANSWER: <your reply>\n"
-                    "ACTIONABLE: <yes or no>\n\n"
-                    "=== YOUR CURRENT SITUATION ===\n" + _ctx +
+                    "You are the character/agent playing Ultima VII. A viewer sent "
+                    "you a MESSAGE. Do TWO things:\n"
+                    "1) ANSWER in plain English (under 3 sentences, honest and "
+                    "specific, first person). If unsure or mistaken, say so.\n"
+                    "2) Decide if the message is GUIDANCE to act on in gameplay "
+                    "vs. just a question.\n"
+                    "Reply EXACTLY as:\nANSWER: <reply>\nACTIONABLE: <yes|no>\n\n"
+                    "=== YOUR SITUATION ===\n" + _ctx +
                     "\n\n=== THEIR MESSAGE ===\n" + _ask + "\n")
-                _ans = ollama.chat_ex("You are a helpful game-playing agent "
-                                      "explaining your reasoning and deciding if a "
-                                      "message is actionable guidance.", _iprompt)
+                _ans = ollama.chat_ex("You are a game-playing agent explaining "
+                                      "your reasoning in plain English.",
+                                      _iprompt, force_json=False)
                 _raw = (_ans.get("content") or "").strip() if isinstance(_ans, dict) else str(_ans)
                 # Parse ANSWER / ACTIONABLE (fall back to whole text as answer).
                 _atext = _raw
@@ -1765,8 +1770,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     _actionable = _mc.group(1).lower() == "yes"
                 print(f"[{step:03d}] MESSAGE: {_ask}\n         A: {_atext[:240]}"
                       f"  [actionable={_actionable}]")
-                if window.available:
-                    window.set_answer(_atext or "(no answer)")
+                # Route the answer to the ORIGINATING channel only, keeping the
+                # operator's private GUI chat separate from public Twitch chat.
+                if _ask_from == "operator":
+                    if window.available:
+                        window.set_answer(_atext or "(no answer)")
                 # If the LLM judged the message actionable, ALSO treat it as a
                 # hint: record it and keep it active for a few turns so it steers
                 # gameplay. This removes the need for a separate 'hint' command -
@@ -1776,18 +1784,28 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     session["hint_ttl"] = 3
                     kb.record_hint(_ask, step)
                     print(f"[{step:03d}] (message judged actionable -> recorded as hint)")
-                # Write the Q&A to a file so the Twitch bridge can post the answer
-                # back to chat, and OBS can show it as a text source.
-                try:
-                    _dir = os.path.dirname(os.path.abspath(__file__))
-                    with open(os.path.join(_dir, "agent_answer.txt"), "w",
-                              encoding="utf-8") as _af:
-                        _af.write(f"Q: {_ask}\nA: {_atext}")
-                except OSError:
-                    pass
+                # For TWITCH-sourced messages only, write the Q&A to a file so the
+                # Twitch bridge can post it back to chat + OBS. Operator/GUI chat
+                # stays private and is NOT written here.
+                if _ask_from == "twitch":
+                    try:
+                        _dir = os.path.dirname(os.path.abspath(__file__))
+                        with open(os.path.join(_dir, "agent_answer.txt"), "w",
+                                  encoding="utf-8") as _af:
+                            _af.write(f"Q: {_ask}\nA: {_atext}")
+                    except OSError:
+                        pass
             except Exception as _e:
-                if window.available:
-                    window.set_answer(f"(interview failed: {_e})")
+                _fail = f"(interview failed: {_e})"
+                if _ask_from == "operator" and window.available:
+                    window.set_answer(_fail)
+                elif _ask_from == "twitch":
+                    try:
+                        _dir = os.path.dirname(os.path.abspath(__file__))
+                        open(os.path.join(_dir, "agent_answer.txt"), "w",
+                             encoding="utf-8").write(f"Q: {_ask}\nA: {_fail}")
+                    except OSError:
+                        pass
             return   # interview iteration: do NOT advance the game this cycle
         # Pull any user hint typed into the GUI; keep it active for a few turns
         # AND record it permanently so the agent can recall it later.
