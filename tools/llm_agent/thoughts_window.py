@@ -134,6 +134,7 @@ class ThoughtsWindow:
         left.add(map_frame, weight=3)
         # Turn log as a TABLE (columns: Turn | Action | Reasoning | Thought |
         # Result), newest at the bottom, scrolling, capped at _MAX_TURNS rows.
+        # Both vertical AND horizontal scrollbars (reasoning text can be long).
         tl_frame = tk.LabelFrame(left, text=f"Turn log (last {self._MAX_TURNS})",
                                  font=("Segoe UI", 9, "bold"))
         _tlcols = ("action", "reason", "thought", "result")
@@ -141,17 +142,27 @@ class ThoughtsWindow:
                                           show="tree headings", height=8)
         self._turnlog_tree.heading("#0", text="Turn")
         self._turnlog_tree.column("#0", width=50, anchor="w", stretch=False)
-        for _c, _lbl, _w in (("action", "Action", 150),
-                             ("reason", "Reasoning", 240),
-                             ("thought", "Thought", 220),
-                             ("result", "Result", 120)):
+        # Wide, non-stretching columns so the total width can exceed the pane -
+        # that's what enables horizontal scrolling for long reasoning text.
+        for _c, _lbl, _w in (("action", "Action", 180),
+                             ("reason", "Reasoning", 420),
+                             ("thought", "Thought", 360),
+                             ("result", "Result", 160)):
             self._turnlog_tree.heading(_c, text=_lbl)
-            self._turnlog_tree.column(_c, width=_w, anchor="w")
-        _tlsb = ttk.Scrollbar(tl_frame, orient="vertical",
-                              command=self._turnlog_tree.yview)
-        self._turnlog_tree.configure(yscrollcommand=_tlsb.set)
-        self._turnlog_tree.pack(side="left", fill="both", expand=True)
-        _tlsb.pack(side="right", fill="y")
+            self._turnlog_tree.column(_c, width=_w, anchor="w", stretch=False)
+        _tlvsb = ttk.Scrollbar(tl_frame, orient="vertical",
+                               command=self._turnlog_tree.yview)
+        _tlhsb = ttk.Scrollbar(tl_frame, orient="horizontal",
+                               command=self._turnlog_tree.xview)
+        self._turnlog_tree.configure(yscrollcommand=_tlvsb.set,
+                                     xscrollcommand=_tlhsb.set)
+        # grid so the tree + right (vertical) + bottom (horizontal) scrollbars
+        # all coexist and the tree expands.
+        self._turnlog_tree.grid(row=0, column=0, sticky="nsew")
+        _tlvsb.grid(row=0, column=1, sticky="ns")
+        _tlhsb.grid(row=1, column=0, sticky="ew")
+        tl_frame.grid_rowconfigure(0, weight=1)
+        tl_frame.grid_columnconfigure(0, weight=1)
         left.add(tl_frame, weight=3)
         _text_pane(left, "dialog", "Dialog / characters / objects on screen", weight=2)
 
@@ -573,8 +584,8 @@ class ThoughtsWindow:
             return s if len(s) <= n else s[:n - 1] + "\u2026"
         for turn, action, reason, thought, result in self._turn_log:
             tree.insert("", "end", text=str(turn),
-                        values=(_clip(action, 40), _clip(reason, 70),
-                                _clip(thought, 60), _clip(result, 30)))
+                        values=(_clip(action, 80), _clip(reason, 300),
+                                _clip(thought, 300), _clip(result, 80)))
         # Auto-scroll to the newest (last) row.
         kids = tree.get_children("")
         if kids:

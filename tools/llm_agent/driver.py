@@ -1167,8 +1167,9 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         if _ov:
             _alog_n = _ov if lvl == 0 else min(_ov, _alog_n)
         ah = kb.action_view(_alog_n)
-        if ah:
-            view["action_log"] = ah
+        # NOTE: action_log is intentionally added LAST (just before return) so it
+        # is the final thing in the context - it is the continuously-appended
+        # temporal memory and belongs at the bottom for readability + recency.
         if kb.current_quest:
             view["current_quest"] = kb.current_quest
         # ALWAYS-ON navigation summary: structured, text-first list of known
@@ -1250,6 +1251,14 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     if state.get("area_map") is not None:
         # Town-scale explored-area overview the agent requested via the map tool.
         view["area_map"] = state["area_map"]
+    # ACTION LOG LAST: the continuously-appended temporal memory goes at the very
+    # BOTTOM of the context so the newest turns are the final thing the model
+    # reads (best for recency/attention) and nothing static sits below it.
+    try:
+        if ah:
+            view["action_log"] = ah
+    except NameError:
+        pass
     # Pretty-print (indent=2) so lists like action_log render ONE ITEM PER LINE
     # and the whole state is human/LLM-readable, not a run-on blob. We have
     # context headroom (typically ~30-40%), so the extra whitespace is worth the
