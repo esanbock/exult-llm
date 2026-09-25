@@ -40,6 +40,7 @@ class ThoughtsWindow:
         self._pending_reason = ""       # reason awaiting its action this turn
         self._last_context = ""         # full prompt for the Show-context window
         self._last_area_map = ""        # latest area map for the Show-map window
+        self._last_inventory = ""       # latest inventory for the Show-inventory window
         self._stat_labels = {}          # key -> value Label widget
 
     # -- lifecycle ------------------------------------------------------------
@@ -232,6 +233,8 @@ class ThoughtsWindow:
                   command=self._show_context).pack(side="left", padx=(6, 0))
         tk.Button(hintrow, text="Show map",
                   command=self._show_map).pack(side="left", padx=(6, 0))
+        tk.Button(hintrow, text="Show inventory",
+                  command=self._show_inventory).pack(side="left", padx=(6, 0))
         self._hint_status = tk.Label(hintrow, text="", font=("Segoe UI", 8), fg="green")
         self._hint_status.pack(side="left", padx=6)
 
@@ -291,7 +294,29 @@ class ThoughtsWindow:
         tk.Button(btnrow, text="Refresh", command=_fill).pack(side="left", padx=6, pady=4)
         tk.Button(btnrow, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
 
-    def _append_turn_entry(self, action_result=None) -> None:
+    def _show_inventory(self) -> None:
+        """Open a window showing what the Avatar is WEARING (per slot) and
+        CARRYING. Sourced from a periodic out-of-band inventory query the driver
+        pushes to the GUI (does NOT cost the agent a turn). Refreshable."""
+        if self._root is None:
+            return
+        win = tk.Toplevel(self._root)
+        win.title("Inventory (worn + carried)")
+        win.geometry("520x640")
+        txt = scrolledtext.ScrolledText(win, wrap="word", font=("Consolas", 10))
+        txt.pack(fill="both", expand=True)
+
+        def _fill():
+            txt.configure(state="normal")
+            txt.delete("1.0", "end")
+            txt.insert("end", getattr(self, "_last_inventory", "")
+                       or "(no inventory captured yet - it refreshes every few turns)")
+            txt.configure(state="disabled")
+        _fill()
+        btnrow = tk.Frame(win)
+        btnrow.pack(fill="x")
+        tk.Button(btnrow, text="Refresh", command=_fill).pack(side="left", padx=6, pady=4)
+        tk.Button(btnrow, text="Close", command=win.destroy).pack(side="right", padx=6, pady=4)
         """Merge reasoning + action/result into ONE entry per turn. Reasoning
         (think) usually arrives first and creates/updates the entry; the action
         arrives next and completes it. If they land out of order we still pair
@@ -416,6 +441,8 @@ class ThoughtsWindow:
                     self._last_context = payload
                 elif kind == "area_map":
                     self._last_area_map = payload
+                elif kind == "inventory":
+                    self._last_inventory = payload
                 elif kind == "topics_tree":
                     self._rebuild_topics(payload)
                 elif kind == "npc_tree":
@@ -597,6 +624,9 @@ class ThoughtsWindow:
 
     def set_map(self, text: str) -> None:
         self._q.put(("map", text))
+
+    def set_inventory(self, text: str) -> None:
+        self._q.put(("inventory", text))
 
     def set_thinking(self, text: str) -> None:
         self._q.put(("think", text))

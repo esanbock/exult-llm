@@ -476,6 +476,9 @@ periodically). For finer detail you have the recall/quests tools.
             for. The person reacts (may advance a quest). Distinct from "drop"
             (which puts an item on the ground).
   inventory - Report what you are WEARING (per slot) and CARRYING. params: none.
+            NOTE: your worn items and carried items are ALREADY shown every turn
+            in player.worn and player.carrying - so you rarely need this; check
+            those fields instead of spending a turn here.
   annotate - Mark the current location (or a given tile) on your map with a
             label so you can return later. params: {"label":"<name>"} (uses your
             current position) or add {"tx","ty"} for a specific tile, and an
@@ -720,6 +723,10 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             "gold": p.get("gold"),
             "food": p.get("food"),
             "dead": p.get("dead"),
+            # ALWAYS-ON inventory so the agent knows what it holds without
+            # spending a turn on the 'inventory' tool (a human always sees this).
+            "worn": p.get("worn") or {},
+            "carrying": p.get("carrying") or [],
         },
         "time_of_day": state.get("time_of_day"),
         "hour": state.get("hour"),
@@ -1471,6 +1478,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             window.set_topics_tree(kb.topics_tree_data())
             window.set_plot(kb.episodic_summary or "(no plot summary yet - the LLM builds this)")
             p = state.get("player") or {}
+            # Feed the Show-inventory button from the always-on player state
+            # (no extra engine query, no agent turn spent).
+            try:
+                _worn = p.get("worn") or {}
+                _carry = p.get("carrying") or []
+                _inv = "WORN:\n" + ("\n".join(f"  {slot}: {item}"
+                                              for slot, item in _worn.items())
+                                    if _worn else "  (nothing worn)")
+                _inv += "\n\nCARRYING (" + str(len(_carry)) + "):\n" + (
+                    "\n".join(f"  - {c}" for c in _carry) if _carry
+                    else "  (pack empty)")
+                window.set_inventory(_inv)
+            except Exception:
+                pass
             # Always-visible game status line.
             window.set_gstatus(
                 f"{state.get('time_of_day','?')} (h{state.get('hour','?')})  "

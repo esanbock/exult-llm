@@ -528,6 +528,52 @@ namespace LLM_agent {
 			os << ',' << json_int("gold",
 					av->count_objects(644, c_any_qual, c_any_framenum));
 			os << ',' << json_bool("dead", av->is_dead());
+			// ALWAYS-ON inventory: what the Avatar is wearing (per slot) and
+			// carrying. A human always sees their pack; without this the agent
+			// acts blind to its own items (doesn't know it holds a key, the
+			// deed, the pitchfork, etc.). Compact so it fits every turn.
+			{
+				static const struct { int slot; const char* name; } _slots[] = {
+					{head, "head"}, {torso, "torso"}, {legs, "legs"},
+					{feet, "feet"}, {rhand, "weapon"}, {lhand, "otherhand"},
+					{belt, "belt"}, {amulet, "amulet"}, {cloak, "cloak"},
+					{gloves, "gloves"}, {lfinger, "ring"}};
+				os << ',' << "\"worn\":{";
+				bool wf = true;
+				for (const auto& s : _slots) {
+					Game_object* it = av->get_readied(s.slot);
+					if (it && !it->get_name().empty()) {
+						if (!wf) { os << ','; }
+						wf = false;
+						os << '"' << s.name << "\":\"" << json_escape(it->get_name()) << '"';
+					}
+				}
+				os << "},\"carrying\":[";
+				bool cf = true;
+				int cc = 0;
+				Container_game_object* pk = av->get_readied(backpack)
+						? av->get_readied(backpack)->as_container() : nullptr;
+				std::vector<Container_game_object*> st;
+				if (pk) { st.push_back(pk); }
+				while (!st.empty() && cc < 40) {
+					Container_game_object* c = st.back();
+					st.pop_back();
+					Object_iterator it(c->get_objects());
+					Game_object* inner;
+					while ((inner = it.get_next()) != nullptr && cc < 40) {
+						if (!inner->get_name().empty()) {
+							if (!cf) { os << ','; }
+							cf = false;
+							os << '"' << json_escape(inner->get_name()) << '"';
+							++cc;
+						}
+						if (Container_game_object* ic = inner->as_container()) {
+							st.push_back(ic);
+						}
+					}
+				}
+				os << ']';
+			}
 			os << '}';
 		}
 
