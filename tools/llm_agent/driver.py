@@ -830,6 +830,38 @@ def get_effective_system_prompt() -> str:
     return prompt
 
 
+def _action_phrase(action) -> str:
+    """Render an action dict as a short human-readable phrase for the GUI turn
+    log (the raw JSON + result is noise there; the LLM still gets the result
+    in-game). E.g. {'type':'goto','name':'stables'} -> 'goto stables'."""
+    if not isinstance(action, dict):
+        return str(action)
+    t = action.get("type", "?")
+    if t == "move":
+        return f"move {action.get('dir', '')}".strip()
+    if t == "goto":
+        if action.get("name"):
+            return f"goto {action['name']}"
+        if action.get("tx") is not None:
+            z = action.get("tz")
+            return f"goto ({action.get('tx')},{action.get('ty')}" + (f",z{z})" if z is not None else ")")
+        return "goto"
+    if t == "talk":
+        return f"talk to {action.get('name', '?')}"
+    if t == "answer":
+        return (f"say \"{action['text']}\"" if action.get("text")
+                else f"answer #{action.get('index', '?')}")
+    if t in ("take", "pickup", "use", "equip", "unequip", "drop", "attack"):
+        return f"{t} {action.get('name', '')}".strip()
+    if t == "give":
+        return f"give {action.get('item', '')} to {action.get('to', 'someone')}".strip()
+    if t == "set_number":
+        return f"set number {action.get('value', '')}"
+    # search/open/close/read/unlock/continue/dismiss/wait/look/map/recall/etc.
+    _n = action.get("name")
+    return f"{t} {_n}" if _n else t
+
+
 def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: str = "", alert: str = "", squeeze: int = 0) -> str:
     """Compact the observation to keep the prompt small and focused.
 
@@ -2623,7 +2655,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         kb.record_tool(_atype, result.get("ok") if isinstance(result, dict) else None)
         session["last_action_type"] = _atype
         if window.available:
-            window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
+            window.set_action(_action_phrase(action))
             window.set_thinking(reason)
         return
     else:
@@ -2664,7 +2696,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 result = exult.act(action)
             kb.record_tool(_atype, result.get("ok") if isinstance(result, dict) else None)
             if window.available:
-                window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
+                window.set_action(_action_phrase(action))
                 window.set_thinking(reason)
             return
 
@@ -3478,7 +3510,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             session["last_action_type"] = _atype
             if window.available:
                 window.update_turn(kb.turn_counter)
-                window.set_action(json.dumps(action) + "\n\n-> " + json.dumps(result))
+                window.set_action(_action_phrase(action))
                 window.set_thinking(reason)
             return
     # Arm the latch on a confined + descend-heavy loop.  (DISABLED: the latch
@@ -3824,7 +3856,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # Show the chosen ANSWER TEXT instead of the opaque index.
         if isinstance(_disp, dict) and _disp.get("type") == "answer" and session.get("answer_text"):
             _disp = {"type": "answer", "chose": session["answer_text"]}
-        window.set_action(json.dumps(_disp) + "\n\n-> " + json.dumps(result))
+        window.set_action(_action_phrase(_disp))
         session.pop("answer_text", None)
     if (isinstance(action, dict) and action.get("type") == "move"
             and isinstance(result, dict) and result.get("blocked")):
