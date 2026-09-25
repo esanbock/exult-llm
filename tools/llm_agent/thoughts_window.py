@@ -714,8 +714,21 @@ class ThoughtsWindow:
                         saved[k] = [int(x) for x in v.split(",") if x.strip()]
             paneds = getattr(self, "_paneds", {})
             for name, pw in paneds.items():
-                for i, pos in enumerate(saved.get(name, [])):
+                try:
+                    pw.update_idletasks()
+                    horiz = str(pw.cget("orient")) == "horizontal"
+                    extent = pw.winfo_width() if horiz else pw.winfo_height()
+                except Exception:
+                    extent = 0
+                positions = saved.get(name, [])
+                for i, pos in enumerate(positions):
+                    # Skip DEGENERATE positions that would collapse a pane to
+                    # near-zero (< 40px from either edge) - a stale saved value
+                    # was hiding the Finished-quests / Characters panels. Clamp
+                    # instead so every pane stays visible.
                     try:
+                        if extent > 80:
+                            pos = max(40, min(pos, extent - 40))
                         pw.sashpos(i, pos)
                     except Exception:
                         pass
