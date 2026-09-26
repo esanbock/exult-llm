@@ -363,3 +363,80 @@ guards without crossing into steering. The correct next step is a STRONGER model
 (qwen3.6 / deepseek-r1:32b on the 5090), NOT more driver patches. Adding forced
 movement here was explicitly rejected as it violates the self-sufficiency
 principle (Principle 1).
+
+## Headless A/V streaming — architecture + the real bottleneck (2026-09-26)
+
+Goal this session: run Exult fully headless on Gentoo, have qwen3.6 (via ollama
+on alien1) play, and stream continuous VIDEO + AUDIO to a viewer (VLC now,
+Twitch later) with NO X server.
+
+### What was built (all committed)
+- Build wiring: `--enable-llm-agent` configure option (default off; a normal
+  desktop build compiles none of the LLM/streaming code). `llm/` sources under
+  `BUILD_LLM_AGENT`. Upstream requires SDL3 (not SDL2).
+- Video capture (in-engine, no X): `Image_window::capture_rgb()` reads the
+  rendered frame via `SDL_RenderReadPixels` in the renderer's NATIVE format
+  (XRGB8888 -> ffmpeg `bgr0`, no per-frame convert) and reports the format.
+  `llm/videostream` writes raw frames to a FIFO; `exult --llmstream <fifo>`.
+- Audio capture (in-engine, no snd-aloop): `AudioMixer::MixAudio` taps the mixed
+  PCM to a FIFO (`llm/audiostream`, `exult --llmaudio <fifo>`). This REPLACED an
+  snd-aloop loopback approach that fragmented audio ("10ms of every note")
+  because the loopback capture starved (jiffies timer, buffer mismatch). The
+  in-engine tap is perfectly paced because it's the same callback that makes the
+  samples. `SDL_AUDIODRIVER=dummy` still fires the mixer callback, so no real
+  audio device is needed at all.
+- Mux/serve: ONE ffmpeg reads both FIFOs -> H.264 (libx264 ultrafast) + AAC ->
+  HLS, served by `python3 -m http.server` (multi-client, VLC reconnect-safe).
+  `-listen 1` HTTP and UDP were both tried and rejected (single-client / packet
+  loss on large keyframes). VLC opens `http://<host>:8090/stream.m3u8`.
+- Agent bridge: `move` rewritten to be TILE-based (compass dir+steps OR game
+  tile tx/ty), zero screen-coordinate dependency. Added `play_music`,
+  `screenshot` actions. driver.py normalizes model action drift (move dx/dy,
+  answer-with-topic) and auto-starts looping music on connect.
+
+### Threading (branch: llm-agent-threading)
+- Network I/O moved to a dedicated thread: it owns the socket (accept/recv/send
+  + line parsing) and NEVER touches game state. Parsed requests -> mutex queue.
+  Main-loop `Agent_server_poll` drains a small budget/frame and runs
+  `handle_request`/`begin_conversation` (state mutation MUST stay main-thread),
+  replies -> outbound queue the net thread sends. The `@TALK@` conversation flow
+  still works (begin_conversation blocks main-thread; its re-entrant poll drains
+  answers the net thread keeps queuing).
+- A* node cap: `Pathfinder_client::get_max_nodes()` (default 0 = unlimited, so
+  ALL game/NPC pathfinding is byte-for-byte unchanged). Agent gotos set
+  `g_bounded_pathfind` (RAII guard) -> `Actor_pathfinder_client` caps at 6000
+  nodes, so a far/unreachable goto can't run an unbounded synchronous search.
+- Save cadence: changed from every 40 turns to a wall-clock `--save-interval`
+  (default 1800s = 30 min). An in-game save is a synchronous full-savegame disk
+  write on the main thread that hitches the stream; doing it often is costly.
+- Audio was ALREADY on its own thread (SDL callback, "SDLAudioP15").
+
+### THE REAL BOTTLENECK (definitive, measured)
+Symptom: audio "plays well ~15s then cuts off at an increasing rate." Root cause
+is NOT sync, NOT bitrate, NOT the agent, NOT threading, NOT encoding:
+
+The A/V pipeline PRODUCES content slower than real-time. Measured: only ~7 of
+every 10 two-second HLS segments are produced per 20 wall-clock seconds (~70%),
+so the client buffer drains and starves. Yet each segment is INTERNALLY PERFECT
+(exactly 20 video packets, 2.000s, 10.0 fps). So it produces correct-but-slow: a
+2s segment takes ~2.85 real seconds to build.
+
+Proven with the driver PAUSED: still ~70% -> the agent is NOT the cause.
+ffmpeg sits at moderate CPU and is STARVED of frames (state S), not busy -> the
+encoder is not the cause; hardware encoding would not help.
+
+ROOT CAUSE: `capture_rgb()` calls `SDL_RenderReadPixels` on the full 1024x768
+render output every frame. At software rendering (headless, no GPU accel) this
+GPU->CPU readback is too slow to sustain even 10fps in real time, so the main
+loop iterates <10x/sec and segments fall behind wall-clock.
+
+### NEXT (fresh session) to reach real-time
+- Capture the PRE-SCALE surface: `Image_window::get_draw_surface()` is the
+  320x200 game render (exists). Reading that back is ~10x less data than
+  1024x768; let ffmpeg upscale to 720p/native. This is the highest-impact fix.
+- Alternatives: skip UpdateRect when unchanged; lower fps; investigate a
+  non-readback capture path.
+- The threading + A* + save fixes are correct and worth keeping regardless; they
+  fixed the agent-can-freeze-the-world case (40% -> 70% when agent active) and
+  the periodic-save hitch. They did NOT cause the base ~70% (pre-existing
+  readback cost). VERIFY the branch for regressions before merging to master.
