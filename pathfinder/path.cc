@@ -375,14 +375,24 @@ std::pair<std::vector<Tile_coord>, bool> Find_path(
 	// Figure when to give up.
 	max_cost = client->get_max_cost(max_cost);
 	const int max_nodes = client->get_max_nodes();    // 0 = unlimited
+	// Shared agent-goto budget (decrements across ALL searches in one goto so
+	// the aggregate of many waypoint probes can't hog the main thread). <0 =
+	// unbounded for normal game/NPC pathfinding.
+	extern long g_pathfind_budget;
 	int       expanded  = 0;
 	Search_node* node;    // Try 'best' node each iteration.
 	while ((node = nodes.pop()) != nullptr) {
-		// Hard node-expansion cap (agent gotos only; 0 = unlimited for game
+		// Hard node-expansion cap (agent gotos only; 0/unbounded for game
 		// pathfinding). Prevents a far/unreachable goal from expanding the
 		// whole open region synchronously and stalling the frame loop.
 		if (max_nodes && ++expanded > max_nodes) {
 			return {{}, false};
+		}
+		if (g_pathfind_budget >= 0) {
+			if (g_pathfind_budget == 0) {
+				return {{}, false};    // whole-goto budget exhausted
+			}
+			--g_pathfind_budget;
 		}
 		if (tracing) {
 			cout << "Goal: (" << goal.tx << ", " << goal.ty << ", " << goal.tz << "), Node: (" << node->get_tile().tx << ", "

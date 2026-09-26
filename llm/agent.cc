@@ -508,20 +508,27 @@ namespace {
 
 }    // namespace
 
-// Global (not in LLM_agent namespace) so pathfinding code in actions.cc can
-// read it via `extern bool g_bounded_pathfind;`. Set true only around an
-// agent-initiated goto so its A* is node-capped; false for all game/NPC paths.
+// Shared A* node budget for one agent goto ACTION. The goto handler can run
+// dozens of pathfind attempts (direct + up to ~54 waypoint probes); a per-search
+// cap still lets the aggregate hog the main thread for seconds. So this is a
+// budget DECREMENTED across all searches within a single goto, hard-stopping
+// once exhausted. -1 means unbounded (all normal game/NPC pathfinding).
 // Main-thread only (all pathfinding runs on the main thread).
+long g_pathfind_budget = -1;
+
+// Back-compat name some code referenced; true when a budget is active.
 bool g_bounded_pathfind = false;
 
 namespace {
-	// RAII: bound pathfinding for the duration of an agent goto, always reset.
+	// RAII: give the whole agent goto a fixed total node budget, always reset.
 	struct Bounded_pathfind_guard {
 		Bounded_pathfind_guard() {
+			g_pathfind_budget  = 30000;    // total nodes across all searches
 			g_bounded_pathfind = true;
 		}
 
 		~Bounded_pathfind_guard() {
+			g_pathfind_budget  = -1;
 			g_bounded_pathfind = false;
 		}
 	};
