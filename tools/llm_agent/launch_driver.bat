@@ -9,8 +9,8 @@ cd /d "%~dp0"
 set MODEL=%1
 set MODELARG=
 if not "%MODEL%"=="" set MODELARG=--model %MODEL%
-rem Show the turn log LIVE in this console window while ALSO teeing it to
-rem driver_log.txt (errors still go to driver_err.txt). The window opens normal
-rem (not /min) so you can watch the TURN ... | action | reason | result lines.
-start "llm-driver" cmd /c "python -u driver.py %MODELARG% --show-thoughts --auto-feed --auto-feed-every 15 --save-every 40 --num-ctx 32768 --steps 20000 --delay 2.0 2> driver_err.txt | powershell -NoProfile -Command \"$input | Tee-Object -FilePath driver_log.txt\""
+rem Visible console window shows the live TURN log; --log-file gives the driver
+rem a BUILT-IN tee so it also writes driver_log.txt (robust, no shell piping,
+rem headless-friendly). Errors still captured to the same log via the tee.
+start "llm-driver" cmd /c "python -u driver.py %MODELARG% --show-thoughts --auto-feed --auto-feed-every 15 --save-every 40 --num-ctx 32768 --steps 20000 --delay 2.0 --log-file driver_log.txt"
 exit /b 0

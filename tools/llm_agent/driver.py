@@ -4099,7 +4099,42 @@ def main() -> int:
                     help="Keep the reasoning model's thinking channel ON (for "
                          "troubleshooting - captured to raw_comms.log). Off by "
                          "default for stability/speed.")
+    ap.add_argument("--log-file", default=None,
+                    help="also mirror all console output to this file (a "
+                         "built-in tee) so the turn log is visible LIVE in the "
+                         "console AND saved. Robust and headless-friendly.")
     args = ap.parse_args()
+
+    # Built-in tee: mirror stdout/stderr to --log-file while still printing to
+    # the console window, so the turn log is visible live (and works headless).
+    if args.log_file:
+        try:
+            _lf = open(args.log_file, "w", encoding="utf-8", buffering=1)
+
+            class _Tee:
+                def __init__(self, *streams):
+                    self._streams = streams
+
+                def write(self, s):
+                    for st in self._streams:
+                        try:
+                            st.write(s)
+                        except Exception:
+                            pass
+                    return len(s)
+
+                def flush(self):
+                    for st in self._streams:
+                        try:
+                            st.flush()
+                        except Exception:
+                            pass
+
+            sys.stdout = _Tee(sys.__stdout__, _lf)
+            sys.stderr = _Tee(sys.__stderr__, _lf)
+        except Exception as _e:
+            print(f"[!] could not open --log-file {args.log_file}: {_e}",
+                  file=sys.stderr)
 
     ollama = None
     if not args.dry_run:
