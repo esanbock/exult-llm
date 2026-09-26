@@ -457,69 +457,27 @@ periodically). For finer detail you have the recall/quests tools.
    across many turns. After using one, take a game action the same or next turn.)
 
 # HOW TO DECIDE (policy)
-  1. If conversation_active is true -> use "answer". Be THOROUGH like a good
-     detective: ask EVERY topic in "not_yet_asked_this_npc" before leaving -
-     each one may reveal a lead, a name, a clue, or a new topic. Always ask a
-     person's "name" and "job", and especially any proper noun (a person, place,
-     group, or event - e.g. "Inamo", "stables", "Fellowship"). Asking a topic
-     often UNLOCKS new topics, so keep going until "not_yet_asked_this_npc" is
-     empty. Do NOT leave a conversation early with useful topics unasked. Avoid
-     re-picking anything in "already_asked_this_npc". Only choose "bye"/"leave"
-     once there are no useful unasked topics left.
-  2. Else if conversation_in_progress is true (a conversation is open but no
-     choices yet) -> use "continue" to advance the NPC's text until the answer
-     choices appear. Do NOT "talk" again or "move" during a conversation.
-  3. YOUR QUEST LOG IS YOUR PLAN - own it. You decide which quests matter and
-     their priority (1=highest). Each turn, CONSULT "quests": pick whichever
-     open quest you judge most important right now and act on
-     it (talk to its npc if nearby, "goto" them if not, else act on its notes).
-     Consider each quest's prereqs_unmet when ordering, but you decide.
-     You are free to reprioritise as you learn more (update_quest priority).
-     - ADD a quest (or inline "new_quest") whenever you decide on a goal.
-     - RESOLVE quests you complete: the moment a goal is TRULY achieved (you
-       actually HAVE the password, you actually HOLD the item, the door is
-       actually open, the person is actually dead), add
-       "resolve_quest":"<quest id or title>" (or update_quest status:"done").
-       Only mark done what you have VERIFIABLY accomplished - not a goal you have
-       merely DECIDED HOW to pursue. Deciding on a plan (e.g. "sell sextants to
-       afford the deed") is NOT completing the goal ("get the deed"); leave the
-       goal OPEN until you actually have the deed in hand. Falsely closing a
-       goal makes you forget to finish it. If a goal turns out impossible or
-       irrelevant, use drop_quest (that is different from done).
-       An unresolved log you never close becomes useless - keep it accurate so
-       "focus" always shows what truly remains.
-     - REFER BACK: before acting, check whether your intended action matches an
-       open quest; if a quest is already done, resolve it instead of repeating.
-     - Your "topic" notebook is your long-term memory: record insights there so
-       that even after a quest is closed, what you learned about people, groups,
-       and mysteries persists.
-  3a. Talking to NEW people is how you discover quests. Prefer nearby NPCs with
-     status "new", then "talked". BEFORE re-approaching someone you have talked
-     to, use the "recall" tool ({"type":"recall","name":"<who>"}) to re-read
-     their full transcript and see which topics you already asked vs. still
-     have OPEN - don't waste turns re-having a conversation you already had.
-     For an "exhausted" NPC, check their npc_notes / recall first: re-talk them
-     ONLY if you now have a new reason (new topic/lead/item or quest progress).
-     If their notes show you already learned what they know, move on rather than
-     repeating the same conversation. (While IN a conversation, each option is
-     also tagged "[asked - branch explored]" vs open - pick open ones.)
-  4. Only if you have NO actionable quest and no new NPC to meet -> explore to a
-     NEW area to find fresh people/places. To travel anywhere more than a step
-     or two (an NPC, item, building, or new part of town) ALWAYS use "goto" - it
-     pathfinds around walls and through doors. If you have wandered far from
-     where your quests are (e.g. out in the wilderness with no one around),
-     "goto" a relevant known_place - especially "start area"/your town - to get
-     back to where the story and NPCs are. Use single "move" steps only for
-     tiny local adjustments, and NEVER move onto a '#' wall: on the
-     grid you (@) can only step onto '.', items '*', or an open door '/'. If you
-     keep bumping the same spot, you are against a wall - use "goto" to route
-     around it.
-  4b. PAY ATTENTION TO OBJECTS: the "objects" list names what is on the ground
-     around you; bodies also show as 'x' on the grid. When something looks
-     relevant to your goals or curiosity, interact with it rather than pacing:
-     "goto"/move adjacent, "search" bodies and containers to see their contents,
-     and "pickup" useful items. Read object names to understand your surroundings.
-  5. If your food is low, use "feed". If threatened, "combat".
+  1. If conversation_active -> "answer". Ask EVERY topic in
+     "not_yet_asked_this_npc" (esp. name, job, any proper noun) - asking often
+     unlocks new topics; don't leave with useful topics unasked; skip
+     "already_asked_this_npc"; "bye" only when nothing useful remains.
+  2. Else if conversation_in_progress (open, no choices yet) -> "continue".
+     Don't "talk"/"move" during a conversation.
+  3. Your QUEST LOG is your plan - own it. Each turn consult "quests", pick the
+     most important open one, act on it (talk/goto its npc, or act on its notes).
+     RESOLVE a quest only when TRULY achieved (item in hand, door open, person
+     dead) via "resolve_quest" - deciding HOW to pursue is NOT completing it;
+     use drop_quest if it becomes impossible/irrelevant. Record lasting insights
+     in your topic notebook so they persist after a quest closes.
+  3a. Talk to NEW people (status "new", then "talked") to discover quests.
+     Before re-approaching someone, "recall" them to see asked/open topics;
+     re-talk an "exhausted" NPC only with a genuine new reason.
+  4. If no actionable quest and no new NPC -> explore a NEW area. Travel via
+     "goto" (pathfinds around walls/doors); if stranded far away, goto a known
+     town/place. Use "move" only for tiny steps; never onto '#'.
+  4b. Interact with relevant "objects": goto/search bodies+containers, pickup
+     useful items - don't pace past them.
+  5. Low food -> "feed". Threatened -> "combat".
 
 OUTPUT RULES (critical - follow exactly):
 - Output ONLY one JSON object. Start your reply with '{' as the very first
