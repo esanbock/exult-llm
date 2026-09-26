@@ -1635,6 +1635,59 @@ namespace LLM_agent {
 				}
 			}
 			if (!best) {
+				// FALLBACK: no readable object in the world nearby - look in the
+				// avatar's OWN pack. A human can open a book/scroll/letter they
+				// are carrying and read it. Scan the backpack recursively for a
+				// name match, or (no name given) any readable-looking item.
+				Container_game_object* pk = av->get_readied(backpack)
+						? av->get_readied(backpack)->as_container() : nullptr;
+				std::vector<Container_game_object*> rst;
+				if (pk) { rst.push_back(pk); }
+				int rc = 0;
+				while (!rst.empty() && rc < 60 && !best) {
+					Container_game_object* c = rst.back();
+					rst.pop_back();
+					Object_iterator it(c->get_objects());
+					Game_object* inner;
+					while ((inner = it.get_next()) != nullptr && rc < 60) {
+						++rc;
+						std::string inm = inner->get_name();
+						if (inm.empty()) {
+							if (Container_game_object* ic = inner->as_container()) {
+								rst.push_back(ic);
+							}
+							continue;
+						}
+						std::string ilow = inm;
+						std::transform(
+								ilow.begin(), ilow.end(), ilow.begin(), ::tolower);
+						bool match = false;
+						if (!wlow.empty()) {
+							match = ilow.find(wlow) != std::string::npos;
+						} else {
+							match = ilow.find("book") != std::string::npos
+									|| ilow.find("scroll") != std::string::npos
+									|| ilow.find("document") != std::string::npos
+									|| ilow.find("parchment") != std::string::npos
+									|| ilow.find("paper") != std::string::npos
+									|| ilow.find("letter") != std::string::npos
+									|| ilow.find("note") != std::string::npos
+									|| ilow.find("journal") != std::string::npos
+									|| ilow.find("diary") != std::string::npos
+									|| ilow.find("tome") != std::string::npos
+									|| ilow.find("map") != std::string::npos;
+						}
+						if (match) {
+							best = inner;
+							break;
+						}
+						if (Container_game_object* ic = inner->as_container()) {
+							rst.push_back(ic);
+						}
+					}
+				}
+			}
+			if (!best) {
 				return "{\"ok\":false,\"error\":\"no sign/readable object nearby\"}";
 			}
 			const std::string nm = best->get_name();

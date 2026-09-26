@@ -379,8 +379,10 @@ periodically). For finer detail you have the recall/quests tools.
             to a world object first. Covers: well, winch/lever/switch (gates/
             bridges/puzzles), sextant (your coords), carriage/boat (board), bed
             (sleep), plaque/book, moongate; and carried potions/scrolls/tools.
-  read    - Read a nearby SIGN/readable object. params: omit=nearest, or
-            {"name":"<obj>"}. Returns "text" (shop/place names, directions).
+  read    - Read a nearby SIGN/readable object OR a book/scroll/document you are
+            CARRYING. params: omit=nearest sign, or {"name":"<obj>"} (matches a
+            world object or an item in your pack). Returns "text". Use this to
+            read documents/books/letters you looted.
   take    - Take an item from a nearby body/container (also grabs a LOOSE nearby
             item if not in a container). params: {"name":"<item>"} or omit=first.
   pickup  - Take a LOOSE nearby item (ground/table/shelf). params:
@@ -3943,6 +3945,29 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             print(f"[{step:03d}] auto-resolved quest (examined {tgt}): {_t}")
 
     p = state.get("player") or {}
+    # Clean, aligned TURN LOG line for the driver console window (mirrors the
+    # GUI table columns: Turn | Action | Reasoning | Result). The verbose raw
+    # line below still goes to the log file for debugging.
+    try:
+        _act = _action_phrase(action)
+    except Exception:
+        _act = str(action)
+    _rsn = (reason or "").replace("\n", " ").strip()
+    if len(_rsn) > 60:
+        _rsn = _rsn[:57] + "..."
+    _res = result
+    if isinstance(result, dict):
+        _res = (result.get("did") or result.get("error")
+                or result.get("ok") or "")
+        for _k in ("target", "looted", "item", "did"):
+            if result.get(_k) and _k != "did":
+                _res = f"{_res}: {result.get(_k)}"
+                break
+    _res = str(_res).replace("\n", " ").strip()
+    if len(_res) > 50:
+        _res = _res[:47] + "..."
+    print(f"TURN {step:>4} | {str(_act)[:34]:<34} | {_rsn:<60} | {_res}",
+          flush=True)
     print(f"[{step:03d}] pos=({p.get('tx')},{p.get('ty')}) "
           f"conv={state.get('conversation_active')} "
           f"reason={reason!r} action={action} -> {result}"
