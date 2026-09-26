@@ -77,7 +77,7 @@ while kill -0 "$EXULT" 2>/dev/null; do
     -c:v libx264 -preset ultrafast -threads 4 -pix_fmt yuv420p -g $((FPS*2)) -r "$FPS" \
     -b:v 2500k -maxrate 2500k -bufsize 5000k \
     -c:a aac -b:a 128k -ar 48000 -ac 2 \
-    -f hls -hls_time 2 -hls_list_size 6 -hls_flags delete_segments+omit_endlist \
+    -f hls -hls_time 2 -hls_list_size 15 -hls_flags delete_segments+omit_endlist \
     -hls_segment_filename "$HLS_DIR/seg%05d.ts" \
     "$HLS_DIR/stream.m3u8" &
   MUX=$!
