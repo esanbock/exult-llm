@@ -3963,17 +3963,17 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 _res = f"{_res}: {result.get(_k)}"
                 break
     _res = str(_res).replace("\n", " ").strip()
-    # Column budget so the whole line stays within ~200 chars:
-    # "TURN " + 5 (turn) + " | " + 30 (action) + " | " + 96 (reason)
-    # + " | " + 40 (result) = ~185.
-    _A, _R, _S = 30, 96, 40
+    # Column budget so the whole line stays within ~100 chars:
+    # "TURN " + 5 (turn) + " | " + 18 (action) + " | " + 45 (reason)
+    # + " | " + 18 (result) = ~98.
+    _A, _R, _S = 18, 45, 18
 
     def _fit(s, n):
         s = s if len(s) <= n else (s[: n - 1] + "\u2026")
         return f"{s:<{n}}"
     line = (f"TURN {step:>5} | {_fit(_act, _A)} | {_fit(_rsn, _R)} | "
             f"{_res[:_S]}")
-    print(line[:200], flush=True)
+    print(line[:100], flush=True)
     print(f"[{step:03d}] pos=({p.get('tx')},{p.get('ty')}) "
           f"conv={state.get('conversation_active')} "
           f"reason={reason!r} action={action} -> {result}"
