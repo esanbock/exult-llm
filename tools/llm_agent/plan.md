@@ -440,3 +440,51 @@ loop iterates <10x/sec and segments fall behind wall-clock.
   fixed the agent-can-freeze-the-world case (40% -> 70% when agent active) and
   the periodic-save hitch. They did NOT cause the base ~70% (pre-existing
   readback cost). VERIFY the branch for regressions before merging to master.
+
+## FINAL SOLUTION — smooth A/V (2026-09-26, supersedes the readback theory above)
+
+The earlier "readback bottleneck" diagnosis was WRONG. Measured facts that
+disproved it: capture_rgb = ~1ms/frame; main loop = ~73 iters/sec. The real
+smoothness came from these fixes, each found by MEASURING (ffmpeg speed=0.79x
+was the key clue), not theorizing:
+
+1. AUDIO — in-engine PCM tap, not the snd-aloop loopback. AudioMixer::MixAudio
+   writes mixed PCM to a FIFO (llm/audiostream). Perfectly paced (same callback
+   that makes the samples). snd-aloop is NOT used at all; SDL_AUDIODRIVER=dummy
+   still fires the mixer callback. This killed the "10ms of every note"
+   fragmentation (loopback capture starvation).
+
+2. FRAME-EMIT GATE QUANTIZATION (the big one). Old Stream_frame gate: emit when
+   (now - last >= 1000/fps) then reset last=now. With a ~13ms loop it fired at
+   the first step PAST the deadline (~104-117ms) -> ~9fps, and the client buffer
+   slowly drained -> periodic cutouts. FIX: accumulator scheduling - advance a
+   scheduled next-frame time g_next_ms by exactly one interval each emit (resync
+   only if >4 intervals behind). Average rate is now exactly fps. 0.79x -> 0.99x.
+
+3. ENCODE LOAD. capture_rgb now grabs the small pre-scale draw_surface
+   (~320x240 INDEX8, guard-band cropped, palette applied via SDL blit to RGB24)
+   instead of SDL_RenderReadPixels on the full 1024x768. ffmpeg reads 320x240
+   rgb24 and upscales to 960x720 (scale=...:flags=neighbor) + x264 -threads 4.
+
+4. CONVERSATION STALL. The blocking Get_click dialogue loop (exult.cc) serviced
+   Agent_server_poll but did NOT emit frames, so video/audio froze for the whole
+   conversation. Added LLM_agent::Stream_frame() there too.
+
+5. DEEP CLIENT BUFFER. HLS hls_list_size 6 -> 15 (30s window). Production
+   averages 100% of real-time, but transient hitches (conversation start, a
+   heavy goto) briefly stall it; a 30s buffer lets the client ride through them
+   with no visible cutout (latency irrelevant for watching an LLM play).
+
+6. THREADING so the agent can't bottleneck the stream: agent network I/O on its
+   own thread (agentserver.cc), A* node-bounded for agent gotos (shared
+   g_pathfind_budget=30000 across the whole goto incl ~54 waypoint probes;
+   get_max_nodes default 0 = unchanged for NPCs), saves at most every 30 min
+   (--save-interval; a save is a synchronous disk write that hitched the loop).
+
+Transport: two raw FIFOs (video rawvideo, audio s16le) -> one ffmpeg -> H.264/
+AAC HLS -> python -m http.server 8090. VLC: http://<host>:8090/stream.m3u8.
+Launch: tools/llm_agent/go_live.sh (exult --llmstream/--llmaudio + mux + httpd),
+then driver.py --music (auto-starts looping track 9 on connect).
+
+Meta-lesson: measure, don't theorize. Two wrong diagnoses (snd-aloop timers,
+then readback) were each overturned by a direct measurement.
