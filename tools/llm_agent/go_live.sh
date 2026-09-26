@@ -17,6 +17,12 @@ FONT=/usr/share/fonts/liberation-fonts/LiberationSans-Regular.ttf
 PORT=8090
 FPS=10
 SIZE=320x240
+# Optional Twitch output. Set TWITCH_STREAM_KEY (env or tools/llm_agent/twitch.env,
+# gitignored). Leave unset for local-HLS-only (default). Ingest is Twitch's
+# recommended RTMPS endpoint; pick a nearer server if you like.
+[ -f "$(dirname "$0")/twitch.env" ] && . "$(dirname "$0")/twitch.env"
+TWITCH_INGEST="${TWITCH_INGEST:-rtmps://live.twitch.tv/app}"
+TWITCH_STREAM_KEY="${TWITCH_STREAM_KEY:-}"
 
 echo "[go_live] repo=$REPO"
 rm -f "$FIFO" "$AFIFO"
@@ -72,6 +78,19 @@ echo "[go_live] VLC: http://<this-host>:$PORT/stream.m3u8   (Ctrl-C to stop)"
 cleanup() { echo "[go_live] stopping"; kill "${MUX:-0}" "$HTTPD" "$EXULT" 2>/dev/null; exit 0; }
 trap cleanup INT TERM
 
+# Build the output: always local HLS; also Twitch (FLV/RTMPS) if a key is set.
+# Using the 'tee' muxer means we ENCODE ONCE and fan the result to both, so the
+# Twitch push adds negligible CPU. Twitch wants H.264 + AAC + ~2s keyframes
+# (we have -g = 2*fps) in an FLV container over RTMPS.
+HLS_OUT="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist:hls_segment_filename=$HLS_DIR/seg%05d.ts]$HLS_DIR/stream.m3u8"
+if [ -n "$TWITCH_STREAM_KEY" ]; then
+  echo "[go_live] Twitch: LIVE -> $TWITCH_INGEST/<key>"
+  TEE_OUT="${HLS_OUT}|[f=flv:onfail=ignore]${TWITCH_INGEST}/${TWITCH_STREAM_KEY}"
+else
+  echo "[go_live] Twitch: OFF (set TWITCH_STREAM_KEY in twitch.env to go live)"
+  TEE_OUT="${HLS_OUT}"
+fi
+
 while kill -0 "$EXULT" 2>/dev/null; do
   ffmpeg -hide_banner -loglevel warning \
     -thread_queue_size 1024 \
@@ -82,9 +101,7 @@ while kill -0 "$EXULT" 2>/dev/null; do
     -c:v libx264 -preset ultrafast -threads 4 -pix_fmt yuv420p -g $((FPS*2)) -r "$FPS" \
     -b:v 2500k -maxrate 2500k -bufsize 5000k \
     -c:a aac -b:a 128k -ar 48000 -ac 2 \
-    -f hls -hls_time 2 -hls_list_size 15 -hls_flags delete_segments+omit_endlist \
-    -hls_segment_filename "$HLS_DIR/seg%05d.ts" \
-    "$HLS_DIR/stream.m3u8" &
+    -f tee -map 0:v -map 1:a "$TEE_OUT" &
   MUX=$!
   wait "$MUX"
   echo "[go_live] mux exited; restarting in 1s..."
