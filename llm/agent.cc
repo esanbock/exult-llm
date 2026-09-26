@@ -358,26 +358,21 @@ namespace {
 				}
 				const Shape_info& info = obj->get_info();
 				const Tile_coord  ot   = obj->get_tile();
-				// Z-LEVEL FILTER: the grid is a 2D map of the avatar's CURRENT
-				// floor. Objects well ABOVE the avatar (a roof, an upper storey,
-				// a wall-walkway) must NOT bleed onto this floor's map or it
-				// lies about what's here. Keep anything at or near the avatar's
-				// standing height (same floor, incl. low furniture) and drop
-				// things more than a few units above. Stairs/ladders/gateways
-				// are the EXCEPTION - they are the transitions BETWEEN levels
-				// and stay visible so the agent can change floors.
-				{
-					std::string _zlow = obj->get_name();
-					std::transform(
-							_zlow.begin(), _zlow.end(), _zlow.begin(), ::tolower);
-					const bool _is_transition =
-							_zlow.find("stair") != std::string::npos
-							|| _zlow.find("ladder") != std::string::npos
-							|| _zlow.find("trapdoor") != std::string::npos
-							|| _zlow.find("gateway") != std::string::npos;
-					// U7 floors are ~5 tz apart, so >3 above = a different level.
-					if (!_is_transition && ot.tz > at.tz + 3) {
-						continue;
+				// Z-LEVEL RULE (2D map of the avatar's CURRENT floor):
+				//   * STRUCTURE (building-class: walls/roofs/floors/windows) is
+				//     shown ONLY if it is on the avatar's z - i.e. the avatar's
+				//     height falls within the structure's vertical span. A roof
+				//     or upper-storey wall (base lift >= 5, above us) is dropped
+				//     so it can't bleed onto this floor's outline.
+				//   * NON-STRUCTURE OBJECTS (items, containers, bodies, signs,
+				//     furniture) are shown regardless of z if nearby - so you
+				//     can still see a chest on the floor above or a body below.
+				//     Stairs/ladders (transitions) are objects and always show.
+				if (info.get_shape_class() == Shape_info::building) {
+					const int zbot = ot.tz;
+					const int ztop = ot.tz + info.get_3d_height() - 1;
+					if (at.tz < zbot || at.tz > ztop) {
+						continue;    // structure on a different level
 					}
 				}
 				if (info.is_door()) {
@@ -778,21 +773,17 @@ namespace LLM_agent {
 				}
 				const Shape_info& info = obj->get_info();
 				const Tile_coord ot = obj->get_tile();
-				// Z-LEVEL FILTER (mirror the grid): don't list objects on a
-				// higher floor/roof/walkway - they aren't on the avatar's 2D
-				// map. Keep transitions (stairs/ladders) so the agent can find
-				// the way up/down.
-				{
-					std::string _zl = obj->get_name();
-					std::transform(_zl.begin(), _zl.end(), _zl.begin(),
-								   ::tolower);
-					const bool _trans =
-							_zl.find("stair") != std::string::npos
-							|| _zl.find("ladder") != std::string::npos
-							|| _zl.find("trapdoor") != std::string::npos
-							|| _zl.find("gateway") != std::string::npos;
-					if (!_trans && ot.tz > at.tz + 3) {
-						continue;
+				// Z-LEVEL RULE (mirror the grid): only STRUCTURE (building-class
+				// walls/roofs/floors) is restricted to the avatar's level so it
+				// can't clutter navigation with other floors. Real OBJECTS
+				// (items/containers/bodies) - and people, handled elsewhere -
+				// stay visible across levels so you can still see a chest
+				// upstairs or a body below. Goal: simpler navigation.
+				if (info.get_shape_class() == Shape_info::building) {
+					const int zbot = ot.tz;
+					const int ztop = ot.tz + info.get_3d_height() - 1;
+					if (at.tz < zbot || at.tz > ztop) {
+						continue;    // structure on a different level
 					}
 				}
 				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
@@ -977,8 +968,9 @@ namespace LLM_agent {
 					"==fence/barrier +=closed_door /=open_door W=building-wall/roof "
 					".=walkable #=blocked; "
 					"north=up east=right. Cell [row][col] is tile "
-					"(grid_origin_tx+col, grid_origin_ty+row). Shows your CURRENT "
-					"floor/level only; use stairs/ladders (E) to change levels.");
+					"(grid_origin_tx+col, grid_origin_ty+row). Walls/roofs (W) "
+					"show only for YOUR floor; items and people show on any level "
+					"(use stairs/ladders E to reach a different level).");
 			os << ',' << json_str("grid", grid);
 		}
 

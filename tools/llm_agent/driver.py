@@ -303,7 +303,9 @@ periodically). For finer detail you have the recall/quests tools.
                                 E exit/route (gate/stairs/ladder)  ~ water
                                 = barrier  + closed door (goto opens)  / open door
                                 W building wall/roof (a BUILDING outline - map the
-                                town by these; enter via its doors)
+                                town by these; enter via its doors). Walls/roofs
+                                show only for YOUR level; items and people show
+                                on any level (take stairs/ladders E to reach them)
                                 . walkable  # blocked. north=up, east=right.
                                 Walk only on '.', '*', or '/'. STAIRS ARE
                                 DIRECTIONAL - climb from the BOTTOM step (if a
