@@ -4108,19 +4108,43 @@ def _write_overlay(path: str, step: int, action: dict, reason: str) -> None:
         rsn = (reason or "").strip()
         if rsn.startswith("(guard)"):
             rsn = rsn[len("(guard)"):].strip()
-        act_str = clean(act_str)[:70]
-        rsn = clean(rsn)[:150]
+        # Allow enough text for 3 fuller lines (was 150 -> chopped mid-sentence,
+        # e.g. "...I have n"). The pixel-wrap below decides the real line breaks.
+        act_str = clean(act_str)[:90]
+        rsn = clean(rsn)[:320]
 
-        # Line 1: the natural action. Lines 2-3: the reasoning, wrapped.
-        def wrap(s: str, width: int, maxlines: int) -> list:
+        # The overlay font (LiberationSans) is PROPORTIONAL, so wrapping by a
+        # fixed character count either overflows (many caps) or wastes width
+        # (mostly lowercase). Wrap by MEASURED pixel width instead, using the
+        # real font metrics, so each line fills the frame. Falls back to a
+        # conservative char estimate if the font can't be measured.
+        # Frame is 960px wide; box starts at x=15; leave ~15px right margin.
+        _PX_BUDGET = 930
+        _FONT_PATH = os.environ.get(
+            "OVERLAY_FONT",
+            "/usr/share/fonts/liberation-fonts/LiberationSans-Regular.ttf")
+        _FONT_SIZE = int(os.environ.get("OVERLAY_FONTSIZE", "20"))
+        _measure = None
+        try:
+            from PIL import ImageFont  # metrics only; no image is rendered
+            _ttf = ImageFont.truetype(_FONT_PATH, _FONT_SIZE)
+            _measure = lambda s: _ttf.getlength(s)
+        except Exception:
+            # ~0.55*fontsize avg advance for Liberation Sans lowercase text.
+            _avg = max(1.0, 0.55 * _FONT_SIZE)
+            _measure = lambda s: len(s) * _avg
+
+        def wrap_px(s: str, budget: int, maxlines: int) -> list:
             out, cur = [], ""
             for w in s.split(" "):
-                if len(cur) + len(w) + 1 > width:
-                    out.append(cur); cur = w
+                trial = (cur + " " + w).strip()
+                if cur and _measure(trial) > budget:
+                    out.append(cur)
+                    cur = w
                     if len(out) == maxlines:
                         return out
                 else:
-                    cur = (cur + " " + w).strip()
+                    cur = trial
             if cur and len(out) < maxlines:
                 out.append(cur)
             return out
@@ -4128,7 +4152,8 @@ def _write_overlay(path: str, step: int, action: dict, reason: str) -> None:
         parts = []
         if act_str:
             parts.append(f"> {act_str}")
-        parts.extend(wrap(rsn, 78, 2))
+        # 3 lines of reasoning, each filling the full frame width.
+        parts.extend(wrap_px(rsn, _PX_BUDGET, 3))
         text = "\n".join(parts) if parts else " "
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
