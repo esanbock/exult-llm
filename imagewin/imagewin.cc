@@ -28,6 +28,7 @@ Boston, MA  02111-1307, USA.
 #	include <config.h>
 #endif
 
+#include "ignore_unused_variable_warning.h"
 #include "imagewin.h"
 
 #include "BilinearScaler.h"
@@ -1275,6 +1276,36 @@ void Image_window::set_title(const char* title) {
 }
 
 bool Image_window::capture_rgb(std::vector<unsigned char>& out, int& w, int& h, uint32_t& pixfmt) {
+	// Capture the small PRE-SCALE game surface (draw_surface, ~320x200 indexed)
+	// rather than doing SDL_RenderReadPixels on the full scaled output. This is
+	// far less work for the downstream encoder (~12x fewer pixels), which is the
+	// throughput bottleneck. draw_surface is INDEX8 with a guard-band border;
+	// crop the border and let SDL apply the palette to produce packed RGB24.
+	if (draw_surface) {
+		const int gb = guard_band;
+		const int gw = ibuf ? ibuf->width : (draw_surface->w - 2 * gb);
+		const int gh = ibuf ? ibuf->height : (draw_surface->h - 2 * gb);
+		SDL_Rect  crop{gb, gb, gw, gh};
+		// Convert the cropped indexed region to RGB24 (palette applied by SDL).
+		SDL_Surface* rgb = SDL_CreateSurface(gw, gh, SDL_PIXELFORMAT_RGB24);
+		if (rgb) {
+			if (SDL_BlitSurface(draw_surface, &crop, rgb, nullptr)) {
+				w      = gw;
+				h      = gh;
+				pixfmt = static_cast<uint32_t>(SDL_PIXELFORMAT_RGB24);
+				const size_t row = static_cast<size_t>(gw) * 3;
+				out.resize(row * static_cast<size_t>(gh));
+				const auto* src = static_cast<const unsigned char*>(rgb->pixels);
+				for (int y = 0; y < gh; ++y) {
+					std::memcpy(out.data() + y * row, src + y * rgb->pitch, row);
+				}
+				SDL_DestroySurface(rgb);
+				return true;
+			}
+			SDL_DestroySurface(rgb);
+		}
+		// Fall through to the renderer read-back on any failure.
+	}
 	if (!screen_renderer) {
 		return false;
 	}

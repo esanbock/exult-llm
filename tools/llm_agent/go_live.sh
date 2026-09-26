@@ -14,7 +14,7 @@ FIFO=/tmp/exult_video.raw
 AFIFO=/tmp/exult_audio.pcm
 PORT=8090
 FPS=10
-SIZE=1024x768
+SIZE=320x240
 
 echo "[go_live] repo=$REPO"
 rm -f "$FIFO" "$AFIFO"
@@ -70,11 +70,11 @@ trap cleanup INT TERM
 while kill -0 "$EXULT" 2>/dev/null; do
   ffmpeg -hide_banner -loglevel warning \
     -thread_queue_size 1024 \
-    -f rawvideo -pixel_format bgr0 -video_size "$SIZE" -framerate "$FPS" -i "$FIFO" \
+    -f rawvideo -pixel_format rgb24 -video_size "$SIZE" -framerate "$FPS" -i "$FIFO" \
     -thread_queue_size 4096 \
     -f s16le -ar 48000 -ac 2 -i "$AFIFO" \
-    -vf "format=yuv420p" \
-    -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g $((FPS*2)) -r "$FPS" \
+    -vf "scale=960:720:flags=neighbor,format=yuv420p" \
+    -c:v libx264 -preset ultrafast -threads 4 -pix_fmt yuv420p -g $((FPS*2)) -r "$FPS" \
     -b:v 2500k -maxrate 2500k -bufsize 5000k \
     -c:a aac -b:a 128k -ar 48000 -ac 2 \
     -f hls -hls_time 2 -hls_list_size 6 -hls_flags delete_segments+omit_endlist \

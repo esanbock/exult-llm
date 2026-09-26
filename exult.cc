@@ -2411,6 +2411,10 @@ static bool Get_click(
 		// conversation's answer-selection loop) so the agent can push its
 		// answer/key events, which this loop then consumes.
 		LLM_agent::Agent_server_poll();
+		// Keep the A/V stream flowing during conversations - this loop blocks the
+		// main thread for the whole conversation, so without this the video/audio
+		// would freeze until the dialogue ends.
+		LLM_agent::Stream_frame();
 #endif
 
 		const uint32 ticks = SDL_GetTicks();

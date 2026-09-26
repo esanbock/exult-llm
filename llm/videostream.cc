@@ -51,7 +51,7 @@ namespace {
 	int    g_fd        = -1;       // FIFO write fd (non-blocking).
 	bool   g_enabled   = false;
 	int    g_fps       = 15;
-	uint32 g_last_ms   = 0;
+	uint32 g_next_ms   = 0;
 	int    g_w         = 0;
 	int    g_h         = 0;
 	string g_path;
@@ -92,11 +92,17 @@ namespace LLM_agent {
 		if (!g_enabled) {
 			return;
 		}
-		// Rate-limit.
+		// Rate-limit to exactly g_fps on AVERAGE. Using a scheduled next-frame
+		// time advanced by the fixed interval (rather than resetting to 'now')
+		// avoids the quantization drift where a coarse loop step pushes every
+		// frame past the deadline and the effective rate falls below g_fps.
 		const uint32 now = SDL_GetTicks();
 		const uint32 interval = static_cast<uint32>(1000 / g_fps);
-		if (g_last_ms != 0 && now - g_last_ms < interval) {
-			return;
+		if (g_next_ms == 0) {
+			g_next_ms = now;    // first frame: emit immediately, schedule next
+		}
+		if (static_cast<sint32>(now - g_next_ms) < 0) {
+			return;    // not due yet
 		}
 
 		// Lazily (re)open the FIFO until a reader attaches.
@@ -124,7 +130,13 @@ namespace LLM_agent {
 		}
 		g_w = w;
 		g_h = h;
-		g_last_ms = now;
+		// Advance the schedule by exactly one interval so the average rate is
+		// g_fps. If we've fallen more than a few frames behind (e.g. a stall),
+		// resync to 'now' to avoid a catch-up burst.
+		g_next_ms += interval;
+		if (static_cast<sint32>(now - g_next_ms) > static_cast<sint32>(interval * 4)) {
+			g_next_ms = now + interval;
+		}
 		static bool logged_dims = false;
 		if (!logged_dims) {
 			logged_dims = true;
