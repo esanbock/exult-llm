@@ -4258,7 +4258,14 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=50)
     ap.add_argument("--delay", type=float, default=1.5, help="seconds between turns")
     ap.add_argument("--dry-run", action="store_true", help="skip Ollama; scripted moves")
-    ap.add_argument("--show-thoughts", action="store_true", help="open the LLM thinking window")
+    ap.add_argument("--show-thoughts", action="store_true", help="open the local LLM thinking window (tkinter)")
+    ap.add_argument("--inspector", action="store_true",
+                    help="serve the inspector over HTTP so a browser on another "
+                         "machine (e.g. a Windows box) can watch all agent data")
+    ap.add_argument("--inspector-port", type=int, default=8092,
+                    help="port for the remote inspector (default 8092)")
+    ap.add_argument("--inspector-host", default="0.0.0.0",
+                    help="bind address for the remote inspector (default all interfaces)")
     ap.add_argument("--screenshot", action="store_true",
                     help="write a PNG each turn (for stream.py --from-file)")
     ap.add_argument("--music", action="store_true", default=True,
@@ -4362,28 +4369,37 @@ def main() -> int:
         print(f"[!] {e}", file=sys.stderr)
         return 3
 
-    window = ThoughtsWindow()
-    if args.show_thoughts:
+    if args.inspector:
+        # Remote inspector: same interface as the tkinter window, but served
+        # over HTTP so a browser on another machine (e.g. a Windows box) can
+        # watch. Runs the server on its own thread; the game loop runs normally.
+        from inspector_server import InspectorServer
+        window = InspectorServer(host=args.inspector_host, port=args.inspector_port)
         window.start()
+        run_loop(args, window, ollama)
+    else:
+        window = ThoughtsWindow()
+        if args.show_thoughts:
+            window.start()
 
-    try:
-        if window.available and args.show_thoughts:
-            # Tkinter must own the main thread; run the game loop in a worker.
-            worker = threading.Thread(target=run_loop, args=(args, window, ollama), daemon=True)
-            worker.start()
-            window.mainloop()
-        else:
-            run_loop(args, window, ollama)
-    finally:
-        # Only shut down Exult if WE launched it. run_loop already issued a
-        # final in-game save before disconnecting; give it a moment to flush.
-        if exult_proc is not None:
-            print("[+] Shutting down the Exult instance we launched (progress saved)...")
-            time.sleep(2.0)
-            try:
-                exult_proc.terminate()
-            except Exception:
-                pass
+        try:
+            if window.available and args.show_thoughts:
+                # Tkinter must own the main thread; run the game loop in a worker.
+                worker = threading.Thread(target=run_loop, args=(args, window, ollama), daemon=True)
+                worker.start()
+                window.mainloop()
+            else:
+                run_loop(args, window, ollama)
+        finally:
+            # Only shut down Exult if WE launched it. run_loop already issued a
+            # final in-game save before disconnecting; give it a moment to flush.
+            if exult_proc is not None:
+                print("[+] Shutting down the Exult instance we launched (progress saved)...")
+                time.sleep(2.0)
+                try:
+                    exult_proc.terminate()
+                except Exception:
+                    pass
 
     return 0
 
