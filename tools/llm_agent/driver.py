@@ -4082,17 +4082,23 @@ def run_loop(args, window: ThoughtsWindow, ollama, exult_proc=None) -> None:
                 print(f"[+] Music: {r}")
             except Exception as e:
                 print(f"[!] Music start failed: {e}")
+        _last_game_save = time.time()    # wall-clock gate for periodic saves
         for step in range(args.steps):
             try:
                 _do_turn(args, window, ollama, exult, step, recent_positions, kb, session)
                 if args.memory_file and step % 5 == 0:
                     kb.save(args.memory_file)
                 # Periodically save the GAME so progress survives a crash/close.
-                if step > 0 and step % args.save_every == 0:
+                # Wall-clock gated (default 30 min) - NOT per-turn - because an
+                # in-game save is a synchronous full-savegame disk write on the
+                # engine's main thread and hitches video/gameplay; doing it often
+                # is both costly and pointless.
+                if time.time() - _last_game_save >= args.save_interval:
                     try:
                         r = exult.act({"type": "save"})
                         saved_this_run = True
-                        print(f"[{step:03d}] game saved -> {r}")
+                        _last_game_save = time.time()
+                        print(f"[{step:03d}] game saved (periodic) -> {r}")
                     except Exception as e:
                         print(f"[{step:03d}] game save failed: {e}")
             except (ConnectionError, OSError) as e:
@@ -4179,6 +4185,10 @@ def main() -> int:
     ap.add_argument("--memory-file", default="agent_memory.json",
                     help="persist the agent's journal/known-NPCs here across "
                          "driver restarts (set to '' to disable)")
+    ap.add_argument("--save-interval", type=float, default=1800.0,
+                    help="minimum seconds between in-game saves (default 1800 "
+                         "= 30 min); an in-game save is a synchronous disk write "
+                         "that hitches the stream, so keep it infrequent")
     ap.add_argument("--save-every", type=int, default=40,
                     help="save the in-game progress every N turns")
     ap.add_argument("--num-ctx", type=int, default=8192,
