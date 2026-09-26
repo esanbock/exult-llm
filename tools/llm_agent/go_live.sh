@@ -20,7 +20,7 @@ SIZE=320x240
 # Optional Twitch output. Set TWITCH_STREAM_KEY (env or tools/llm_agent/twitch.env,
 # gitignored). Leave unset for local-HLS-only (default). Ingest is Twitch's
 # recommended RTMPS endpoint; pick a nearer server if you like.
-[ -f "$(dirname "$0")/twitch.env" ] && . "$(dirname "$0")/twitch.env"
+[ -f tools/llm_agent/twitch.env ] && . tools/llm_agent/twitch.env
 TWITCH_INGEST="${TWITCH_INGEST:-rtmps://live.twitch.tv/app}"
 TWITCH_STREAM_KEY="${TWITCH_STREAM_KEY:-}"
 
@@ -56,7 +56,7 @@ echo "[go_live] exult up (video+audio FIFOs ready)."
 # Start looping music so the stream always has audio (fresh --newgame doesn't
 # auto-start the map theme).
 for i in 1 2 3 4 5; do
-  if python3 "$(dirname "$0")/play.py" act '{"type":"play_music","track":9,"repeat":1}' 2>/dev/null | grep -q '"ok"'; then
+  if python3 tools/llm_agent/play.py act '{"type":"play_music","track":9,"repeat":1}' 2>/dev/null | grep -q '"ok"'; then
     echo "[go_live] music started (looping track 9)"; break
   fi
   sleep 1
