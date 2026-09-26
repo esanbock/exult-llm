@@ -13,6 +13,7 @@ REPO="$(pwd)"
 FIFO=/tmp/exult_video.raw
 AFIFO=/tmp/exult_audio.pcm
 OVERLAY=/tmp/exult_overlay.txt
+ANSWER=/tmp/exult_answer.txt
 FONT=/usr/share/fonts/liberation-fonts/LiberationSans-Regular.ttf
 PORT=8090
 FPS=10
@@ -29,6 +30,7 @@ rm -f "$FIFO" "$AFIFO"
 # Seed the overlay text file so ffmpeg's drawtext has something to read at
 # startup (drawtext errors if textfile is missing); the driver rewrites it live.
 printf 'Exult LLM agent\nwaiting for the agent...' > "$OVERLAY"
+: > "$ANSWER"   # empty; the driver fills it when a viewer !asks something
 
 # 1) Exult (writer): video frames -> $FIFO, mixed PCM -> $AFIFO. SDL still opens
 # ALSA (so the audio callback that produces the PCM keeps firing), but we no
@@ -75,7 +77,21 @@ HTTPD=$!
 
 echo "[go_live] HLS -> http://0.0.0.0:$PORT/stream.m3u8"
 echo "[go_live] VLC: http://<this-host>:$PORT/stream.m3u8   (Ctrl-C to stop)"
-cleanup() { echo "[go_live] stopping"; kill "${MUX:-0}" "$HTTPD" "$EXULT" 2>/dev/null; exit 0; }
+
+# Twitch chat integration: if chat creds are present, run the bridge so viewers
+# can '!ask <question>' and the agent answers on chat + on the stream's top
+# banner (we have no OBS). Bridge reads ask_queue.txt / writes agent_answer.txt;
+# driver.py consumes/answers. Values come from twitch.env (already sourced).
+BRIDGE=""
+if [ -n "${TWITCH_OAUTH:-}" ] && [ -n "${TWITCH_NICK:-}" ] && [ -n "${TWITCH_CHANNEL:-}" ]; then
+  TWITCH_OAUTH="$TWITCH_OAUTH" TWITCH_NICK="$TWITCH_NICK" TWITCH_CHANNEL="$TWITCH_CHANNEL" \
+    python3 tools/llm_agent/twitch_bridge.py >/tmp/twitch_bridge.log 2>&1 &
+  BRIDGE=$!
+  echo "[go_live] Twitch chat: bridge running (viewers can !ask); joined #$TWITCH_CHANNEL"
+else
+  echo "[go_live] Twitch chat: OFF (set TWITCH_OAUTH/NICK/CHANNEL in twitch.env)"
+fi
+cleanup() { echo "[go_live] stopping"; kill "${MUX:-0}" "$HTTPD" "${BRIDGE:-0}" "$EXULT" 2>/dev/null; exit 0; }
 trap cleanup INT TERM
 
 # Build the output: always local HLS; also Twitch (FLV/RTMPS) if a key is set.
@@ -97,7 +113,7 @@ while kill -0 "$EXULT" 2>/dev/null; do
     -f rawvideo -pixel_format rgb24 -video_size "$SIZE" -framerate "$FPS" -i "$FIFO" \
     -thread_queue_size 4096 \
     -f s16le -ar 48000 -ac 2 -i "$AFIFO" \
-    -vf "scale=960:600:flags=neighbor,pad=960:720:0:0:color=black,drawtext=fontfile=$FONT:textfile=$OVERLAY:reload=1:fontcolor=white:fontsize=20:line_spacing=6:x=15:y=612:box=1:boxcolor=black@0.6:boxborderw=8,format=yuv420p" \
+    -vf "scale=960:600:flags=neighbor,pad=960:720:0:0:color=black,drawtext=fontfile=$FONT:textfile=$OVERLAY:reload=1:fontcolor=white:fontsize=20:line_spacing=6:x=15:y=612:box=1:boxcolor=black@0.6:boxborderw=8,drawtext=fontfile=$FONT:textfile=$ANSWER:reload=1:fontcolor=yellow:fontsize=19:line_spacing=5:x=15:y=12:box=1:boxcolor=purple@0.55:boxborderw=8,format=yuv420p" \
     -c:v libx264 -preset ultrafast -threads 4 -pix_fmt yuv420p -g $((FPS*2)) -r "$FPS" \
     -b:v 2500k -maxrate 2500k -bufsize 5000k \
     -c:a aac -b:a 128k -ar 48000 -ac 2 \

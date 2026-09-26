@@ -1941,6 +1941,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                             _af.write(f"Q: {_ask}\nA: {_shown}")
                     except OSError:
                         pass
+                    # Also surface the Q&A ON THE VIDEO STREAM (we have no OBS):
+                    # write a timestamped overlay-answer file the ffmpeg pipeline
+                    # renders in a top banner for a while.
+                    if getattr(args, "answer_overlay_file", None):
+                        _write_answer_overlay(args.answer_overlay_file, _ask, _atext or _shown)
             except Exception as _e:
                 _fail = f"(interview failed: {_e})"
                 if _ask_from == "operator" and window.available:
@@ -4047,6 +4052,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # Shows what the LLM is doing + why, so viewers see the reasoning.
     if getattr(args, "overlay_file", None):
         _write_overlay(args.overlay_file, step, action, reason)
+    if getattr(args, "answer_overlay_file", None):
+        _expire_answer_overlay(args.answer_overlay_file)
     time.sleep(args.delay)
 
 
@@ -4134,6 +4141,57 @@ def _write_overlay(path: str, step: int, action: dict, reason: str) -> None:
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(text)
         os.replace(tmp, path)    # atomic so drawtext never reads a half file
+    except Exception:
+        pass
+
+
+def _write_answer_overlay(path: str, question: str, answer: str) -> None:
+    """Write a viewer Q&A to the top-banner overlay file (shown on the stream
+    since we have no OBS). First line is an expiry epoch the main loop uses to
+    clear it after a while; ffmpeg's drawtext skips the first line via its own
+    handling? No - so we keep the visible text only and let the driver clear the
+    file after a timeout. Format: 'CHAT  <viewer Q>' / '<agent A>' wrapped."""
+    try:
+        import re as _re, time as _t
+        def clean(s):
+            s = _re.sub(r"[\r\n]+", " ", str(s))
+            s = _re.sub(r"[:%\\']", " ", s)
+            return _re.sub(r"\s+", " ", s).strip()
+        q = clean(question)[:90]
+        a = clean(answer)[:180]
+        def wrap(s, width, maxlines):
+            out, cur = [], ""
+            for w in s.split(" "):
+                if len(cur) + len(w) + 1 > width:
+                    out.append(cur); cur = w
+                    if len(out) == maxlines: return out
+                else:
+                    cur = (cur + " " + w).strip()
+            if cur and len(out) < maxlines: out.append(cur)
+            return out
+        lines = [f"CHAT  {q}"] + wrap(a, 80, 3)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        os.replace(tmp, path)
+        # Record when to clear it (main loop checks and blanks the file).
+        with open(path + ".expire", "w") as f:
+            f.write(str(_t.time() + 25))    # show for ~25s
+    except Exception:
+        pass
+
+
+def _expire_answer_overlay(path: str) -> None:
+    """Blank the answer overlay once its expiry passes (called each turn)."""
+    try:
+        import time as _t
+        ep = path + ".expire"
+        if os.path.exists(ep):
+            with open(ep) as f:
+                due = float(f.read().strip() or "0")
+            if _t.time() >= due:
+                open(path, "w").close()    # blank -> drawtext shows nothing
+                os.remove(ep)
     except Exception:
         pass
 
@@ -4266,6 +4324,9 @@ def main() -> int:
     ap.add_argument("--overlay-file", default="/tmp/exult_overlay.txt",
                     help="write current action+reasoning here each turn for the "
                          "stream's on-screen text overlay (ffmpeg drawtext reads it)")
+    ap.add_argument("--answer-overlay-file", default="/tmp/exult_answer.txt",
+                    help="write viewer Q&A here to show on the stream's top banner "
+                         "(chat integration without OBS)")
     ap.add_argument("--raw-log", action="store_true",
                     help="append the exact prompt+reply for EVERY turn to raw_comms.log "
                          "(parse failures are always logged regardless)")
