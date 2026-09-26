@@ -3946,28 +3946,34 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
 
     p = state.get("player") or {}
     # Clean, aligned TURN LOG line for the driver console window (mirrors the
-    # GUI table columns: Turn | Action | Reasoning | Result). The verbose raw
-    # line below still goes to the log file for debugging.
+    # GUI table columns: Turn | Action | Reasoning | Result). One line, capped
+    # at ~200 chars. The verbose raw line below still goes to the log file.
     try:
         _act = _action_phrase(action)
     except Exception:
         _act = str(action)
+    _act = str(_act).replace("\n", " ").strip()
     _rsn = (reason or "").replace("\n", " ").strip()
-    if len(_rsn) > 60:
-        _rsn = _rsn[:57] + "..."
     _res = result
     if isinstance(result, dict):
         _res = (result.get("did") or result.get("error")
                 or result.get("ok") or "")
-        for _k in ("target", "looted", "item", "did"):
-            if result.get(_k) and _k != "did":
+        for _k in ("target", "looted", "item"):
+            if result.get(_k):
                 _res = f"{_res}: {result.get(_k)}"
                 break
     _res = str(_res).replace("\n", " ").strip()
-    if len(_res) > 50:
-        _res = _res[:47] + "..."
-    print(f"TURN {step:>4} | {str(_act)[:34]:<34} | {_rsn:<60} | {_res}",
-          flush=True)
+    # Column budget so the whole line stays within ~200 chars:
+    # "TURN " + 5 (turn) + " | " + 30 (action) + " | " + 96 (reason)
+    # + " | " + 40 (result) = ~185.
+    _A, _R, _S = 30, 96, 40
+
+    def _fit(s, n):
+        s = s if len(s) <= n else (s[: n - 1] + "\u2026")
+        return f"{s:<{n}}"
+    line = (f"TURN {step:>5} | {_fit(_act, _A)} | {_fit(_rsn, _R)} | "
+            f"{_res[:_S]}")
+    print(line[:200], flush=True)
     print(f"[{step:03d}] pos=({p.get('tx')},{p.get('ty')}) "
           f"conv={state.get('conversation_active')} "
           f"reason={reason!r} action={action} -> {result}"
