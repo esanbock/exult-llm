@@ -302,6 +302,8 @@ periodically). For finer detail you have the recall/quests tools.
                                 body  x empty corpse  n container  * loose item
                                 E exit/route (gate/stairs/ladder)  ~ water
                                 = barrier  + closed door (goto opens)  / open door
+                                W building wall/roof (a BUILDING outline - map the
+                                town by these; enter via its doors)
                                 . walkable  # blocked. north=up, east=right.
                                 Walk only on '.', '*', or '/'. STAIRS ARE
                                 DIRECTIONAL - climb from the BOTTOM step (if a

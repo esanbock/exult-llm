@@ -1334,14 +1334,53 @@ class KnowledgeBase:
         gives you and what an LLM reasons over far better than ASCII art: every
         known landmark as {name, tile, dir, dist, reachable_hint}, nearest
         first. The agent can 'goto <name>' directly; it does NOT need to parse
-        the grid. Distances are tile counts; dir is an 8-way compass bearing."""
+        the grid. Distances are tile counts; dir is an 8-way compass bearing.
+
+        This is the MENTAL MAP, so it lists only NAVIGATIONAL ANCHORS (buildings,
+        landmarks, gates, wells, town areas) - NOT transient objects (a book, a
+        bag, a cauldron) which would clutter it. Those objects stay in
+        known_places and remain goto-able; they just don't pollute the map the
+        agent reasons over. Co-located entries (within a couple tiles) are
+        collapsed to a single best-named anchor."""
         def _bearing(dx: int, dy: int) -> str:
             # screen/world: +x = east, +y = south
             ns = "N" if dy < -1 else ("S" if dy > 1 else "")
             ew = "E" if dx > 1 else ("W" if dx < -1 else "")
             return (ns + ew) or "here"
+        # Kinds that are real navigational anchors (structure), vs object-kinds.
+        ANCHOR_KINDS = {"home", "landmark", "building", "area", "gate",
+                        "shop", "temple", "inn"}
+
+        def _is_anchor(r: dict) -> bool:
+            kind = (r.get("kind") or "").lower()
+            nm = (r.get("name") or "").lower()
+            if kind in ANCHOR_KINDS:
+                return True
+            # Auto-generated "where I searched/found ..." marks and object-kinds
+            # (seen/container) are NOT anchors - keep the map clean.
+            if kind in ("seen", "container", "marked"):
+                return False
+            if nm.startswith("where i "):
+                return False
+            return True  # user-annotated or unclassified -> keep as an anchor
+
+        anchors = [r for r in self.places.values() if _is_anchor(r)]
+        # De-duplicate anchors that sit on ~the same spot (within 2 tiles):
+        # keep the one with the most descriptive (longest, non-generic) name.
+        GENERIC = {"sign", "well", "stairs", "body", "gateway"}
+
+        def _name_score(r: dict) -> int:
+            nm = (r.get("name") or "")
+            return (0 if nm.lower() in GENERIC else 10) + len(nm)
+        kept: list = []
+        for r in sorted(anchors, key=_name_score, reverse=True):
+            tx, ty = r.get("tx", 0), r.get("ty", 0)
+            if any(abs(tx - k.get("tx", 0)) + abs(ty - k.get("ty", 0)) <= 2
+                   for k in kept):
+                continue
+            kept.append(r)
         out = []
-        for r in self.places.values():
+        for r in kept:
             nm = r.get("name", "")
             tx, ty = r.get("tx", 0), r.get("ty", 0)
             dx, dy = tx - here_tx, ty - here_ty

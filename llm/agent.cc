@@ -358,6 +358,28 @@ namespace {
 				}
 				const Shape_info& info = obj->get_info();
 				const Tile_coord  ot   = obj->get_tile();
+				// Z-LEVEL FILTER: the grid is a 2D map of the avatar's CURRENT
+				// floor. Objects well ABOVE the avatar (a roof, an upper storey,
+				// a wall-walkway) must NOT bleed onto this floor's map or it
+				// lies about what's here. Keep anything at or near the avatar's
+				// standing height (same floor, incl. low furniture) and drop
+				// things more than a few units above. Stairs/ladders/gateways
+				// are the EXCEPTION - they are the transitions BETWEEN levels
+				// and stay visible so the agent can change floors.
+				{
+					std::string _zlow = obj->get_name();
+					std::transform(
+							_zlow.begin(), _zlow.end(), _zlow.begin(), ::tolower);
+					const bool _is_transition =
+							_zlow.find("stair") != std::string::npos
+							|| _zlow.find("ladder") != std::string::npos
+							|| _zlow.find("trapdoor") != std::string::npos
+							|| _zlow.find("gateway") != std::string::npos;
+					// U7 floors are ~5 tz apart, so >3 above = a different level.
+					if (!_is_transition && ot.tz > at.tz + 3) {
+						continue;
+					}
+				}
 				if (info.is_door()) {
 					// '+' = closed door (can be opened), '/' = open door.
 					const bool closed = (obj->get_framenum() % 4) < 2;
@@ -398,11 +420,16 @@ namespace {
 				} else if (low.find("fence") != std::string::npos
 						   || low.find("rail") != std::string::npos) {
 					g = '=';    // linear barrier (look for a gap/gate)
-				} else if (info.get_shape_class() == Shape_info::building
-						   || low.find("tree") != std::string::npos
+				} else if (info.get_shape_class() == Shape_info::building) {
+					// A BUILDING structure (roof/wall/window). Give it its own
+					// glyph so the agent can SEE building footprints/outlines and
+					// map the town by its buildings - like a human does in-game -
+					// instead of every obstacle collapsing into one '#'.
+					g = 'W';
+				} else if (low.find("tree") != std::string::npos
 						   || info.is_solid()) {
-					// Blocking structure/scenery reads as a wall so the map is
-					// about walkability; identity (if notable) is in objects[].
+					// Natural/scenery obstacle (tree, boulder, furniture): reads
+					// as a plain wall for walkability; identity is in objects[].
 					g = '#';
 				} else {
 					g = '*';    // a loose named item on the ground (pickup-able)
@@ -751,6 +778,23 @@ namespace LLM_agent {
 				}
 				const Shape_info& info = obj->get_info();
 				const Tile_coord ot = obj->get_tile();
+				// Z-LEVEL FILTER (mirror the grid): don't list objects on a
+				// higher floor/roof/walkway - they aren't on the avatar's 2D
+				// map. Keep transitions (stairs/ladders) so the agent can find
+				// the way up/down.
+				{
+					std::string _zl = obj->get_name();
+					std::transform(_zl.begin(), _zl.end(), _zl.begin(),
+								   ::tolower);
+					const bool _trans =
+							_zl.find("stair") != std::string::npos
+							|| _zl.find("ladder") != std::string::npos
+							|| _zl.find("trapdoor") != std::string::npos
+							|| _zl.find("gateway") != std::string::npos;
+					if (!_trans && ot.tz > at.tz + 3) {
+						continue;
+					}
+				}
 				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
 				const auto sclass = info.get_shape_class();
 				std::string low = obj->get_name();
@@ -930,9 +974,11 @@ namespace LLM_agent {
 			os << ',' << json_str("grid_legend",
 					"@=you C=companion &=person b=lootable-body x=corpse(empty) "
 					"n=container *=item E=exit/route(gate/stairs) ~=water "
-					"==fence/barrier +=closed_door /=open_door .=walkable #=blocked; "
+					"==fence/barrier +=closed_door /=open_door W=building-wall/roof "
+					".=walkable #=blocked; "
 					"north=up east=right. Cell [row][col] is tile "
-					"(grid_origin_tx+col, grid_origin_ty+row).");
+					"(grid_origin_tx+col, grid_origin_ty+row). Shows your CURRENT "
+					"floor/level only; use stairs/ladders (E) to change levels.");
 			os << ',' << json_str("grid", grid);
 		}
 
