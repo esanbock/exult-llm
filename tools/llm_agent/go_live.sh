@@ -16,7 +16,7 @@ OVERLAY=/tmp/exult_overlay.txt
 FONT=/usr/share/fonts/liberation-fonts/LiberationSans-Regular.ttf
 PORT=8090
 FPS=10
-SIZE=320x240
+SIZE=512x384
 # Optional Twitch output. Set TWITCH_STREAM_KEY (env or tools/llm_agent/twitch.env,
 # gitignored). Leave unset for local-HLS-only (default). Ingest is Twitch's
 # recommended RTMPS endpoint; pick a nearer server if you like.

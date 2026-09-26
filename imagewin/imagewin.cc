@@ -1276,36 +1276,12 @@ void Image_window::set_title(const char* title) {
 }
 
 bool Image_window::capture_rgb(std::vector<unsigned char>& out, int& w, int& h, uint32_t& pixfmt) {
-	// Capture the small PRE-SCALE game surface (draw_surface, ~320x200 indexed)
-	// rather than doing SDL_RenderReadPixels on the full scaled output. This is
-	// far less work for the downstream encoder (~12x fewer pixels), which is the
-	// throughput bottleneck. draw_surface is INDEX8 with a guard-band border;
-	// crop the border and let SDL apply the palette to produce packed RGB24.
-	if (draw_surface) {
-		const int gb = guard_band;
-		const int gw = ibuf ? ibuf->width : (draw_surface->w - 2 * gb);
-		const int gh = ibuf ? ibuf->height : (draw_surface->h - 2 * gb);
-		SDL_Rect  crop{gb, gb, gw, gh};
-		// Convert the cropped indexed region to RGB24 (palette applied by SDL).
-		SDL_Surface* rgb = SDL_CreateSurface(gw, gh, SDL_PIXELFORMAT_RGB24);
-		if (rgb) {
-			if (SDL_BlitSurface(draw_surface, &crop, rgb, nullptr)) {
-				w      = gw;
-				h      = gh;
-				pixfmt = static_cast<uint32_t>(SDL_PIXELFORMAT_RGB24);
-				const size_t row = static_cast<size_t>(gw) * 3;
-				out.resize(row * static_cast<size_t>(gh));
-				const auto* src = static_cast<const unsigned char*>(rgb->pixels);
-				for (int y = 0; y < gh; ++y) {
-					std::memcpy(out.data() + y * row, src + y * rgb->pitch, row);
-				}
-				SDL_DestroySurface(rgb);
-				return true;
-			}
-			SDL_DestroySurface(rgb);
-		}
-		// Fall through to the renderer read-back on any failure.
-	}
+	// Capture the FULL composited render (game world + ALL overlay layers:
+	// conversation faces/text, gumps, mouse, text effects) via
+	// SDL_RenderReadPixels, then downscale to a small frame so the downstream
+	// encoder stays cheap. We must read the composited render (not the bare
+	// draw_surface) or the dialog/UI would be missing from the stream. The
+	// readback itself is ~1ms; encode cost is controlled by the downscale here.
 	if (!screen_renderer) {
 		return false;
 	}
@@ -1315,37 +1291,38 @@ bool Image_window::capture_rgb(std::vector<unsigned char>& out, int& w, int& h, 
 		SDL_ClearError();
 		return false;
 	}
-	// Pass the renderer's native pixels through WITHOUT a per-frame format
-	// conversion (SDL_ConvertSurface was a measurable CPU cost at 15fps). We
-	// only need a tightly-packed copy (dropping pitch padding); ffmpeg is told
-	// the actual pixel format via capture_pixfmt(). If the native format isn't
-	// a simple 32/24-bit packed one we can name, fall back to an RGBA convert.
-	SDL_Surface* use = surf;
-	SDL_Surface* converted = nullptr;
-	const SDL_PixelFormat pf = surf->format;
-	if (!(pf == SDL_PIXELFORMAT_ARGB8888 || pf == SDL_PIXELFORMAT_XRGB8888
-		  || pf == SDL_PIXELFORMAT_RGBA8888 || pf == SDL_PIXELFORMAT_RGBX8888
-		  || pf == SDL_PIXELFORMAT_ABGR8888 || pf == SDL_PIXELFORMAT_XBGR8888
-		  || pf == SDL_PIXELFORMAT_BGRA8888 || pf == SDL_PIXELFORMAT_BGRX8888)) {
-		converted = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_RGBA32);
-		if (converted) {
-			use = converted;
-		}
+	// Target width for the streamed frame (keeps encode light). Height follows
+	// the source aspect ratio, rounded to even for yuv420p.
+	constexpr int kTargetW = 512;
+	int dw = kTargetW;
+	int dh = surf->w > 0 ? (surf->h * kTargetW) / surf->w : surf->h;
+	dh &= ~1;    // even
+	if (dw < 2) dw = 2;
+	if (dh < 2) dh = 2;
+	// Scale (and convert to RGB24) in one step: blit the source into an RGB24
+	// destination of the target size (SDL applies format conversion + scaling).
+	SDL_Surface* dst = SDL_CreateSurface(dw, dh, SDL_PIXELFORMAT_RGB24);
+	if (!dst) {
+		SDL_DestroySurface(surf);
+		return false;
 	}
-	const int bpp = SDL_BYTESPERPIXEL(use->format);
-	w = use->w;
-	h = use->h;
-	pixfmt = static_cast<uint32_t>(use->format);
-	const size_t row = static_cast<size_t>(w) * static_cast<size_t>(bpp);
-	out.resize(row * static_cast<size_t>(h));
-	const auto* src = static_cast<const unsigned char*>(use->pixels);
-	for (int y = 0; y < h; ++y) {
-		std::memcpy(out.data() + y * row, src + y * use->pitch, row);
-	}
-	if (converted) {
-		SDL_DestroySurface(converted);
-	}
+	bool ok = SDL_BlitSurfaceScaled(surf, nullptr, dst, nullptr, SDL_SCALEMODE_LINEAR);
 	SDL_DestroySurface(surf);
+	if (!ok) {
+		SDL_ClearError();
+		SDL_DestroySurface(dst);
+		return false;
+	}
+	w      = dw;
+	h      = dh;
+	pixfmt = static_cast<uint32_t>(SDL_PIXELFORMAT_RGB24);
+	const size_t row = static_cast<size_t>(dw) * 3;
+	out.resize(row * static_cast<size_t>(dh));
+	const auto* src = static_cast<const unsigned char*>(dst->pixels);
+	for (int y = 0; y < dh; ++y) {
+		std::memcpy(out.data() + y * row, src + y * dst->pitch, row);
+	}
+	SDL_DestroySurface(dst);
 	return true;
 }
 
