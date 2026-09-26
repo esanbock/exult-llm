@@ -4043,7 +4043,61 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
           f"conv={state.get('conversation_active')} "
           f"reason={reason!r} action={action} -> {result}"
           + (f"  [{session.get('last_ctx')}]" if session.get('last_ctx') else ""))
+    # Overlay text for the video stream (ffmpeg drawtext reads this file live).
+    # Shows what the LLM is doing + why, so viewers see the reasoning.
+    if getattr(args, "overlay_file", None):
+        _write_overlay(args.overlay_file, step, action, reason)
     time.sleep(args.delay)
+
+
+def _write_overlay(path: str, step: int, action: dict, reason: str) -> None:
+    """Write a compact 'action / reasoning' overlay for the stream. Sanitized so
+    ffmpeg drawtext (textfile=...:reload=1) renders it safely (no chars that
+    break the filter; wrapped to a couple of lines)."""
+    try:
+        atype = action.get("type", "?") if isinstance(action, dict) else str(action)
+        # A short human phrasing of the action.
+        if isinstance(action, dict):
+            det = ""
+            for k in ("dir", "name", "target", "text", "index", "tx", "topic", "option"):
+                if action.get(k) not in (None, ""):
+                    det = f" {action.get(k)}"
+                    break
+            act_str = f"{atype}{det}"
+        else:
+            act_str = atype
+        rsn = (reason or "").strip()
+        # Strip our own "(guard) " prefixes for a cleaner viewer-facing line.
+        if rsn.startswith("(guard)"):
+            rsn = rsn[len("(guard)"):].strip()
+        # ffmpeg drawtext: avoid characters that need escaping; collapse space.
+        import re as _re
+        def clean(s: str) -> str:
+            s = _re.sub(r"[\r\n]+", " ", s)
+            s = _re.sub(r"[:%\\']", " ", s)       # chars drawtext treats specially
+            s = _re.sub(r"\s+", " ", s).strip()
+            return s
+        act_str = clean(act_str)[:70]
+        rsn = clean(rsn)[:140]
+        # Wrap the reason to ~70 chars/line (2 lines max) for readability.
+        words = rsn.split(" ")
+        lines, cur = [], ""
+        for w in words:
+            if len(cur) + len(w) + 1 > 70:
+                lines.append(cur); cur = w
+                if len(lines) == 2:
+                    break
+            else:
+                cur = (cur + " " + w).strip()
+        if cur and len(lines) < 2:
+            lines.append(cur)
+        text = f"Turn {step}  |  ACTION  {act_str}\n" + "\n".join(lines)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)    # atomic so drawtext never reads a half file
+    except Exception:
+        pass
 
 
 def run_loop(args, window: ThoughtsWindow, ollama, exult_proc=None) -> None:
@@ -4171,6 +4225,9 @@ def main() -> int:
                     help="do not auto-start music")
     ap.add_argument("--music-track", type=int, default=9,
                     help="music track number to loop (default 9)")
+    ap.add_argument("--overlay-file", default="/tmp/exult_overlay.txt",
+                    help="write current action+reasoning here each turn for the "
+                         "stream's on-screen text overlay (ffmpeg drawtext reads it)")
     ap.add_argument("--raw-log", action="store_true",
                     help="append the exact prompt+reply for EVERY turn to raw_comms.log "
                          "(parse failures are always logged regardless)")

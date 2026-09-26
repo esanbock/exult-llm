@@ -12,12 +12,17 @@ cd "$(dirname "$0")/../.."          # repo root (tools/llm_agent -> repo)
 REPO="$(pwd)"
 FIFO=/tmp/exult_video.raw
 AFIFO=/tmp/exult_audio.pcm
+OVERLAY=/tmp/exult_overlay.txt
+FONT=/usr/share/fonts/liberation-fonts/LiberationSans-Regular.ttf
 PORT=8090
 FPS=10
 SIZE=320x240
 
 echo "[go_live] repo=$REPO"
 rm -f "$FIFO" "$AFIFO"
+# Seed the overlay text file so ffmpeg's drawtext has something to read at
+# startup (drawtext errors if textfile is missing); the driver rewrites it live.
+printf 'Exult LLM agent\nwaiting for the agent...' > "$OVERLAY"
 
 # 1) Exult (writer): video frames -> $FIFO, mixed PCM -> $AFIFO. SDL still opens
 # ALSA (so the audio callback that produces the PCM keeps firing), but we no
@@ -73,7 +78,7 @@ while kill -0 "$EXULT" 2>/dev/null; do
     -f rawvideo -pixel_format rgb24 -video_size "$SIZE" -framerate "$FPS" -i "$FIFO" \
     -thread_queue_size 4096 \
     -f s16le -ar 48000 -ac 2 -i "$AFIFO" \
-    -vf "scale=960:720:flags=neighbor,format=yuv420p" \
+    -vf "scale=960:600:flags=neighbor,pad=960:720:0:0:color=black,drawtext=fontfile=$FONT:textfile=$OVERLAY:reload=1:fontcolor=white:fontsize=20:line_spacing=6:x=15:y=612:box=1:boxcolor=black@0.6:boxborderw=8,format=yuv420p" \
     -c:v libx264 -preset ultrafast -threads 4 -pix_fmt yuv420p -g $((FPS*2)) -r "$FPS" \
     -b:v 2500k -maxrate 2500k -bufsize 5000k \
     -c:a aac -b:a 128k -ar 48000 -ac 2 \
