@@ -484,6 +484,10 @@ Actor_action* Path_walking_actor_action::walk_to_tile(
 		}
 	} else {
 		Actor_pathfinder_client cost(npc, dist, ignnpc);
+		// Agent gotos set g_bounded_pathfind to cap A* work (main-thread only;
+		// NPC/game pathfinds leave it false and are unaffected).
+		extern bool g_bounded_pathfind;
+		cost.set_bounded(g_bounded_pathfind);
 		if (!path->NewPath(src, dest, &cost)) {
 			return nullptr;
 		}

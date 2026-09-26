@@ -38,6 +38,12 @@ public:
 	Pathfinder_client& operator=(Pathfinder_client&&)      = delete;
 	// Figure when to give up.
 	virtual int get_max_cost(int cost_to_goal) const;
+	// Hard cap on A* nodes expanded (0 = unlimited, the default). Bounds
+	// worst-case pathfind work for agent gotos so an unreachable goal in an
+	// open region can't starve the frame loop. Only the agent client overrides.
+	virtual int get_max_nodes() const {
+		return 0;
+	}
 	// Figure cost for a single step.
 	virtual int get_step_cost(const Tile_coord& from, Tile_coord& to) const = 0;
 	// Estimate cost between two points.

@@ -37,6 +37,7 @@ class Actor_pathfinder_client : public Pathfinder_client {
 	int    dist;           // Distance for success.
 	Actor* npc;            // Who this represents.
 	bool   ignore_npcs;    // If NPCs are nonblocking.
+	bool   bounded_search = false;    // Cap A* nodes (agent gotos only).
 	int    check_blocking(const Tile_coord& from, const Tile_coord& to) const;
 
 public:
@@ -45,6 +46,14 @@ public:
 	Actor_pathfinder_client(Actor* npc, int d = 0, bool ign = false);
 	// Figure when to give up.
 	int get_max_cost(int cost_to_goal) const override;
+	// Cap nodes when this is a bounded (agent) search; unlimited otherwise.
+	int get_max_nodes() const override {
+		return bounded_search ? 6000 : 0;
+	}
+
+	void set_bounded(bool b) {
+		bounded_search = b;
+	}
 	// Figure cost for a single step.
 	int get_step_cost(const Tile_coord& frm, Tile_coord& to) const override;
 	// Estimate cost between two points.

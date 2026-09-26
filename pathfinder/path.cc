@@ -374,8 +374,16 @@ std::pair<std::vector<Tile_coord>, bool> Find_path(
 	nodes.add(new Search_node(start, 0, max_cost, nullptr));
 	// Figure when to give up.
 	max_cost = client->get_max_cost(max_cost);
+	const int max_nodes = client->get_max_nodes();    // 0 = unlimited
+	int       expanded  = 0;
 	Search_node* node;    // Try 'best' node each iteration.
 	while ((node = nodes.pop()) != nullptr) {
+		// Hard node-expansion cap (agent gotos only; 0 = unlimited for game
+		// pathfinding). Prevents a far/unreachable goal from expanding the
+		// whole open region synchronously and stalling the frame loop.
+		if (max_nodes && ++expanded > max_nodes) {
+			return {{}, false};
+		}
 		if (tracing) {
 			cout << "Goal: (" << goal.tx << ", " << goal.ty << ", " << goal.tz << "), Node: (" << node->get_tile().tx << ", "
 				 << node->get_tile().ty << ", " << node->get_tile().tz << ")" << endl;

@@ -508,6 +508,25 @@ namespace {
 
 }    // namespace
 
+// Global (not in LLM_agent namespace) so pathfinding code in actions.cc can
+// read it via `extern bool g_bounded_pathfind;`. Set true only around an
+// agent-initiated goto so its A* is node-capped; false for all game/NPC paths.
+// Main-thread only (all pathfinding runs on the main thread).
+bool g_bounded_pathfind = false;
+
+namespace {
+	// RAII: bound pathfinding for the duration of an agent goto, always reset.
+	struct Bounded_pathfind_guard {
+		Bounded_pathfind_guard() {
+			g_bounded_pathfind = true;
+		}
+
+		~Bounded_pathfind_guard() {
+			g_bounded_pathfind = false;
+		}
+	};
+}    // namespace
+
 namespace LLM_agent {
 
 	// Most recent sign/plaque text, populated by the usecode display_runes
@@ -2066,6 +2085,9 @@ namespace LLM_agent {
 			// Pathfind (A*) to a destination: an explicit tile {tx,ty}, or the
 			// nearest NPC/object matching {name}.  Routes around walls and
 			// through doorways automatically.
+			// Bound the A* work so a far/unreachable goto can't stall the frame
+			// loop (reset automatically when this branch returns).
+			Bounded_pathfind_guard bounded_guard;
 			Actor* av = gwin->get_main_actor();
 			if (!av) {
 				return "{\"ok\":false,\"error\":\"no avatar\"}";
