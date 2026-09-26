@@ -4055,43 +4055,81 @@ def _write_overlay(path: str, step: int, action: dict, reason: str) -> None:
     ffmpeg drawtext (textfile=...:reload=1) renders it safely (no chars that
     break the filter; wrapped to a couple of lines)."""
     try:
-        atype = action.get("type", "?") if isinstance(action, dict) else str(action)
-        # A short human phrasing of the action.
-        if isinstance(action, dict):
-            det = ""
-            for k in ("dir", "name", "target", "text", "index", "tx", "topic", "option"):
-                if action.get(k) not in (None, ""):
-                    det = f" {action.get(k)}"
-                    break
-            act_str = f"{atype}{det}"
-        else:
-            act_str = atype
-        rsn = (reason or "").strip()
-        # Strip our own "(guard) " prefixes for a cleaner viewer-facing line.
-        if rsn.startswith("(guard)"):
-            rsn = rsn[len("(guard)"):].strip()
-        # ffmpeg drawtext: avoid characters that need escaping; collapse space.
         import re as _re
         def clean(s: str) -> str:
-            s = _re.sub(r"[\r\n]+", " ", s)
+            s = _re.sub(r"[\r\n]+", " ", str(s))
             s = _re.sub(r"[:%\\']", " ", s)       # chars drawtext treats specially
             s = _re.sub(r"\s+", " ", s).strip()
             return s
-        act_str = clean(act_str)[:70]
-        rsn = clean(rsn)[:140]
-        # Wrap the reason to ~70 chars/line (2 lines max) for readability.
-        words = rsn.split(" ")
-        lines, cur = [], ""
-        for w in words:
-            if len(cur) + len(w) + 1 > 70:
-                lines.append(cur); cur = w
-                if len(lines) == 2:
-                    break
+
+        # Phrase the action as a short natural sentence for viewers.
+        _DIRS = {"n": "north", "s": "south", "e": "east", "w": "west",
+                 "ne": "northeast", "nw": "northwest", "se": "southeast",
+                 "sw": "southwest"}
+        act_str = ""
+        if isinstance(action, dict):
+            t = action.get("type", "")
+            if t == "move":
+                if action.get("dir"):
+                    d = _DIRS.get(str(action["dir"]).lower(), action["dir"])
+                    act_str = f"Walking {d}"
+                elif action.get("tx") is not None:
+                    act_str = f"Walking toward ({action.get('tx')},{action.get('ty')})"
+                else:
+                    act_str = "Walking"
+            elif t == "goto":
+                dest = action.get("name") or (
+                    f"({action.get('tx')},{action.get('ty')})"
+                    if action.get("tx") is not None else "")
+                act_str = f"Heading to {dest}".strip()
+            elif t == "talk":
+                who = action.get("name") or action.get("target") or "someone"
+                act_str = f"Talking to {who}"
+            elif t == "answer":
+                topic = action.get("text") or action.get("option") or action.get("topic")
+                act_str = f"Asking about {topic}" if topic else "Choosing a reply"
+            elif t == "continue":
+                act_str = "Listening"
+            elif t == "wait":
+                act_str = "Thinking"
+            elif t in ("take", "pickup"):
+                act_str = f"Taking {action.get('name', 'an item')}"
+            elif t == "use":
+                act_str = f"Using {action.get('name', 'something')}"
+            elif t == "attack":
+                act_str = f"Attacking {action.get('name', 'a foe')}"
+            elif t == "look" or t == "search":
+                act_str = "Looking around"
             else:
-                cur = (cur + " " + w).strip()
-        if cur and len(lines) < 2:
-            lines.append(cur)
-        text = f"Turn {step}  |  ACTION  {act_str}\n" + "\n".join(lines)
+                act_str = t.replace("_", " ").capitalize() if t else ""
+        else:
+            act_str = str(action)
+
+        rsn = (reason or "").strip()
+        if rsn.startswith("(guard)"):
+            rsn = rsn[len("(guard)"):].strip()
+        act_str = clean(act_str)[:70]
+        rsn = clean(rsn)[:150]
+
+        # Line 1: the natural action. Lines 2-3: the reasoning, wrapped.
+        def wrap(s: str, width: int, maxlines: int) -> list:
+            out, cur = [], ""
+            for w in s.split(" "):
+                if len(cur) + len(w) + 1 > width:
+                    out.append(cur); cur = w
+                    if len(out) == maxlines:
+                        return out
+                else:
+                    cur = (cur + " " + w).strip()
+            if cur and len(out) < maxlines:
+                out.append(cur)
+            return out
+
+        parts = []
+        if act_str:
+            parts.append(f"> {act_str}")
+        parts.extend(wrap(rsn, 78, 2))
+        text = "\n".join(parts) if parts else " "
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(text)
