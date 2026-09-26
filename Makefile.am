@@ -5,6 +5,7 @@ AM_CPPFLAGS = -I$(srcdir) -I$(srcdir)/headers -I$(srcdir)/imagewin -I$(srcdir)/s
 	-I$(srcdir)/objs -I$(srcdir)/conf -I$(srcdir)/files -I$(srcdir)/gumps \
 	-I$(srcdir)/audio -I$(srcdir)/audio/midi_drivers -I$(srcdir)/pathfinder \
 	-I$(srcdir)/usecode -I$(srcdir)/shapes/shapeinf \
+	-I$(srcdir)/llm \
 	$(SDL_CFLAGS) $(OGG_CFLAGS) $(PNG_CFLAGS) $(INCDIRS) $(WINDOWING_SYSTEM) \
 	$(DEBUG_LEVEL) $(OPT_LEVEL) $(WARNINGS) $(CPPFLAGS) -DEXULT_DATADIR=\"$(EXULT_DATADIR)\"
 
@@ -125,6 +126,18 @@ EXULTSOURCES =	\
 	verify.h	\
 	version.cc	\
 	version.h
+
+if BUILD_LLM_AGENT
+EXULTSOURCES +=	\
+	llm/agent.cc		\
+	llm/agent.h		\
+	llm/agentserver.cc	\
+	llm/agentserver.h	\
+	llm/videostream.cc	\
+	llm/videostream.h	\
+	llm/audiostream.cc	\
+	llm/audiostream.h
+endif
 
 EXULTLIBS = \
 	pathfinder/libpathfinder.la		\

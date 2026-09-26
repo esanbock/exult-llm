@@ -48,6 +48,7 @@
 #include "ready.h"
 #include "effects.h"
 #include "utils.h"
+#include "Audio.h"
 
 #include <SDL3/SDL.h>
 
@@ -2698,74 +2699,115 @@ namespace LLM_agent {
 		}
 
 		if (type == "move") {
-			string dir;
-			get_string(action_json, "dir", dir);
+			// Tile-based movement. Accepts EITHER a compass direction
+			//   {"type":"move","dir":"n|s|e|w|ne|nw|se|sw","steps":<n>}
+			// (walks <n> tiles that way, default 1), OR explicit GAME-TILE
+			// coordinates
+			//   {"type":"move","tx":<x>,"ty":<y>[,"tz":<z>]}
+			// Nothing here depends on screen size or pixel coordinates: the
+			// target is a world tile and the engine's A* pathfinder
+			// (walk_path_to_tile) routes to it, exactly like "goto".
+			Actor* av = gwin->get_main_actor();
+			if (!av) {
+				return "{\"ok\":false,\"error\":\"no avatar\"}";
+			}
 			long speed = 200;
 			get_int(action_json, "speed", speed);
-			const int w = gwin->get_width();
-			const int h = gwin->get_height();
-			// Target a screen point offset from center in the requested
-			// compass direction (screen y grows downward; north = up).
-			const int cx  = w / 2;
-			const int cy  = h / 2;
-			const int off = 50;
-			int       tx  = cx;
-			int       ty  = cy;
-			if (dir == "n") {
-				ty = cy - off;
-			} else if (dir == "s") {
-				ty = cy + off;
-			} else if (dir == "e") {
-				tx = cx + off;
-			} else if (dir == "w") {
-				tx = cx - off;
-			} else if (dir == "ne") {
-				tx = cx + off;
-				ty = cy - off;
-			} else if (dir == "nw") {
-				tx = cx - off;
-				ty = cy - off;
-			} else if (dir == "se") {
-				tx = cx + off;
-				ty = cy + off;
-			} else if (dir == "sw") {
-				tx = cx - off;
-				ty = cy + off;
+			const Tile_coord me = av->get_tile();
+
+			long       dtx = 0;
+			long       dty = 0;
+			bool       have_tile = false;
+			Tile_coord dest(me.tx, me.ty, me.tz);
+
+			if (get_int(action_json, "tx", dtx) && get_int(action_json, "ty", dty)) {
+				// Explicit game-tile target.
+				long dtz = me.tz;
+				get_int(action_json, "tz", dtz);
+				dest = Tile_coord(
+						static_cast<int>(dtx), static_cast<int>(dty),
+						static_cast<int>(dtz));
+				have_tile = true;
 			} else {
-				return "{\"ok\":false,\"error\":\"bad direction\"}";
+				// Compass direction + step count -> a tile offset from here.
+				string dir;
+				get_string(action_json, "dir", dir);
+				long steps = 1;
+				get_int(action_json, "steps", steps);
+				if (steps < 1) {
+					steps = 1;
+				}
+				int ddx = 0;
+				int ddy = 0;    // screen/world: north = -y, south = +y.
+				if (dir.find('n') != string::npos) {
+					ddy = -1;
+				}
+				if (dir.find('s') != string::npos) {
+					ddy = 1;
+				}
+				if (dir.find('e') != string::npos) {
+					ddx = 1;
+				}
+				if (dir.find('w') != string::npos) {
+					ddx = -1;
+				}
+				if (ddx == 0 && ddy == 0) {
+					return "{\"ok\":false,\"error\":\"bad direction (use "
+						   "n/s/e/w/ne/nw/se/sw or tx,ty)\"}";
+				}
+				dest = Tile_coord(
+						(me.tx + ddx * static_cast<int>(steps) + c_num_tiles)
+								% c_num_tiles,
+						(me.ty + ddy * static_cast<int>(steps) + c_num_tiles)
+								% c_num_tiles,
+						me.tz);
 			}
-			// Detect whether the adjacent tile in this direction is blocked
-			// (wall/water/obstacle), so the agent gets an explicit "bumped"
-			// signal instead of silently walking into a wall.
+
+			// Report whether the immediately-adjacent tile toward the target is
+			// occupied, so a one-step move gets a "blocked" signal.
 			bool blocked = false;
-			{
-				Game_map* gmap = gwin->get_map();
-				Actor*    av   = gwin->get_main_actor();
-				if (gmap && av) {
-					const Tile_coord me = av->get_tile();
-					int ddx = 0;
-					int ddy = 0;
-					if (dir.find('n') != string::npos) {
-						ddy = -1;
-					}
-					if (dir.find('s') != string::npos) {
-						ddy = 1;
-					}
-					if (dir.find('e') != string::npos) {
-						ddx = 1;
-					}
-					if (dir.find('w') != string::npos) {
-						ddx = -1;
-					}
+			if (Game_map* gmap = gwin->get_map()) {
+				const int sx = (dest.tx > me.tx) - (dest.tx < me.tx);
+				const int sy = (dest.ty > me.ty) - (dest.ty < me.ty);
+				if (sx != 0 || sy != 0) {
 					const Tile_coord adj(
-							(me.tx + ddx + c_num_tiles) % c_num_tiles,
-							(me.ty + ddy + c_num_tiles) % c_num_tiles, me.tz);
+							(me.tx + sx + c_num_tiles) % c_num_tiles,
+							(me.ty + sy + c_num_tiles) % c_num_tiles, me.tz);
 					blocked = gmap->is_tile_occupied(adj);
 				}
 			}
-			gwin->start_actor(tx, ty, static_cast<int>(speed));
-			return string("{\"ok\":true,\"did\":\"move\",\"dir\":\"") + json_escape(dir)
-				   + "\"," + json_bool("blocked", blocked) + "}";
+
+			const bool walking = av->walk_path_to_tile(
+					dest, static_cast<int>(speed));
+			string r = "{\"ok\":true,\"did\":\"move\",";
+			r += json_int("tx", dest.tx) + "," + json_int("ty", dest.ty) + ",";
+			r += json_bool("walking", walking) + ",";
+			r += json_bool("blocked", blocked) + "}";
+			ignore_unused_variable_warning(have_tile);
+			return r;
+		}
+
+		if (type == "play_music") {
+			// Start (and optionally loop) a music track. Defaults to a town
+			// theme, looping - so the stream always has music. Uses the same
+			// engine API the game uses for background music.
+			long track  = 9;    // BG town/tavern-ish theme via game_music()
+			long repeat = 1;
+			get_int(action_json, "track", track);
+			get_int(action_json, "repeat", repeat);
+			Audio* audio = Audio::get_ptr();
+			if (!audio) {
+				return "{\"ok\":false,\"error\":\"no audio\"}";
+			}
+			audio->start_music(
+					Audio::game_music(static_cast<int>(track)), repeat != 0);
+			return string("{\"ok\":true,\"did\":\"play_music\",")
+				   + json_int("track", static_cast<int>(track)) + ","
+				   + json_bool("repeat", repeat != 0) + "}";
+		}
+
+		if (type == "screenshot") {
+			return screenshot();
 		}
 
 		return "{\"ok\":false,\"error\":\"unknown action type\"}";
@@ -2818,6 +2860,14 @@ namespace LLM_agent {
 		if (!dst) {
 			return "{\"ok\":false,\"error\":\"cannot open output file\"}";
 		}
+		// Force a fresh repaint into the window backbuffer before capturing.
+		// During blocking engine loops (notably the conversation answer loop),
+		// the main render loop is not repainting, so without this the capture
+		// would re-dump a STALE frame (the screen looks frozen even as the game
+		// state advances). paint() redraws the world/gumps; show() flushes it to
+		// the window surface that screenshot() reads.
+		gwin->paint();
+		gwin->get_win()->show();
 		const bool ok = gwin->get_win()->screenshot(dst, false);
 		// screenshot() closes dst via SDL_SaveBMP/IMG path; guard anyway.
 		if (ok) {

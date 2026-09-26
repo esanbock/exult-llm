@@ -346,9 +346,12 @@ periodically). For finer detail you have the recall/quests tools.
   observed: notable things SEEN/OVERHEARD (deduped), e.g. "seen: chest at (x,y)".
 
 # TOOLS (the complete list of things you can do - nothing else is possible)
-  move    - Walk one step. params: {"dir": one of n,s,e,w,ne,nw,se,sw}
+  move    - Walk using GAME TILES (never screen coords). params: EITHER
+            {"dir": one of n,s,e,w,ne,nw,se,sw, "steps": <n, default 1>} to walk
+            n tiles that compass way, OR {"tx": <x>, "ty": <y>} to walk to an
+            absolute game tile (the engine pathfinds there).
             Use the grid: step onto '.' tiles, never into '#'. To reach an
-            NPC/object, move toward its (dx,dy).
+            NPC/object, move toward its (dx,dy) or use its absolute {tx,ty}.
   goto    - PATHFIND to a destination and walk there automatically, routing
             around walls and THROUGH doorways. params: {"name": "<NPC/object/
             place>"} to go to the nearest thing with that name OR a remembered
@@ -1191,6 +1194,14 @@ def parse_reply(text: str) -> tuple[str, dict]:
     return (reason, action)
 
 
+def _delta_to_dir(dx: int, dy: int) -> str:
+    """Map a tile delta to a compass dir for the move action (north = -y).
+    Fallback only; the normal path sends absolute tile tx/ty."""
+    ns = "n" if dy < 0 else ("s" if dy > 0 else "")
+    ew = "e" if dx > 0 else ("w" if dx < 0 else "")
+    return (ns + ew) or "n"
+
+
 def _compass(dx: int, dy: int) -> str:
     """Short direction+distance hint (e.g. 'NE 5') to accompany an absolute tile,
     for spatial intuition. Coordinates are the source of truth; this is a hint."""
@@ -1504,6 +1515,18 @@ def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
 
 def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -> None:
     state = exult.observe()
+    # Per-turn frame capture for streaming. The bridge accepts ONE client at a
+    # time, so a separate stream process cannot pull screenshots while the
+    # driver is connected. Instead the driver (which holds the connection) asks
+    # the engine to write a PNG each turn; stream.py --from-file just serves that
+    # file. Cheap and contention-free. Enabled with --screenshot.
+    if getattr(args, "screenshot", False):
+        try:
+            # screenshot is a CMD-level request ({"cmd":"screenshot"}), not an
+            # act action type - send it via request(), not act().
+            exult.request({"cmd": "screenshot"})
+        except Exception:
+            pass
     # Advance a PERSISTENT, monotonic turn counter (kb.turn_counter) that
     # survives restarts, so the action log's turn numbers always INCREASE across
     # runs (the per-process 'step' resets to 0 each launch, which made log turns
@@ -2126,6 +2149,86 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         res = ollama.chat_ex(get_effective_system_prompt(), _user)
         reply = res["content"]
         reason, action = parse_reply(reply)
+        # Movement normalizer: the "move" action takes EITHER a compass "dir"
+        # (n/s/e/w/ne/nw/se/sw, optional "steps") OR game-tile "tx"/"ty".
+        # Models often emit a delta {"dx":..,"dy":..} instead; translate that to
+        # an absolute game-tile move (current tile + delta) - purely tile-based,
+        # no screen coordinates involved.
+        if isinstance(action, dict) and action.get("type") == "move" \
+                and "dir" not in action and "tx" not in action \
+                and ("dx" in action or "dy" in action):
+            try:
+                dx = int(action.get("dx", 0))
+                dy = int(action.get("dy", 0))
+            except (TypeError, ValueError):
+                dx = dy = 0
+            p = state.get("player") or {}
+            if dx == 0 and dy == 0:
+                action = {"type": "wait"}
+                reason = "(guard) move with zero delta -> wait"
+            elif p.get("tx") is not None:
+                action = {"type": "move",
+                          "tx": int(p["tx"]) + dx, "ty": int(p["ty"]) + dy}
+                reason = f"(guard) move dx/dy -> tile ({action['tx']},{action['ty']})"
+            else:
+                action = {"type": "move", "dir": _delta_to_dir(dx, dy)}
+                reason = f"(guard) move dx/dy -> dir {action['dir']}"
+        # Conversation normalizer: while an NPC's answer menu is on screen, the
+        # ONLY action the engine accepts is "answer" (by index or text). Some
+        # models emit invented shapes ({"type":"say",...}, {"type":"talk",
+        # "option":...}, or a "move" with dx/dy) which the bridge rejects, so the
+        # dialog never advances and the agent gets stuck. Coerce those into a
+        # valid "answer" against the live answer list.
+        if state.get("conversation_active") and isinstance(action, dict):
+            answers = state.get("answers") or []
+            atype = action.get("type")
+            # Coerce when NOT an answer, OR when it's an "answer" that lacks a
+            # usable index/text but carries a topic/option string (models often
+            # send {"type":"answer","topic":"name"} which the engine rejects as
+            # "answer out of range" since it wants an integer index).
+            answer_needs_fix = (
+                atype == "answer"
+                and not isinstance(action.get("index"), int)
+                and not action.get("text"))
+            if atype != "answer" or answer_needs_fix:
+                # Pull whatever text the model intended to say/pick.
+                want = (action.get("text") or action.get("option")
+                        or action.get("topic") or action.get("target_topic") or "")
+                want = str(want).strip().lower()
+                chosen = None
+                if want and answers:
+                    # Exact, then substring match against the offered options.
+                    for i, a in enumerate(answers):
+                        if str(a).strip().lower() == want:
+                            chosen = i
+                            break
+                    if chosen is None:
+                        for i, a in enumerate(answers):
+                            if want in str(a).strip().lower():
+                                chosen = i
+                                break
+                if chosen is not None:
+                    action = {"type": "answer", "index": chosen}
+                    reason = f"(guard) coerced '{atype}' -> answer #{chosen} ({answers[chosen]})"
+                elif answers:
+                    # Unknown/none matched: if the model was trying to leave
+                    # (say/bye/leave/goto/move away), pick an exit option if one
+                    # is offered, else advance/first option to keep dialog moving.
+                    leave_words = ("bye", "leave", "goodbye", "farewell")
+                    exit_idx = next(
+                        (i for i, a in enumerate(answers)
+                         if any(w in str(a).strip().lower() for w in leave_words)),
+                        None)
+                    if atype in ("say", "goto", "move", "stop") and exit_idx is not None:
+                        action = {"type": "answer", "index": exit_idx}
+                        reason = f"(guard) '{atype}' in conversation -> leaving via answer #{exit_idx} ({answers[exit_idx]})"
+                    else:
+                        action = {"type": "answer", "index": 0}
+                        reason = f"(guard) invalid '{atype}' in conversation -> answer #0 ({answers[0]})"
+                else:
+                    # No answer list yet (NPC still talking) -> advance text.
+                    action = {"type": "continue"}
+                    reason = f"(guard) '{atype}' but no answers yet -> continue"
         # Honor the blocked-breaker: if the last few moves were blocked (e.g.
         # stairs approached from the wrong side - they only climb from the
         # bottom step), and the model is AGAIN trying to move/goto the same way,
@@ -3968,6 +4071,17 @@ def run_loop(args, window: ThoughtsWindow, ollama, exult_proc=None) -> None:
     try:
         exult.connect()
         print(f"[+] Connected to Exult bridge: {exult.ping()}")
+        # Start looping background music for the stream. The driver holds the
+        # single-client bridge, so an external play.py can't get in once we're
+        # connected - starting it here is the reliable path. A fresh --newgame
+        # never auto-starts the map theme.
+        if getattr(args, "music", True):
+            try:
+                r = exult.act({"type": "play_music",
+                               "track": args.music_track, "repeat": 1})
+                print(f"[+] Music: {r}")
+            except Exception as e:
+                print(f"[!] Music start failed: {e}")
         for step in range(args.steps):
             try:
                 _do_turn(args, window, ollama, exult, step, recent_positions, kb, session)
@@ -4043,6 +4157,14 @@ def main() -> int:
     ap.add_argument("--delay", type=float, default=1.5, help="seconds between turns")
     ap.add_argument("--dry-run", action="store_true", help="skip Ollama; scripted moves")
     ap.add_argument("--show-thoughts", action="store_true", help="open the LLM thinking window")
+    ap.add_argument("--screenshot", action="store_true",
+                    help="write a PNG each turn (for stream.py --from-file)")
+    ap.add_argument("--music", action="store_true", default=True,
+                    help="start looping background music on connect (default on)")
+    ap.add_argument("--no-music", dest="music", action="store_false",
+                    help="do not auto-start music")
+    ap.add_argument("--music-track", type=int, default=9,
+                    help="music track number to loop (default 9)")
     ap.add_argument("--raw-log", action="store_true",
                     help="append the exact prompt+reply for EVERY turn to raw_comms.log "
                          "(parse failures are always logged regardless)")

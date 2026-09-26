@@ -749,6 +749,17 @@ else
 	AC_MSG_RESULT(no)
 fi
 
+# LLM agent bridge
+AC_ARG_ENABLE(llm-agent, AS_HELP_STRING([--enable-llm-agent], [Enable the LLM agent TCP bridge (--llmagent) @<:@default no@:>@]),,enable_llm_agent=no)
+AC_MSG_CHECKING([whether to enable the LLM agent bridge])
+if test x$enable_llm_agent = xyes; then
+	AC_DEFINE(USE_LLM_AGENT, 1, [Enable the LLM agent TCP bridge])
+	AC_MSG_RESULT(yes)
+else
+	AC_MSG_RESULT(no)
+fi
+AM_CONDITIONAL(BUILD_LLM_AGENT, test x$enable_llm_agent = xyes)
+
 # Midi Sfx
 AC_ARG_ENABLE(midi-sfx, AS_HELP_STRING([--enable-midi-sfx], [Support for Midi Sfx (sounds horrible) @<:@default no@:>@]),,enable_midi_sfx=no)
 AC_MSG_CHECKING([whether to enable midi sfx])

@@ -66,6 +66,8 @@
 #include "keys.h"
 #ifdef USE_LLM_AGENT
 #	include "llm/agentserver.h"
+#	include "llm/videostream.h"
+#	include "llm/audiostream.h"
 #endif
 #include "mouse.h"
 #include "palette.h"
@@ -218,6 +220,9 @@ static bool   arg_verify_files = false;    // Verify a game's files.
 static bool arg_llmagent      = false;    // Enable the LLM agent TCP server.
 static int  arg_llmagent_port = 0;        // Port (0 => default 45999).
 static bool arg_newgame       = false;    // Force a fresh new game (LLM agent).
+static std::string arg_llmstream = {};    // FIFO path for raw video stream.
+static int  arg_llmstream_fps = 15;       // Stream frame rate cap.
+static std::string arg_llmaudio = {};     // FIFO path for raw PCM audio stream.
 #endif
 
 static string arg_installmod  = {};
@@ -323,6 +328,9 @@ int main(int argc, char* argv[]) {
 	parameters.declare("--llmagent", &arg_llmagent, true);
 	parameters.declare("--llmagent-port", &arg_llmagent_port, 0);
 	parameters.declare("--newgame", &arg_newgame, true);
+	parameters.declare("--llmstream", &arg_llmstream);
+	parameters.declare("--llmstream-fps", &arg_llmstream_fps, 15);
+	parameters.declare("--llmaudio", &arg_llmaudio);
 #endif
 #if defined _WIN32
 	bool portable = false;
@@ -1168,6 +1176,14 @@ static void Init() {
 	if (arg_llmagent) {
 		LLM_agent::Agent_server_init(arg_llmagent_port);
 	}
+	if (!arg_llmstream.empty()) {
+		LLM_agent::Stream_init(arg_llmstream, arg_llmstream_fps);
+	}
+	if (!arg_llmaudio.empty()) {
+		// Match the configured mixer output (48000 Hz stereo). The reader
+		// (ffmpeg) is told the same via -ar/-ac.
+		LLM_agent::AudioStream_init(arg_llmaudio, 48000, 2);
+	}
 #endif
 	gwin->setup_game(arg_edit_mode);    // This will start the scene.
 										// Get scale factor for mouse.
@@ -1197,6 +1213,8 @@ static int Play() {
 
 #ifdef USE_LLM_AGENT
 	LLM_agent::Agent_server_close();
+	LLM_agent::Stream_close();
+	LLM_agent::AudioStream_close();
 #endif
 
 	delete gwin;
@@ -1388,6 +1406,7 @@ static void Handle_events() {
 #endif
 #ifdef USE_LLM_AGENT
 		LLM_agent::Agent_server_poll();    // Service the LLM agent bridge.
+		LLM_agent::Stream_frame();         // Emit a video frame to the stream FIFO.
 #endif
 		// Mouse scale factor
 		// int scale = gwin->get_fastmouse() ? 1 :

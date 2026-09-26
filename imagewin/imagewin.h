@@ -950,5 +950,11 @@ public:
 	}
 
 	bool screenshot(SDL_IOStream* dst, bool paletted);
+
+	// Capture the current rendered frame as tightly-packed pixels (native
+	// format, no per-frame conversion) into 'out', returning dimensions and the
+	// SDL pixel format (an SDL_PixelFormat value) so the caller can tell the
+	// encoder the layout. Returns false on failure.
+	bool capture_rgb(std::vector<unsigned char>& out, int& w, int& h, uint32_t& pixfmt);
 };
 #endif /* INCL_IMAGEWIN    */

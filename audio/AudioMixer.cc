@@ -24,6 +24,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "Configuration.h"
 #include "Midi.h"
 #include "MidiDriver.h"
+#ifdef USE_LLM_AGENT
+#	include "llm/audiostream.h"
+#endif
 
 #include <algorithm>
 #include <iostream>
@@ -453,6 +456,11 @@ void AudioMixer::MixAudio(sint16* stream, uint32 bytes) {
 			channel.resampleAndMix(stream, bytes);
 		}
 	}
+#ifdef USE_LLM_AGENT
+	// Tap the final mixed PCM to the stream FIFO (bypasses snd-aloop entirely;
+	// perfectly paced since we're on the callback that produced these samples).
+	LLM_agent::AudioStream_write(stream, bytes);
+#endif
 }
 
 void AudioMixer::openMidiOutput() {

@@ -1274,6 +1274,50 @@ void Image_window::set_title(const char* title) {
 	SDL_SetWindowTitle(screen_window, title);
 }
 
+bool Image_window::capture_rgb(std::vector<unsigned char>& out, int& w, int& h, uint32_t& pixfmt) {
+	if (!screen_renderer) {
+		return false;
+	}
+	UpdateRect(nullptr, nullptr, true);
+	SDL_Surface* surf = SDL_RenderReadPixels(screen_renderer, nullptr);
+	if (!surf) {
+		SDL_ClearError();
+		return false;
+	}
+	// Pass the renderer's native pixels through WITHOUT a per-frame format
+	// conversion (SDL_ConvertSurface was a measurable CPU cost at 15fps). We
+	// only need a tightly-packed copy (dropping pitch padding); ffmpeg is told
+	// the actual pixel format via capture_pixfmt(). If the native format isn't
+	// a simple 32/24-bit packed one we can name, fall back to an RGBA convert.
+	SDL_Surface* use = surf;
+	SDL_Surface* converted = nullptr;
+	const SDL_PixelFormat pf = surf->format;
+	if (!(pf == SDL_PIXELFORMAT_ARGB8888 || pf == SDL_PIXELFORMAT_XRGB8888
+		  || pf == SDL_PIXELFORMAT_RGBA8888 || pf == SDL_PIXELFORMAT_RGBX8888
+		  || pf == SDL_PIXELFORMAT_ABGR8888 || pf == SDL_PIXELFORMAT_XBGR8888
+		  || pf == SDL_PIXELFORMAT_BGRA8888 || pf == SDL_PIXELFORMAT_BGRX8888)) {
+		converted = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_RGBA32);
+		if (converted) {
+			use = converted;
+		}
+	}
+	const int bpp = SDL_BYTESPERPIXEL(use->format);
+	w = use->w;
+	h = use->h;
+	pixfmt = static_cast<uint32_t>(use->format);
+	const size_t row = static_cast<size_t>(w) * static_cast<size_t>(bpp);
+	out.resize(row * static_cast<size_t>(h));
+	const auto* src = static_cast<const unsigned char*>(use->pixels);
+	for (int y = 0; y < h; ++y) {
+		std::memcpy(out.data() + y * row, src + y * use->pitch, row);
+	}
+	if (converted) {
+		SDL_DestroySurface(converted);
+	}
+	SDL_DestroySurface(surf);
+	return true;
+}
+
 void Image_window::screen_to_game(int sx, int sy, bool fast, int& gx, int& gy) {
 	// While a full-screen scene layer owns the display, map through it so mouse
 	// hit-testing lines up with widgets drawn in the (scaled) scene.
