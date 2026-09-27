@@ -243,8 +243,7 @@ periodically). For finer detail you have the recall/quests tools.
                                 the SAME tz as you is on your level and reachable;
                                 a different tz means you must change levels first.
                                 To walk to something on your level, "goto" its
-                                (tx,ty) directly. The ASCII map is centered on you
-                                (@); north=up, east=right.
+                                (tx,ty) directly. north=up, east=right.
   time_of_day (string)        - morning/afternoon/evening/night, plus hour (0-23)
                                 and is_night. At night most townsfolk are asleep
                                 (see condition:"sleeping"); use "wait_until" to
@@ -296,24 +295,6 @@ periodically). For finer detail you have the recall/quests tools.
                                 LOOTABLE (search it); "corpse_not_lootable":true
                                 = empty corpse (don't search). "town_exit":true =
                                 the gate OUT of town.
-  grid (string)               - top-down ASCII map centered on you (@); shows
-                                WALKABILITY/routes (item identity is in objects).
-                                Glyphs: @ you  C companion  & person  b lootable
-                                body  x empty corpse  n container  * loose item
-                                E exit/route (gate/stairs/ladder)  ~ water
-                                = barrier  + closed door (goto opens)  / open door
-                                W building wall/roof (a BUILDING outline - map the
-                                town by these; enter via its doors). Walls/roofs
-                                show only for YOUR level; items and people show
-                                on any level (take stairs/ladders E to reach them)
-                                . walkable  # blocked  v drop-off (open ground
-                                BELOW you - you're on an edge/wall; goto a tile
-                                out there to climb DOWN). north=up, east=right.
-                                Walk only on '.', '*', or '/'. STAIRS ARE
-                                DIRECTIONAL - climb from the BOTTOM step (if a
-                                step is "blocked", walk around to line up, then
-                                MOVE onto them). Cell at row r,col c = tile
-                                (grid_origin_tx+c, grid_origin_ty+r); goto any tx,ty.
   doors (list)                - nearby doors: {name, dx, dy, closed}
 
 # YOUR JOURNAL (you maintain this - it persists across turns)
@@ -352,8 +333,9 @@ periodically). For finer detail you have the recall/quests tools.
             {"dir": one of n,s,e,w,ne,nw,se,sw, "steps": <n, default 1>} to walk
             n tiles that compass way, OR {"tx": <x>, "ty": <y>} to walk to an
             absolute game tile (the engine pathfinds there).
-            Use the grid: step onto '.' tiles, never into '#'. To reach an
-            NPC/object, move toward its (dx,dy) or use its absolute {tx,ty}.
+            Use the room description + objects/nearby lists to choose a
+            direction or tile. To reach an NPC/object, move toward its (dx,dy)
+            or use its absolute {tx,ty}.
   goto    - PATHFIND to a destination and walk there automatically, routing
             around walls and THROUGH doorways. params: {"name": "<NPC/object/
             place>"} to go to the nearest thing with that name OR a remembered
@@ -468,6 +450,12 @@ periodically). For finer detail you have the recall/quests tools.
                  and add notes as you learn more about it.
   note_npc     - Save a note about an NPC. params: {"name": "...", "note": "..."}.
                  Record leads, what they want, or what they told you.
+  add_topic    - Record a TOPIC/subject you're tracking across the game (a
+                 place, person, mystery, or clue), with a note. params:
+                 {"topic": "...", "note": "..."}. Use this to build your
+                 evolving understanding of a subject (e.g. topic "the murder"
+                 with notes as you learn more). Topics persist and group related
+                 clues, unlike per-NPC notes.
   (These journal tools do not advance the game. Prefer capturing a quest the
    moment you decide on a goal - a well-kept quest log is how you stay strategic
    across many turns. After using one, take a game action the same or next turn.)
@@ -965,8 +953,13 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
              **({"town_exit": True} if o.get("town_exit") else {})}
             for o in objects[:obj_n]
         ],
-        "grid_legend": state.get("grid_legend"),
-        "grid": state.get("grid"),
+        # NOTE: the ASCII "grid"/"grid_legend" are intentionally NOT sent to
+        # the model. LLMs read a top-down ASCII map poorly, and it duplicated
+        # the (much better) prose room_description + the structured objects/
+        # nearby lists - three representations of the same space bloated the
+        # prompt and added confusion. The raw state["grid"] is still used by the
+        # wedge-escape logic and the inspector map; we just don't burden the
+        # model's prompt with it.
     }
     # Advisory: how many recent turns pursued the SAME goal. Surfacing this lets
     # the model NOTICE a cycle and change tack on its own (no steering).
@@ -1338,7 +1331,7 @@ def parse_reply(text: str) -> tuple[str, dict]:
         mt = re.search(r'(?:move|go|goto|walk|head)\w*\s+(?:toward\s+)?\(?\s*(\d{3,5})\s*,\s*(\d{3,5})\s*\)?',
                        text, re.I)
         if mt:
-            return ("(salvaged: goto from regurgitated log)",
+            return ("(guard) salvaged goto from a garbled reply",
                     {"type": "goto", "tx": int(mt.group(1)), "ty": int(mt.group(2))})
         for _verb, _act in (("search", {"type": "search"}),
                             ("look", {"type": "search"}),
@@ -1346,7 +1339,7 @@ def parse_reply(text: str) -> tuple[str, dict]:
                             ("open", {"type": "open"}),
                             ("continue", {"type": "continue"})):
             if re.search(rf'\b{_verb}\b', text, re.I):
-                return (f"(salvaged: {_verb} from unparseable reply)", _act)
+                return (f"(guard) salvaged {_verb} from a garbled reply", _act)
     if not isinstance(obj, dict):
         return ("(could not parse reply)", {"type": "wait"})
     # Accept the model's rationale under any of the common field names it emits
@@ -1598,7 +1591,7 @@ def ensure_exult_running(args) -> subprocess.Popen | None:
     raise TimeoutError("Exult did not open the agent port within 60s")
 
 
-META_TOOLS = {"add_quest", "update_quest", "note_npc"}
+META_TOOLS = {"add_quest", "update_quest", "note_npc", "add_topic"}
 
 
 def _apply_meta(action: dict, kb: "KnowledgeBase") -> str:
@@ -1629,6 +1622,11 @@ def _apply_meta(action: dict, kb: "KnowledgeBase") -> str:
     if t == "note_npc":
         kb.note_npc(action.get("name", ""), action.get("note", ""))
         return f"noted NPC '{action.get('name','')}'"
+    if t == "add_topic":
+        _tn = action.get("topic") or action.get("name") or ""
+        kb.add_topic(_tn, str(action.get("note", "")),
+                     getattr(kb, "current_turn", 0))
+        return f"recorded topic '{_tn}'"
     return "no-op"
 
 

@@ -952,8 +952,12 @@ class KnowledgeBase:
                 if e.get("kind") == "move":
                     out.append(e.get("text", ""))
                 else:
-                    _why = f'  (I intended: "{e["reason"]}")' if e.get("reason") else ""
-                    out.append(f"[T{e.get('turn', 0)}] {e.get('text','')}{_why}")
+                    # Prose, NOT a "[T###] ..." line: that machine-y format was
+                    # bait the model echoed back as its own output (regurgitating
+                    # the log instead of acting). Natural past-tense narrative
+                    # reads as memory, not as an output schema to mimic.
+                    _why = f' (aiming to {e["reason"]})' if e.get("reason") else ""
+                    out.append(f"- you {e.get('text','')}{_why}")
             else:  # legacy plain-string entries
                 out.append(str(e))
         return out
@@ -996,13 +1000,18 @@ class KnowledgeBase:
 
     @staticmethod
     def _fmt_move(e: dict) -> str:
-        span = (f"T{e['turn']}-T{e['turn_to']}" if e.get("turn_to", e["turn"]) != e["turn"]
-                else f"T{e['turn']}")
+        # Prose narrative (not "[T##] move toward ..."): a machine-y log line
+        # invited the model to echo it back verbatim as output. Keep the count
+        # and the no-progress signal, phrased as memory.
         n = e.get("count", 1)
-        prog = "" if e.get("progressed") else " (NO progress - blocked/looping)"
-        cnt = f" x{n}" if n > 1 else ""
-        why = f'  (I intended: "{e["reason"]}")' if e.get("reason") else ""
-        return f"[{span}] move toward {e.get('target')}{cnt}{prog}{why}"
+        tgt = e.get("target")
+        if n > 1:
+            times = f" {n} times" if n > 2 else " twice"
+            if not e.get("progressed"):
+                return f"- you tried to walk to {tgt}{times} but made NO progress (blocked/looping - stop and try something else)"
+            return f"- you walked toward {tgt}{times}"
+        prog = " but were blocked (no progress)" if not e.get("progressed") else ""
+        return f"- you walked toward {tgt}{prog}"
 
     # ----- hint history (operator guidance - persistent, high value) -----
     def record_hint(self, text: str, step: int = 0) -> None:

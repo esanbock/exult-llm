@@ -118,7 +118,6 @@ class OllamaClient:
                         "num_predict": 4096 if self.allow_think else 2048},
         }
         _ml = (self.model or "").lower()
-        _is_qwen = _ml.startswith("qwen") or "qwen3" in _ml
         # Thinking models emit a long chain-of-thought that consumes response
         # tokens (slow, and can starve the JSON). Unless the caller explicitly
         # asked for thinking (--think), turn it OFF so we get a fast, clean JSON
