@@ -132,8 +132,18 @@ class OllamaClient:
         req = urllib.request.Request(
             f"{self.host}/api/chat", data=data,
             headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as he:
+            # Surface Ollama's actual rejection reason (a 400 body explains WHY,
+            # e.g. context length). Without this the driver's generic OSError
+            # handler treats it as an engine-socket drop and spins forever.
+            try:
+                _b = he.read().decode("utf-8")[:300]
+            except Exception:
+                _b = "(no body)"
+            raise RuntimeError(f"ollama {he.code}: {_b}") from he
         pt = int(body.get("prompt_eval_count", 0) or 0)
         rt = int(body.get("eval_count", 0) or 0)
         return {
