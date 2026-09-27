@@ -1464,6 +1464,48 @@ namespace LLM_agent {
 					}
 				}
 			}
+			inv << "]";
+			// PARTY MEMBERS' inventories, so the agent can manage/transfer items
+			// across the party (e.g. 'give bread to Iolo', or move gear to a
+			// member who can use it). Compact: each member's carried item names.
+			inv << ",\"party\":[";
+			{
+				Actor* plist[16];
+				int pcount = gwin->get_party(plist, 0);   // 0 = exclude avatar
+				bool pfirst = true;
+				for (int pi = 0; pi < pcount; ++pi) {
+					Actor* pm = plist[pi];
+					if (!pm || pm == av) {
+						continue;
+					}
+					if (!pfirst) { inv << ','; }
+					pfirst = false;
+					inv << "{\"name\":\"" << json_escape(pm->get_name()) << "\",\"carried\":[";
+					Container_game_object* ppack = pm->get_readied(backpack)
+							? pm->get_readied(backpack)->as_container() : nullptr;
+					bool mfirst = true; int mcount = 0;
+					std::vector<Container_game_object*> pstack;
+					if (ppack) { pstack.push_back(ppack); }
+					while (!pstack.empty() && mcount < 20) {
+						Container_game_object* c = pstack.back();
+						pstack.pop_back();
+						Object_iterator it2(c->get_objects());
+						Game_object* inner2;
+						while ((inner2 = it2.get_next()) != nullptr && mcount < 20) {
+							if (!inner2->get_name().empty()) {
+								if (!mfirst) { inv << ','; }
+								mfirst = false;
+								inv << '"' << json_escape(inner2->get_name()) << '"';
+								++mcount;
+							}
+							if (Container_game_object* ic2 = inner2->as_container()) {
+								pstack.push_back(ic2);
+							}
+						}
+					}
+					inv << "]}";
+				}
+			}
 			inv << "]}";
 			return inv.str();
 		}
@@ -2656,14 +2698,17 @@ namespace LLM_agent {
 				return "{\"ok\":false,\"error\":\"say WHICH item to give: "
 					   "{\\\"item\\\":\\\"<name>\\\",\\\"to\\\":\\\"<npc>\\\"}\"}";
 			}
-			// Find the recipient NPC (nearest matching non-party, within reach).
+			// Find the recipient (nearest matching person within reach). Party
+			// members ARE valid targets now - "give bread to Iolo" transfers the
+			// item to a companion (managing party inventory / feeding a hungry
+			// member). Non-party targets also fire the item's quest usecode.
 			const Tile_coord at = av->get_tile();
 			std::vector<Actor*> npcs;
 			gwin->get_nearby_npcs(npcs);
 			Actor* npc = nullptr;
 			int    nbest = 1 << 30;
 			for (Actor* a : npcs) {
-				if (!a || a == av || a->is_dead() || a->is_in_party()) {
+				if (!a || a == av || a->is_dead()) {
 					continue;
 				}
 				if (!tlow.empty()) {

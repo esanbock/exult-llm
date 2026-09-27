@@ -107,6 +107,12 @@ RPG PLAYER WISDOM (seasoned-player habits):
     (2) LOOT - after you 'attack' and defeat a monster/enemy, 'open' its body
     and 'take' what it dropped. Food and gear are also often just lying in
     buildings/containers to be taken. Plan ahead: restock food BEFORE you starve.
+  * MANAGE THE WHOLE PARTY: your companions also get HUNGRY and will SAY SO
+    (watch their speech/dialogue) - feed them too, or they weaken. You can move
+    items between party members: 'give' an item to a companion by name
+    ({"type":"give","item":"bread","to":"Iolo"}) to feed them or hand over gear
+    they can use. 'inventory' shows a "party" list of what each member carries,
+    so you can see who has what and balance food/weapons/keys across the party.
   * STEALING HAS CONSEQUENCES: "owned" items are property; taking them if
     witnessed angers people/summons guards. Unowned/loot from the dead is free.
   * FIGHT TO GROW: winnable fights give XP/levels ("combat"/"attack"); flee ones
@@ -394,11 +400,13 @@ periodically). For finer detail you have the recall/quests tools.
   pickup  - Take a LOOSE nearby item (ground/table/shelf). params:
             {"name":"<item>"} optional. (take and pickup both work for loose
             items; take also reaches inside containers.)
-  give    - Hand a carried ITEM to a nearby PERSON (may advance a quest). params:
-            {"item":"<item>","to":"<npc>"} ("to" optional=nearest). Stand next
-            to them. Distinct from "drop" (puts item on the ground).
-  inventory - Report worn/carried items. params: none. (Rarely needed - already
-            shown each turn in player.worn / player.carrying.)
+  give    - Hand a carried ITEM to a nearby PERSON - an NPC (may advance a
+            quest) OR a PARTY MEMBER (transfer/feed a companion, e.g. give bread
+            to a hungry Iolo). params: {"item":"<item>","to":"<name>"} ("to"
+            optional=nearest). Stand next to them. Distinct from "drop".
+  inventory - Report YOUR worn/carried items AND a "party" list of what each
+            companion carries (so you can balance food/gear across the party).
+            params: none. (Your own worn/carrying is also shown each turn.)
   annotate - Mark a spot on your map to return to. params: {"label":"<name>"}
             (current pos) or add {"tx","ty"} and optional {"note"}; then "goto"
             it by name.
