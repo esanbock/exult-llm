@@ -2427,6 +2427,17 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if window.available:
             state["_turn_window_override"] = window.get_turn_window()
         _user = summarize_state(state, kb, session.pop("last_look", ""), alert, squeeze)
+        # Operator THROTTLE: wait N ms BEFORE sending the request to ollama, to
+        # cool the LLM box when it runs hot (spaces out the GPU-heavy inference
+        # calls). Default 0 (no effect); live-adjustable 1-1000 ms via the
+        # inspector "throttle ms" control.
+        if window is not None and hasattr(window, "get_throttle_ms"):
+            try:
+                _throttle = window.get_throttle_ms()
+                if _throttle and _throttle > 0:
+                    time.sleep(min(int(_throttle), 1000) / 1000.0)
+            except Exception:
+                pass
         res = ollama.chat_ex(get_effective_system_prompt(), _user)
         reply = res["content"]
         reason, action = parse_reply(reply)
@@ -4199,6 +4210,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             kb.record_guard(_gc)
         result = exult.act(action)
     _ok = result.get("ok") if isinstance(result, dict) else None
+    # Canonical action type for the post-dispatch outcome tracking below. Assign
+    # here so it's always bound regardless of which dispatch branch ran (a
+    # missing assignment on the talk/answer path caused UnboundLocalError,
+    # crashing every turn before the overlay/stats were written).
+    _atype = action.get("type") if isinstance(action, dict) else "?"
     # DESCEND outcome tracking: if the engine reports no REACHABLE way down from
     # this spot, remember it so the guard walks to a different platform edge and
     # retries, instead of the wedge guard thrashing in place (fortress-gateway
@@ -4465,16 +4481,6 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _write_overlay(args.overlay_file, step, action, reason,
                        thinking=session.get("last_thinking", ""))
     time.sleep(args.delay)
-    # Operator THROTTLE (inspector "throttle ms" control): extra per-turn delay
-    # to cool the LLM box when it runs hot. Defaults to 0 (no effect); can be
-    # raised live to 1-1000 ms. Applied here so it slows the whole turn loop.
-    if window is not None and hasattr(window, "get_throttle_ms"):
-        try:
-            _throttle = window.get_throttle_ms()
-            if _throttle and _throttle > 0:
-                time.sleep(min(int(_throttle), 1000) / 1000.0)
-        except Exception:
-            pass
 
 
 def _guard_category(reason: str) -> str:
