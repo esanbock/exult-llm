@@ -86,6 +86,7 @@ class InspectorServer:
             "turn": 0,
             "context_pct": 0,
             "context_label": "",
+            "turn_window": None,   # operator override (None = driver default 450)
         }
         for k in _TEXT_KEYS:
             self._state[k] = ""
@@ -337,6 +338,9 @@ class InspectorServer:
     def _remote_turn_window(self, turns: Optional[int]) -> None:
         with self._lock:
             self._turn_window = turns
+        # Store in the snapshot and broadcast so the UI can confirm the value
+        # actually registered (and a page refresh shows the current setting).
+        self._broadcast("turn_window", turns)
 
 
 def _make_handler(server: "InspectorServer"):
@@ -512,6 +516,7 @@ _INDEX_HTML = r"""<!DOCTYPE html>
       <option value="600">600</option><option value="800">800</option>
       <option value="1000">1000</option>
     </select>
+    <span id="turnwin-ok" style="color:var(--good);font-size:11px;"></span>
   </div>
 </header>
 
@@ -622,6 +627,12 @@ function apply(key, value){
     case "save_ack": { const b=$("savebtn"); b.textContent=value?"Saved!":"Save failed";
       setTimeout(()=>b.textContent="Save game",2500); break; }
     case "answer": setText("answer", value); break;
+    case "turn_window": {
+      const sel=$("turnwin");
+      sel.value = (value==null ? "default" : String(value));
+      const st=$("turnwin-ok"); if(st){ st.textContent="✓ set to "+(value==null?"default":value);
+        setTimeout(()=>{ st.textContent=""; }, 2500); }
+      break; }
     default: setText("p-"+key, value);
   }
 }
@@ -635,6 +646,7 @@ function applySnapshot(s){
   apply("npc_tree", s.npc_tree||[]);
   apply("topics_tree", s.topics_tree||[]);
   apply("resolved", s.resolved||[]);
+  apply("turn_window", s.turn_window);
 }
 
 function connect(){
