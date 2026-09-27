@@ -3726,35 +3726,68 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = {"type": "goto", "tx": pos[0], "ty": pos[1]}
                     reason = f"{reason} [mapped '{nm}' -> ({pos[0]},{pos[1]})]"
             else:
-                # Unresolvable target: it's not visible and not in our mental map
-                # or NPC memory. Don't hand the engine a goto it can't route
-                # (that makes the agent flail). Tell the model it's unknown and
-                # list what IS known so it can pick a real destination or explore.
+                # Before treating the name as unresolvable, try to match it to
+                # something VISIBLE right now - the model often gotos an abstract
+                # label ("victim", "the body", "chest") that IS in view as a real
+                # object/NPC. Fuzzy-match the name (and a few common synonyms)
+                # against nearby objects and NPCs; if one matches, route there.
                 _pp = state.get("player") or {}
-                known = kb.places_view(_pp.get("tx", 0), _pp.get("ty", 0), limit=8)
-                names = ", ".join(k["name"] for k in known) or "(none yet)"
-                session["last_bump"] = (
+                _nml = nm.lower()
+                _SYN = {  # abstract label -> substrings that identify the object
+                    "victim": ("body", "corpse"), "murder victim": ("body", "corpse"),
+                    "the body": ("body", "corpse"), "corpse": ("body", "corpse"),
+                    "dead body": ("body", "corpse"), "the dead": ("body", "corpse"),
+                }
+                _wants = _SYN.get(_nml, (_nml,))
+                _cands = []
+                for o in (state.get("objects") or []):
+                    _on = (o.get("name") or "").lower()
+                    if _on and (any(w in _on for w in _wants) or _nml in _on
+                                or (o.get("body") and any(w in ("body", "corpse") for w in _wants))):
+                        _cands.append((abs(o.get("dx", 99)) + abs(o.get("dy", 99)),
+                                       _pp.get("tx", 0) + o.get("dx", 0),
+                                       _pp.get("ty", 0) + o.get("dy", 0), o.get("name")))
+                for n2 in (state.get("nearby") or []):
+                    _nn = (n2.get("name") or "").lower()
+                    if _nn and (any(w in _nn for w in _wants) or _nml in _nn):
+                        _cands.append((abs(n2.get("dx", 99)) + abs(n2.get("dy", 99)),
+                                       _pp.get("tx", 0) + n2.get("dx", 0),
+                                       _pp.get("ty", 0) + n2.get("dy", 0), n2.get("name")))
+                if _cands:
+                    _cands.sort(key=lambda c: c[0])
+                    _, _rtx, _rty, _rnm = _cands[0]
+                    action = {"type": "goto", "tx": _rtx, "ty": _rty}
+                    reason = f"(guard) '{nm}' -> visible '{_rnm}' @({_rtx},{_rty})"
+                    print(f"[{step:03d}] goto-resolve: '{nm}' -> visible '{_rnm}'")
+                else:
+                  # Unresolvable target: it's not visible and not in our mental map
+                  # or NPC memory. Don't hand the engine a goto it can't route
+                  # (that makes the agent flail). Tell the model it's unknown and
+                  # list what IS known so it can pick a real destination or explore.
+                  known = kb.places_view(_pp.get("tx", 0), _pp.get("ty", 0), limit=8)
+                  names = ", ".join(k["name"] for k in known) or "(none yet)"
+                  session["last_bump"] = (
                     f"You tried to goto '{nm}', but that place is not on your map "
                     f"and you can't see it. Known places you CAN goto: {names}. "
                     f"To find a PERSON, enter buildings (goto through doors '+'/'/' "
                     f"and look inside). Pick a KNOWN place or a visible target, or "
                     f"explore a NEW direction - don't repeat goto '{nm}'.")
-                print(f"[{step:03d}] goto unresolved: '{nm}' (known: {names})")
-                # Self-sufficiency: INFORM (bump above) and let the model choose.
-                # Track how often it repeats an unresolvable goto for the SAME
-                # name; escalate the intervention only if it keeps doing it, and
-                # never ping-pong. First time: just 'look' (a no-move examine) so
-                # the model re-decides with the bump. Then try ONE fresh door.
-                # Only after persistent repeats fall back to explore-far.
-                _un = session.setdefault("unresolved_goto", {})
-                _un[nm] = _un.get(nm, 0) + 1
-                _cnt = _un[nm]
-                if _cnt <= 1:
+                  print(f"[{step:03d}] goto unresolved: '{nm}' (known: {names})")
+                  # Self-sufficiency: INFORM (bump above) and let the model choose.
+                  # Track how often it repeats an unresolvable goto for the SAME
+                  # name; escalate the intervention only if it keeps doing it, and
+                  # never ping-pong. First time: just 'look' (a no-move examine) so
+                  # the model re-decides with the bump. Then try ONE fresh door.
+                  # Only after persistent repeats fall back to explore-far.
+                  _un = session.setdefault("unresolved_goto", {})
+                  _un[nm] = _un.get(nm, 0) + 1
+                  _cnt = _un[nm]
+                  if _cnt <= 1:
                     # Give the model the info and a no-op examine; it decides next.
                     session["last_look"] = describe_scene(state, kb)
                     action = {"type": "wait"}
                     reason = f"(guard) '{nm}' unknown; informed, letting agent choose"
-                else:
+                  else:
                     # It ignored the info and repeated. Try ONE unvisited door
                     # (buildings hide people/chests), else a single explore step.
                     door = None
