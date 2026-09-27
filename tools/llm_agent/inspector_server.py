@@ -236,6 +236,16 @@ class InspectorServer:
         self._append_turn_entry()
 
     def set_action(self, text: str) -> None:
+        # The driver calls set_action either with a plain phrase string OR with
+        # a dict {"action": <phrase>, "result": <short result>} (the tkinter
+        # window paired those into its combined log). Normalize to a string here
+        # so the web client never renders a raw object as "[object Object]".
+        if isinstance(text, dict):
+            _act = str(text.get("action", "")).strip()
+            _res = str(text.get("result", "")).strip()
+            text = f"{_act} -> {_res}" if _res else _act
+        elif not isinstance(text, str):
+            text = str(text)
         self._append_turn_entry(action_result=text)
 
     def set_thought(self, text: str) -> None:
@@ -569,7 +579,12 @@ function renderTree(id, nodes, spec){
     wrap.appendChild(head); wrap.appendChild(kids); box.appendChild(wrap);
   });
 }
-function esc(s){ return String(s==null?"":s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function esc(s){
+  if(s==null) s="";
+  else if(typeof s==="object"){ try{ s=JSON.stringify(s); }catch(e){ s=String(s); } }
+  else s=String(s);
+  return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
 
 const npcSpec = {
   name:n=>n.name||"?",
