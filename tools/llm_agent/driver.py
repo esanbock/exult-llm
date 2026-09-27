@@ -1191,6 +1191,58 @@ def parse_reply(text: str) -> tuple[str, dict]:
     # it as press_key to avoid confusion with a game key-ITEM.)
     if action.get("type") == "press_key":
         action["type"] = "key"
+
+    # ---- Action ALIASING -------------------------------------------------
+    # Small models drift to near-miss synonyms for valid actions (e.g.
+    # "look_around" instead of "search", or a "direction" key instead of
+    # "dir"). Rather than reject these (which wastes a turn and, worse, leaves
+    # the agent with no working recovery tool when it's cornered), map the
+    # common variants onto the canonical action the engine accepts. This
+    # mirrors the existing dx/dy and press_key normalization.
+    _t = action.get("type")
+    if isinstance(_t, str):
+        _TYPE_ALIASES = {
+            # "look around / observe" -> the engine's search (it reports what's
+            # nearby). There is no separate "look" action.
+            "look": "search", "look_around": "search", "lookaround": "search",
+            "look_at": "search", "observe": "search", "examine": "search",
+            "survey": "search", "scan": "search",
+            # movement synonyms
+            "walk": "move", "go": "move", "step": "move", "travel": "goto",
+            "navigate": "goto", "goto_tile": "goto", "move_to": "goto",
+            # item synonyms
+            "grab": "take", "get": "take", "pick_up": "pickup",
+            "pick": "pickup", "loot": "take",
+            # conversation synonyms
+            "reply": "answer", "respond": "answer", "choose": "answer",
+            "select": "answer", "ask": "answer",
+            # "say"/"speak"/"think"/"note" out of a conversation aren't engine
+            # actions - the model is thinking out loud. Treat as a no-op wait so
+            # it doesn't burn the turn on an error and can re-plan next turn.
+            "say": "wait", "speak": "wait", "think": "wait", "note": "wait",
+            "idle": "wait", "rest": "wait", "pause": "wait",
+            # misc
+            "descend_stairs": "descend", "go_down": "descend",
+        }
+        _canon = _TYPE_ALIASES.get(_t.lower())
+        if _canon:
+            action["type"] = _canon
+
+    # Field alias: the engine reads "dir"; models often send "direction" or
+    # "heading". Fold them in (without clobbering an explicit "dir").
+    for _dkey in ("direction", "heading", "facing"):
+        if _dkey in action and "dir" not in action:
+            action["dir"] = action.pop(_dkey)
+    # Direction VALUE aliases: accept spelled-out compass words.
+    _d = action.get("dir")
+    if isinstance(_d, str):
+        _DIR_WORDS = {
+            "north": "n", "south": "s", "east": "e", "west": "w",
+            "northeast": "ne", "northwest": "nw",
+            "southeast": "se", "southwest": "sw",
+            "up": "n", "down": "s", "left": "w", "right": "e",
+        }
+        action["dir"] = _DIR_WORDS.get(_d.lower(), _d.lower())
     return (reason, action)
 
 
