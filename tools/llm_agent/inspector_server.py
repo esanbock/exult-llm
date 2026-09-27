@@ -474,8 +474,13 @@ _INDEX_HTML = r"""<!DOCTYPE html>
   .chip { font-size:11px; padding:2px 8px; border-radius:10px; background:#0c0f14; color:var(--muted); }
   .chip.hp { color:var(--good); } .chip.err { color:var(--err); }
   #conn { background:#3a2323; color:#e88; } #conn.ok { background:#213a24; color:var(--good); }
-  .ctxbar { width:160px; height:9px; background:#0c0f14; border-radius:5px; overflow:hidden; display:inline-block; vertical-align:middle;}
-  .ctxfill { height:100%; width:0; background:var(--accent); transition:width .3s; }
+  .ctxwrap{display:inline-flex;align-items:center;gap:8px;}
+  .ctxbar{position:relative;width:220px;height:18px;background:#0c0f14;border:1px solid #2a323d;
+          border-radius:4px;overflow:hidden;display:inline-block;vertical-align:middle;}
+  .ctxfill{position:absolute;left:0;top:0;height:100%;width:0;background:var(--accent);transition:width .3s;}
+  .ctxpct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+          font-size:11px;font-weight:600;color:#fff;text-shadow:0 0 3px #000;}
+  .ctxlbl{font-size:10.5px;color:var(--muted);}
   input,button,select { font:inherit; background:var(--panel); color:var(--fg);
          border:1px solid #333; border-radius:4px; padding:3px 7px; }
   button{cursor:pointer;} button:hover{border-color:var(--accent);}
@@ -526,7 +531,10 @@ _INDEX_HTML = r"""<!DOCTYPE html>
   <span id="c-loc" class="chip"></span>
   <span id="c-hp" class="chip hp"></span>
   <span id="c-pos" class="chip"></span>
-  <span class="chip">ctx <span class="ctxbar"><span class="ctxfill" id="ctxfill"></span></span> <span id="ctxlbl"></span></span>
+  <span class="ctxwrap" title="Context window usage">
+    <span class="ctxbar"><span class="ctxfill" id="ctxfill"></span><span class="ctxpct" id="ctxpct">0%</span></span>
+    <span class="ctxlbl" id="ctxlbl"></span>
+  </span>
   <span id="c-model" class="chip"></span>
   <span style="flex:1"></span>
   <input id="askbox" placeholder="Ask the agent…" size="22"/>
@@ -652,7 +660,8 @@ function apply(key,value){
   switch(key){
     case "turn": setText("c-turn","turn "+value); break;
     case "context":{const p=value.pct||0;$("ctxfill").style.width=p+"%";
-      $("ctxfill").style.background=p>90?"#ff5c5c":p>75?"#e0b34a":"#5ab0ff";setText("ctxlbl",(p||0)+"%");break;}
+      $("ctxfill").style.background=p>90?"#ff5c5c":p>75?"#e0b34a":"#5ab0ff";
+      setText("ctxpct",(p||0)+"%"); setText("ctxlbl",value.label||"");break;}
     case "turn_log": renderNow(value); renderFeed(value); break;
     case "stats_kv": renderKV(value); break;
     case "notes": renderNotes(value); break;
@@ -674,7 +683,7 @@ function apply(key,value){
 function applySnapshot(s){
   setText("c-turn","turn "+(s.turn||0));
   setText("c-model", s.title? "" : "");
-  apply("context",{pct:s.context_pct||0});
+  apply("context",{pct:s.context_pct||0,label:s.context_label||""});
   ["gstatus","plot","map","area_map","inventory","dialog","quests","tool_stats","context_dump","room"].forEach(k=>apply(k,s[k]));
   apply("turn_log",s.turn_log||[]);apply("stats_kv",s.stats_kv||{});apply("notes",s.notes||[]);
   apply("npc_tree",s.npc_tree||[]);apply("topics_tree",s.topics_tree||[]);apply("resolved",s.resolved||[]);
