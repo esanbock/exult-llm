@@ -3486,6 +3486,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         match = next((o for o in (state.get("objects") or [])
                       if _pn and (o.get("name") or "").lower() == _pn), None)
         _fails = session.get("pickup_fails", {}).get(_pn, 0)
+        _dz = (match.get("dz", 0) or 0) if match else 0
         if match and (abs(match.get("dx", 0)) > 1 or abs(match.get("dy", 0)) > 1):
             if _fails >= 3:
                 # Tried to reach it several times without success - give up.
@@ -3499,8 +3500,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 reason = f"(guard) '{_pn}' is {abs(match.get('dx',0))+abs(match.get('dy',0))} tiles away; walking to it to take it"
                 session.setdefault("pickup_fails", {})[_pn] = _fails + 1
                 print(f"[{step:03d}] reach-guard: goto '{_pn}' @({action['tx']},{action['ty']}) before take")
+        elif match and _dz < 0 and (_pp.get("tz", 0) or 0) > 0:
+            # Right x,y but the item is BELOW us (we're on a ledge/wall-top above
+            # it, e.g. standing on the wall over a ground-level key). take needs
+            # the SAME level - descend to the item's floor first.
+            if _fails >= 3:
+                action = _explore_far(state, session, wedged)
+                reason = f"(guard) '{_pn}' below us, can't reach after retries; moving on"
+            else:
+                action = {"type": "descend"}
+                reason = f"(guard) '{_pn}' is below you (you're up high); descending to its level to take it"
+                session.setdefault("pickup_fails", {})[_pn] = _fails + 1
+                print(f"[{step:03d}] reach-guard: descend to '{_pn}' (dz={_dz}) before take")
         elif match:
-            # Adjacent - clear the fail counter; let the take proceed.
+            # Adjacent AND same level - clear the fail counter; let take proceed.
             session.setdefault("pickup_fails", {}).pop(_pn, None)
             print(f"[{step:03d}] pickup-guard: stop retrying '{_pn}'")
 
