@@ -2648,6 +2648,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             _thk = res.get("thinking") if isinstance(res, dict) else None
             if _thk:
                 window.set_thought(_thk)
+    # Stash the model's raw thinking (if any) for the stream overlay. Empty for
+    # think-off models (e.g. our Granite with think=false); populated for
+    # reasoning models. Read by _write_overlay at the end of the turn.
+    session["last_thinking"] = (res.get("thinking") if isinstance(res, dict) else "") or ""
 
     if window.available and args.dry_run:
         window.set_thinking(reason)
@@ -4415,7 +4419,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # Overlay text for the video stream (ffmpeg drawtext reads this file live).
     # Shows what the LLM is doing + why, so viewers see the reasoning.
     if getattr(args, "overlay_file", None):
-        _write_overlay(args.overlay_file, step, action, reason)
+        _write_overlay(args.overlay_file, step, action, reason,
+                       thinking=session.get("last_thinking", ""))
     time.sleep(args.delay)
     # Operator THROTTLE (inspector "throttle ms" control): extra per-turn delay
     # to cool the LLM box when it runs hot. Defaults to 0 (no effect); can be
@@ -4429,10 +4434,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             pass
 
 
-def _write_overlay(path: str, step: int, action: dict, reason: str) -> None:
-    """Write a compact 'action / reasoning' overlay for the stream. Sanitized so
-    ffmpeg drawtext (textfile=...:reload=1) renders it safely (no chars that
-    break the filter; wrapped to a couple of lines)."""
+def _write_overlay(path: str, step: int, action: dict, reason: str,
+                   thinking: str = "") -> None:
+    """Write the stream overlay: the agent's REASONING (and raw THINKING if the
+    model emits it) - NOT the action. Viewers already see the action happen in
+    the game; the interesting part is *why*. Sanitized so ffmpeg drawtext
+    (textfile=...:reload=1) renders it safely; pixel-wrapped to fill the frame."""
     try:
         import re as _re
         def clean(s: str) -> str:
@@ -4441,56 +4448,11 @@ def _write_overlay(path: str, step: int, action: dict, reason: str) -> None:
             s = _re.sub(r"\s+", " ", s).strip()
             return s
 
-        # Phrase the action as a short natural sentence for viewers.
-        _DIRS = {"n": "north", "s": "south", "e": "east", "w": "west",
-                 "ne": "northeast", "nw": "northwest", "se": "southeast",
-                 "sw": "southwest"}
-        act_str = ""
-        if isinstance(action, dict):
-            t = action.get("type", "")
-            if t == "move":
-                if action.get("dir"):
-                    d = _DIRS.get(str(action["dir"]).lower(), action["dir"])
-                    act_str = f"Walking {d}"
-                elif action.get("tx") is not None:
-                    act_str = f"Walking toward ({action.get('tx')},{action.get('ty')})"
-                else:
-                    act_str = "Walking"
-            elif t == "goto":
-                dest = action.get("name") or (
-                    f"({action.get('tx')},{action.get('ty')})"
-                    if action.get("tx") is not None else "")
-                act_str = f"Heading to {dest}".strip()
-            elif t == "talk":
-                who = action.get("name") or action.get("target") or "someone"
-                act_str = f"Talking to {who}"
-            elif t == "answer":
-                topic = action.get("text") or action.get("option") or action.get("topic")
-                act_str = f"Asking about {topic}" if topic else "Choosing a reply"
-            elif t == "continue":
-                act_str = "Listening"
-            elif t == "wait":
-                act_str = "Thinking"
-            elif t in ("take", "pickup"):
-                act_str = f"Taking {action.get('name', 'an item')}"
-            elif t == "use":
-                act_str = f"Using {action.get('name', 'something')}"
-            elif t == "attack":
-                act_str = f"Attacking {action.get('name', 'a foe')}"
-            elif t == "look" or t == "search":
-                act_str = "Looking around"
-            else:
-                act_str = t.replace("_", " ").capitalize() if t else ""
-        else:
-            act_str = str(action)
-
         rsn = (reason or "").strip()
         if rsn.startswith("(guard)"):
             rsn = rsn[len("(guard)"):].strip()
-        # Allow enough text for 3 fuller lines (was 150 -> chopped mid-sentence,
-        # e.g. "...I have n"). The pixel-wrap below decides the real line breaks.
-        act_str = clean(act_str)[:90]
-        rsn = clean(rsn)[:320]
+        thk = clean(thinking or "")
+        rsn = clean(rsn)
 
         # The overlay font (LiberationSans) is PROPORTIONAL, so wrapping by a
         # fixed character count either overflows (many caps) or wastes width
@@ -4529,10 +4491,15 @@ def _write_overlay(path: str, step: int, action: dict, reason: str) -> None:
             return out
 
         parts = []
-        if act_str:
-            parts.append(f"> {act_str}")
-        # 3 lines of reasoning, each filling the full frame width.
-        parts.extend(wrap_px(rsn, _PX_BUDGET, 3))
+        # Reasoning first (the "why"), up to 3 lines filling the frame width.
+        if rsn:
+            parts.extend(wrap_px(rsn, _PX_BUDGET, 3))
+        # If the model emitted raw thinking (reasoning models), show a line or
+        # two of it below the reasoning, prefixed so viewers can tell them apart.
+        if thk:
+            _room = max(0, 4 - len(parts))
+            if _room:
+                parts.extend(wrap_px("(thinking) " + thk, _PX_BUDGET, _room))
         text = "\n".join(parts) if parts else " "
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
