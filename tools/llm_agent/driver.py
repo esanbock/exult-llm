@@ -693,6 +693,45 @@ def _action_phrase(action) -> str:
     return f"{t} {_n}" if _n else t
 
 
+def _recognize_place(objects: list, nearby: list) -> str:
+    """Give the LLM the 'sense of place' a human gets at a glance. The engine
+    sends a flat object list with coordinates but no synthesis, so the model
+    can't tell it is standing IN a stable (hay, stalls, pitchfork, a horse) vs
+    a house (bed, table, hearth). Detect signature object/creature clusters
+    among what is CLOSE (within ~8 tiles) and name the location, so the agent
+    knows it has arrived and can stop re-navigating to a place it is already in.
+    Returns a short phrase like "the STABLES" or "a dwelling", or "" if unclear.
+    """
+    def close(items):
+        names = []
+        for it in items or []:
+            if abs(it.get("dx", 99)) + abs(it.get("dy", 99)) <= 8:
+                nm = (it.get("name") or "").lower()
+                if nm:
+                    names.append(nm)
+        return names
+    names = close(objects) + close(nearby)
+    blob = " ".join(names)
+    def has(*words):
+        return sum(1 for w in words if w in blob)
+    # Signature clusters (need >=2 signals to avoid false positives).
+    if has("hay", "stall", "pitchfork", "trough", "horseshoe", "horse", "manger") >= 2:
+        return "the STABLES (hay/stalls/horse tack around you)"
+    if has("anvil", "forge", "bellows", "tongs", "smith", "furnace") >= 2:
+        return "a SMITHY / forge (anvil/tongs/forge)"
+    if has("altar", "pew", "candelabra", "shrine", "reliquary") >= 2:
+        return "a TEMPLE / shrine"
+    if has("counter", "barrel", "keg", "mug", "tankard", "bottle", "bar") >= 2:
+        return "a TAVERN / inn (bar, kegs, mugs)"
+    if has("easel", "artist", "paint", "canvas") >= 2:
+        return "an ARTIST'S studio"
+    if has("bookshelf", "book", "scroll", "desk", "lectern") >= 3:
+        return "a LIBRARY / study"
+    if has("bed", "table", "chair", "hearth", "chest", "cupboard", "shelf") >= 2:
+        return "inside a DWELLING (a home/room)"
+    return ""
+
+
 def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: str = "", alert: str = "", squeeze: int = 0) -> str:
     """Compact the observation to keep the prompt small and focused.
 
@@ -773,6 +812,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "hour": state.get("hour"),
         "is_night": state.get("is_night"),
         "in_combat": state.get("in_combat"),
+        # Synthesized "sense of place" from nearby object clusters (a human sees
+        # hay+stalls+horse and knows it's a stable; the flat object list doesn't
+        # convey that). Only when NOT mid-conversation, to avoid clutter.
+        **({"you_appear_to_be_in": _recognize_place(objects, nearby)}
+           if (not in_convo and _recognize_place(objects, nearby)) else {}),
         "conversation_in_progress": in_convo,
         "conversation_active": state.get("conversation_active"),
         "npc_text": state.get("npc_text") if in_convo else None,
