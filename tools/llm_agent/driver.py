@@ -3675,8 +3675,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     action = {"type": "search"}
                     reason = "(guard) thrashing between nearby goals; searching what's right here"
                 else:
-                    action = {"type": "look"}
-                    reason = "(guard) thrashing between nearby goals; looking around to re-assess"
+                    # NOTE: emit a real no-op wait, NOT {"type":"look"} - the
+                    # driver's look-handler runs EARLIER in the turn, so a look
+                    # set here would fall through to the engine as 'unknown
+                    # action type'. Describe the scene ourselves and wait.
+                    session["last_look"] = describe_scene(state, kb)
+                    kb.record_action("looked around")
+                    action = {"type": "wait", "_counted": True}
+                    reason = "(guard) thrashing between nearby goals; re-assessing (looked around)"
                     session["last_bump"] = (
                         "You have been walking back and forth between spots a few "
                         "tiles apart without arriving at anything - you ARE in the "
@@ -4152,9 +4158,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 # Remember the subject we just asked about, so the NPC's reply
                 # next turn gets filed under this topic in the shared topic KB.
                 session["current_topic"] = _ans[_i]
+        # SAFETY NET: a driver-only pseudo-action (e.g. "look", which the
+        # look-handler EARLIER in the turn normally converts, but a later guard
+        # can re-introduce) must never reach the engine as 'unknown action
+        # type'. Convert any such leftover to a harmless wait right before
+        # dispatch. (Engine-valid types pass through untouched.)
+        if isinstance(action, dict) and action.get("type") == "look":
+            action = {"type": "wait", "_counted": True}
         result = exult.act(action)
-    # Tool-call stats: count the action type and its outcome (ok/err).
-    _atype = action.get("type") if isinstance(action, dict) else "?"
     _ok = result.get("ok") if isinstance(result, dict) else None
     # DESCEND outcome tracking: if the engine reports no REACHABLE way down from
     # this spot, remember it so the guard walks to a different platform edge and
