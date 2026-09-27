@@ -1992,29 +1992,17 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if state.get("conversation_in_progress") and npc_text:
         kb.add_journal(npc_text)
         cur_npc = session.get("current_npc", "?")
-        # If we don't have a reliable partner (conversation started via goto or
-        # some path that didn't set current_npc), infer it as the NEAREST
-        # non-party NPC. Without this, dialogue trees for such NPCs (e.g.
-        # Finnigan reached via goto) stay empty. Only infer when unset.
+        # Speaker attribution rule: we ONLY trust a speaker that was set
+        # deliberately - when the agent issued a `talk` action (current_npc set
+        # to that NPC) or a name was revealed mid-conversation. If a conversation
+        # somehow produced NPC text without a known partner, we do NOT guess by
+        # proximity: guessing is exactly what misfiled companion dialogue under a
+        # nearby "dog". Per policy, unknown attribution defaults to a clearly
+        # labelled "unknown speaker" so nothing is ever blamed on the wrong
+        # character. (Better a truthful "unknown" than a confident wrong guess.)
         if cur_npc in ("?", "", None):
-            # Animals (dog/cat/horse/sheep/etc.) cannot hold a conversation in
-            # BG, yet they show up in 'nearby' and were sometimes CLOSER than the
-            # real speaker - so companion/NPC dialogue got misfiled under "dog"
-            # (which then made the LLM invent "the dog hinted..."). Exclude
-            # non-speaking creatures from the speaker inference.
-            _animals = ("dog", "cat", "horse", "sheep", "cow", "pig", "chicken",
-                        "rat", "bat", "rabbit", "deer", "wolf", "fox", "bird",
-                        "mouse", "goat", "donkey", "mule", "ox")
-            def _is_animal(nm):
-                low = (nm or "").lower()
-                return any(a == low or a in low.split() for a in _animals)
-            _cands = [n for n in (state.get("nearby") or [])
-                      if n.get("name") and not n.get("in_party") and not n.get("dead")
-                      and not _is_animal(n.get("name"))]
-            if _cands:
-                _near = min(_cands, key=lambda n: abs(n.get("dx", 99)) + abs(n.get("dy", 99)))
-                cur_npc = _near["name"]
-                session["current_npc"] = cur_npc
+            cur_npc = "unknown speaker"
+            session["current_npc"] = cur_npc
         # NAME REVEAL: NPCs are shown by a generic role ("shopkeeper", "peasant",
         # "guard") until they tell you their name. When a line reveals "My name
         # is X", merge the generic-role record into the real name so we don't
@@ -2025,7 +2013,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             _real = _mn.group(1)
             _generic_roles = ("shopkeeper", "peasant", "guard", "man", "woman",
                               "noble", "fighter", "sage", "merchant", "beggar",
-                              "child", "sailor", "monk", "healer", "innkeeper")
+                              "child", "sailor", "monk", "healer", "innkeeper",
+                              "unknown speaker")
             if cur_npc.lower() in _generic_roles and _real != cur_npc:
                 kb.merge_npc(cur_npc, _real)
                 cur_npc = _real
