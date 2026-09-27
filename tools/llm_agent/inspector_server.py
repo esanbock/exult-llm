@@ -44,7 +44,7 @@ _TEXT_KEYS = (
     "tool_stats", "context_dump", "area_map", "answer", "thinking",
 )
 # Panels pushed as structured data (lists/dicts) rendered specially by the client.
-_STRUCT_KEYS = ("topics_tree", "npc_tree", "resolved", "stats_kv", "turn_log", "notes")
+_STRUCT_KEYS = ("topics_tree", "npc_tree", "resolved", "stats_kv", "turn_log", "notes", "guard_stats")
 
 
 def _primary_lan_ip() -> Optional[str]:
@@ -279,6 +279,10 @@ class InspectorServer:
     def set_notes(self, notes: list) -> None:
         """Aggregated per-NPC notes/journal for the dedicated Notes panel."""
         self._broadcast("notes", list(notes or []))
+
+    def set_guard_stats(self, rows: list) -> None:
+        """Per-run guard-firing counts for the dedicated Guard-stats panel."""
+        self._broadcast("guard_stats", list(rows or []))
 
     def set_npc_tree(self, chars: list) -> None:
         self._broadcast("npc_tree", list(chars or []))
@@ -597,6 +601,7 @@ _INDEX_HTML = r"""<!DOCTYPE html>
     <div class="card tall"><h2>Resolved quests</h2><div class="body" id="p-resolved"></div></div>
     <div class="card tall"><h2>Notes / Journal</h2><div class="body" id="p-notes"></div></div>
     <div class="card tall"><h2>Stats</h2><div class="body" id="p-stats_kv"></div></div>
+    <div class="card tall"><h2>Guard firings (this run)</h2><div class="body" id="p-guard_stats"></div></div>
     <div class="card tall"><h2>Inventory</h2><div class="body pre" id="p-inventory"></div></div>
   </div>
 
@@ -655,6 +660,22 @@ function renderNotes(groups){const box=$("p-notes");box.innerHTML="";
   (groups||[]).forEach(g=>{const h=document.createElement("div");h.className="name";
     h.textContent=(g.npc||"?")+" ("+(g.total_notes||(g.notes||[]).length)+")";box.appendChild(h);
     (g.notes||[]).forEach(n=>{const d=document.createElement("div");d.className="child dim";d.textContent="• "+n;box.appendChild(d);});});}
+function renderGuards(rows){
+  const box=$("p-guard_stats"); if(!box) return; box.innerHTML="";
+  if(!rows||!rows.length){box.innerHTML='<span class="child dim">(none yet)</span>';return;}
+  const max=Math.max(...rows.map(r=>r.count||0),1);
+  const t=document.createElement("table"); t.className="kv";
+  rows.forEach(r=>{
+    const tr=document.createElement("tr");
+    const pct=Math.round(100*(r.count||0)/max);
+    tr.innerHTML='<td class="k" style="white-space:nowrap;">'+esc(r.guard)+'</td>'+
+      '<td style="width:99%;"><span style="display:inline-block;height:10px;width:'+pct+'%;'+
+      'background:var(--accent);border-radius:2px;vertical-align:middle;"></span> '+
+      '<b>'+esc(r.count)+'</b></td>';
+    t.appendChild(tr);
+  });
+  box.appendChild(t);
+}
 function renderTree(id,nodes,spec){const box=$(id);
   // Preserve which top-level nodes are expanded so a live update doesn't
   // collapse the one the user just opened.
@@ -691,6 +712,7 @@ function apply(key,value){
     case "turn_log": renderNow(value); renderFeed(value); break;
     case "stats_kv": renderKV(value); break;
     case "notes": renderNotes(value); break;
+    case "guard_stats": renderGuards(value); break;
     case "npc_tree": renderTree("p-npc_tree",value,npcSpec); break;
     case "topics_tree": renderTree("p-topics_tree",value,topicSpec); break;
     case "resolved": renderList("p-resolved",value,x=>typeof x==="string"?x:(x.name||JSON.stringify(x))); break;
@@ -717,6 +739,7 @@ function applySnapshot(s){
   apply("npc_tree",s.npc_tree||[]);apply("topics_tree",s.topics_tree||[]);apply("resolved",s.resolved||[]);
   apply("turn_window",s.turn_window);
   apply("throttle_ms",s.throttle_ms||0);
+  apply("guard_stats",s.guard_stats||[]);
 }
 function connect(){
   const es=new EventSource("/events");

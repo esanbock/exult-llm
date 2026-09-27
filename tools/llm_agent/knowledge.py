@@ -1105,6 +1105,26 @@ class KnowledgeBase:
         (turns, parse-fail, per-tool ok/err) start fresh so a run's error rates
         (e.g. 'open') reflect THIS run, not all history."""
         self.tool_stats = {"turns": 0, "parse_fail": 0, "tools": {}}
+        # Per-run count of how often each GUARD intervention fired, so the
+        # inspector can show which loops/failures the agent hits most and which
+        # guards are doing the work. Reset per run like the other health metrics.
+        self.guard_stats = {}
+
+    def record_guard(self, name: str) -> None:
+        """Count one guard intervention (categorized name). Guards are the
+        driver's automatic corrections when the model loops, stalls, or emits
+        an invalid/idle action; tallying them shows which are load-bearing."""
+        if not name:
+            return
+        if not hasattr(self, "guard_stats"):
+            self.guard_stats = {}
+        self.guard_stats[name] = self.guard_stats.get(name, 0) + 1
+
+    def guard_stats_data(self, top: int = 30) -> list:
+        """Guard-firing counts for the GUI, most-fired first."""
+        gs = getattr(self, "guard_stats", {}) or {}
+        rows = sorted(gs.items(), key=lambda kv: -kv[1])[:top]
+        return [{"guard": k, "count": v} for k, v in rows]
 
     def record_turn(self, parse_ok: bool) -> None:
         """Count one agent turn; note whether the model's reply parsed."""

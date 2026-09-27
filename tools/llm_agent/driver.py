@@ -1886,6 +1886,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             }
             window.set_stats_kv(stats_kv)
             window.set_tool_stats(kb.tool_stats_pretty(top=20))
+            if hasattr(window, "set_guard_stats"):
+                try:
+                    window.set_guard_stats(kb.guard_stats_data(top=30))
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -2905,6 +2910,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         result = exult.act(action)
         kb.record_tool(_atype, result.get("ok") if isinstance(result, dict) else None)
         session["last_action_type"] = _atype
+        _gc = _guard_category(reason)
+        if _gc:
+            kb.record_guard(_gc)
         if window.available:
             window.set_action(_action_phrase(action))
             window.set_thinking(reason)
@@ -2946,6 +2954,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             else:
                 result = exult.act(action)
             kb.record_tool(_atype, result.get("ok") if isinstance(result, dict) else None)
+            _gc = _guard_category(reason)
+            if _gc:
+                kb.record_guard(_gc)
             if window.available:
                 window.set_action(_action_phrase(action))
                 window.set_thinking(reason)
@@ -4165,6 +4176,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # dispatch. (Engine-valid types pass through untouched.)
         if isinstance(action, dict) and action.get("type") == "look":
             action = {"type": "wait", "_counted": True}
+        # Guard-firing stats: if the final reason for this turn is a guard
+        # intervention, tally its category for the inspector.
+        _gc = _guard_category(reason)
+        if _gc:
+            kb.record_guard(_gc)
         result = exult.act(action)
     _ok = result.get("ok") if isinstance(result, dict) else None
     # DESCEND outcome tracking: if the engine reports no REACHABLE way down from
@@ -4443,6 +4459,43 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 time.sleep(min(int(_throttle), 1000) / 1000.0)
         except Exception:
             pass
+
+
+def _guard_category(reason: str) -> str:
+    """Map a '(guard) <text>' reason to a short, STABLE category so guard-firing
+    counts group sensibly (many guards share a theme). Returns '' for
+    non-guard reasons (the model's own reasoning), which are not counted."""
+    r = (reason or "").strip()
+    if not r.startswith("(guard)"):
+        return ""
+    r = r[len("(guard)"):].strip().lower()
+    _CATS = [
+        ("thrash", ("thrashing",)),
+        ("arrival", ("arrived at", "at landmark", "at target with a container")),
+        ("wedged/oscillation", ("wedged", "oscillation trap", "flood-fill",
+                                 "trap;", "committing to far tile")),
+        ("goto-not-moving", ("goto not moving", "goto stuck", "route impassable")),
+        ("stuck-in-place", ("stuck near", "stuck looping", "stuck;", "already looked here")),
+        ("narrate-but-wait", ("narrated but waited",)),
+        ("conversation-coerce", ("invalid ", "coerced ", "same answer looping",
+                                  "ending conversation", "exhausting dialogue",
+                                  "leaving", "no answers yet", "conversation hung",
+                                  "advancing npc dialog", "no conversation open")),
+        ("greet-new-npc", ("greeting new person",)),
+        ("search-guard", ("nothing to search", "corpse not lootable",
+                           "body already looted", "body empty", "emptied body")),
+        ("container/loot", ("container open", "done looting", "container here")),
+        ("stairs/elevation", ("stairs unclimbable", "climbing ramp",
+                               "approaching", "elevated", "descend")),
+        ("open-guard", ("repeated open", "no door")),
+        ("move-normalize", ("move dx", "move with zero delta")),
+        ("salvage", ("salvaged",)),
+        ("explore", ("exploring", "no active quest lead")),
+    ]
+    for cat, keys in _CATS:
+        if any(k in r for k in keys):
+            return cat
+    return "other-guard"
 
 
 def _write_overlay(path: str, step: int, action: dict, reason: str,
