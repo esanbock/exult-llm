@@ -1887,7 +1887,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 "Parse fails": _ts.get("parse_fail", 0),
             }
             window.set_stats_kv(stats_kv)
-            window.set_tool_stats(kb.tool_stats_data(top=20))
+            window.set_tool_stats(kb.tool_stats_pretty(top=20))
         except Exception:
             pass
 

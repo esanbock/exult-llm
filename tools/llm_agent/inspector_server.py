@@ -507,6 +507,8 @@ _INDEX_HTML = r"""<!DOCTYPE html>
   table.kv{width:100%;border-collapse:collapse;} table.kv td{padding:1px 6px;border-bottom:1px solid #14181e;}
   table.kv td.k{color:var(--muted);}
   .mono{white-space:pre;font-size:11.5px;line-height:1.15;}
+  .pre{white-space:pre-wrap;}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
   /* collapsible */
   details{background:var(--panel);border:1px solid #000;border-radius:6px;}
   details>summary{padding:6px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase;
@@ -552,7 +554,6 @@ _INDEX_HTML = r"""<!DOCTYPE html>
     <div class="card" id="feed"><h2>Live activity (recent turns)</h2><div class="body" id="feed-body"></div></div>
     <div class="card"><h2>Room</h2><div class="body" id="p-room"></div></div>
     <div class="card"><h2>Dialog</h2><div class="body" id="p-dialog"></div></div>
-    <div class="card"><h2>Latest answer to a viewer</h2><div class="body" id="p-answer"></div></div>
   </div>
 
   <!-- RIGHT rail: plot, quests, notes, stats (priority order) -->
@@ -562,16 +563,18 @@ _INDEX_HTML = r"""<!DOCTYPE html>
     <div class="card tall"><h2>Resolved quests</h2><div class="body" id="p-resolved"></div></div>
     <div class="card tall"><h2>Notes / Journal</h2><div class="body" id="p-notes"></div></div>
     <div class="card tall"><h2>Stats</h2><div class="body" id="p-stats_kv"></div></div>
+    <div class="card tall"><h2>Inventory</h2><div class="body pre" id="p-inventory"></div></div>
   </div>
 
-  <!-- FULL WIDTH BELOW: map, then collapsible debug -->
+  <!-- FULL WIDTH BELOW: map + tool stats side by side, then collapsible debug -->
   <div id="wide">
-    <div class="card"><h2>Map</h2><div class="body mono" id="p-map"></div></div>
+    <div class="row2">
+      <div class="card"><h2>Tool stats</h2><div class="body pre" id="p-tool_stats"></div></div>
+      <div class="card"><h2>Map</h2><div class="body mono" id="p-map"></div></div>
+    </div>
     <details><summary>NPCs met</summary><div class="body" id="p-npc_tree"></div></details>
     <details><summary>Topics</summary><div class="body" id="p-topics_tree"></div></details>
     <details><summary>Area map</summary><div class="body mono" id="p-area_map"></div></details>
-    <details><summary>Inventory</summary><div class="body" id="p-inventory"></div></details>
-    <details><summary>Tool stats</summary><div class="body mono" id="p-tool_stats"></div></details>
     <details><summary>Full context (prompt sent to the model)</summary><div class="body mono" id="p-context_dump"></div></details>
     <details><summary>Game status (raw)</summary><div class="body" id="p-gstatus"></div></details>
   </div>
@@ -618,13 +621,24 @@ function renderNotes(groups){const box=$("p-notes");box.innerHTML="";
   (groups||[]).forEach(g=>{const h=document.createElement("div");h.className="name";
     h.textContent=(g.npc||"?")+" ("+(g.total_notes||(g.notes||[]).length)+")";box.appendChild(h);
     (g.notes||[]).forEach(n=>{const d=document.createElement("div");d.className="child dim";d.textContent="• "+n;box.appendChild(d);});});}
-function renderTree(id,nodes,spec){const box=$(id);box.innerHTML="";
-  (nodes||[]).forEach(n=>{const wrap=document.createElement("div");
+function renderTree(id,nodes,spec){const box=$(id);
+  // Preserve which top-level nodes are expanded so a live update doesn't
+  // collapse the one the user just opened.
+  const openNames=new Set();
+  box.querySelectorAll("[data-node]").forEach(el=>{
+    if(el.dataset.open==="1") openNames.add(el.dataset.node);
+  });
+  box.innerHTML="";
+  (nodes||[]).forEach(n=>{const nm=spec.name(n);
+    const wrap=document.createElement("div");wrap.dataset.node=nm;
     const head=document.createElement("div");
-    head.innerHTML='<span class="name">▸ '+esc(spec.name(n))+'</span> <span class="child dim">'+esc(spec.meta(n))+'</span>';
-    const kids=document.createElement("div");kids.style.display="none";
+    head.innerHTML='<span class="name">▸ '+esc(nm)+'</span> <span class="child dim">'+esc(spec.meta(n))+'</span>';
+    const kids=document.createElement("div");
     spec.children(n).forEach(c=>{const k=document.createElement("div");k.className="child dim";k.textContent=c;kids.appendChild(k);});
-    head.querySelector(".name").onclick=()=>{kids.style.display=kids.style.display==="none"?"block":"none";};
+    const isOpen=openNames.has(nm);
+    kids.style.display=isOpen?"block":"none"; wrap.dataset.open=isOpen?"1":"0";
+    head.querySelector(".name").onclick=()=>{const o=kids.style.display==="none";
+      kids.style.display=o?"block":"none"; wrap.dataset.open=o?"1":"0";};
     wrap.appendChild(head);wrap.appendChild(kids);box.appendChild(wrap);});}
 const npcSpec={name:n=>n.name||"?",meta:n=>"x"+(n.times_talked||0),children:n=>{let o=[];
   (n.transcript||[]).forEach(e=>o.push(e.said?((n.name||"")+": "+e.said):("you: "+(e.me||""))));
@@ -646,7 +660,6 @@ function apply(key,value){
     case "topics_tree": renderTree("p-topics_tree",value,topicSpec); break;
     case "resolved": renderList("p-resolved",value,x=>typeof x==="string"?x:(x.name||JSON.stringify(x))); break;
     case "room": setText("p-room",value); break;
-    case "answer": setText("p-answer",value); break;
     case "gstatus": setText("p-gstatus",value);
       // pull HP/pos/location chips out of the status line for the header
       { const t=String(value||""); const hp=t.match(/hp\s+(\d+\/\d+)/i); const pos=t.match(/pos\(([^)]+)\)/i);
@@ -662,7 +675,7 @@ function applySnapshot(s){
   setText("c-turn","turn "+(s.turn||0));
   setText("c-model", s.title? "" : "");
   apply("context",{pct:s.context_pct||0});
-  ["gstatus","plot","map","area_map","inventory","dialog","quests","tool_stats","context_dump","answer","room"].forEach(k=>apply(k,s[k]));
+  ["gstatus","plot","map","area_map","inventory","dialog","quests","tool_stats","context_dump","room"].forEach(k=>apply(k,s[k]));
   apply("turn_log",s.turn_log||[]);apply("stats_kv",s.stats_kv||{});apply("notes",s.notes||[]);
   apply("npc_tree",s.npc_tree||[]);apply("topics_tree",s.topics_tree||[]);apply("resolved",s.resolved||[]);
   apply("turn_window",s.turn_window);
