@@ -4417,6 +4417,16 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     if getattr(args, "overlay_file", None):
         _write_overlay(args.overlay_file, step, action, reason)
     time.sleep(args.delay)
+    # Operator THROTTLE (inspector "throttle ms" control): extra per-turn delay
+    # to cool the LLM box when it runs hot. Defaults to 0 (no effect); can be
+    # raised live to 1-1000 ms. Applied here so it slows the whole turn loop.
+    if window is not None and hasattr(window, "get_throttle_ms"):
+        try:
+            _throttle = window.get_throttle_ms()
+            if _throttle and _throttle > 0:
+                time.sleep(min(int(_throttle), 1000) / 1000.0)
+        except Exception:
+            pass
 
 
 def _write_overlay(path: str, step: int, action: dict, reason: str) -> None:

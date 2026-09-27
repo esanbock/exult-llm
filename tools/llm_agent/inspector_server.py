@@ -88,6 +88,7 @@ class InspectorServer:
             "context_pct": 0,
             "context_label": "",
             "turn_window": None,   # operator override (None = driver default 450)
+            "throttle_ms": 0,      # operator per-turn cooldown ms (0 = off)
         }
         for k in _TEXT_KEYS:
             self._state[k] = ""
@@ -109,6 +110,7 @@ class InspectorServer:
         self._asks: "queue.Queue[str]" = queue.Queue()
         self._save_requested = False
         self._turn_window: Optional[int] = None
+        self._throttle_ms: int = 0   # operator per-turn cooldown (0 = off)
 
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -330,6 +332,12 @@ class InspectorServer:
         with self._lock:
             return self._turn_window
 
+    def get_throttle_ms(self) -> int:
+        """Operator per-turn cooldown in ms (0 = no extra delay). Lets you slow
+        the agent down to cool the LLM box when it runs hot."""
+        with self._lock:
+            return self._throttle_ms
+
     # -- called by the HTTP handler (remote client actions) -------------------
 
     def _remote_ask(self, question: str) -> None:
@@ -350,6 +358,12 @@ class InspectorServer:
         # Store in the snapshot and broadcast so the UI can confirm the value
         # actually registered (and a page refresh shows the current setting).
         self._broadcast("turn_window", turns)
+
+    def _remote_throttle(self, ms: int) -> None:
+        ms = max(0, min(int(ms or 0), 1000))
+        with self._lock:
+            self._throttle_ms = ms
+        self._broadcast("throttle_ms", ms)
 
 
 def _make_handler(server: "InspectorServer"):
@@ -418,6 +432,14 @@ def _make_handler(server: "InspectorServer"):
                     t = None
                 server._remote_turn_window(t)
                 self._json(200, {"ok": True, "turns": t})
+            elif self.path == "/throttle":
+                body = self._read_json() or {}
+                try:
+                    ms = int(body.get("ms", 0) or 0)
+                except (TypeError, ValueError):
+                    ms = 0
+                server._remote_throttle(ms)
+                self._json(200, {"ok": True, "ms": max(0, min(ms, 1000))})
             else:
                 self._send(404, b"not found", "text/plain")
 
@@ -547,6 +569,10 @@ _INDEX_HTML = r"""<!DOCTYPE html>
     <option value="600">600</option><option value="800">800</option><option value="1000">1000</option>
   </select>
   <span id="turnwin-ok" style="color:var(--good);font-size:11px;"></span>
+  <label style="font-size:11px;color:var(--muted);" title="Extra delay per turn (ms) to cool the LLM box. 0 = full speed, up to 1000.">
+    throttle <input id="throttle" type="number" min="0" max="1000" step="50" value="0" style="width:64px;"/> ms
+  </label>
+  <span id="throttle-ok" style="color:var(--good);font-size:11px;"></span>
 </header>
 
 <main>
@@ -677,6 +703,8 @@ function apply(key,value){
     case "save_ack":{const b=$("savebtn");b.textContent=value?"Saved!":"Save failed";setTimeout(()=>b.textContent="Save",2500);break;}
     case "turn_window":{const s=$("turnwin");s.value=(value==null?"default":String(value));
       const st=$("turnwin-ok");if(st){st.textContent="✓ "+(value==null?"default":value);setTimeout(()=>st.textContent="",2500);}break;}
+    case "throttle_ms":{const t=$("throttle");if(t&&document.activeElement!==t)t.value=(value||0);
+      const st=$("throttle-ok");if(st){st.textContent=(value>0?("✓ "+value+"ms"):"✓ off");setTimeout(()=>st.textContent="",2500);}break;}
     default: setText("p-"+key,value);
   }
 }
@@ -688,6 +716,7 @@ function applySnapshot(s){
   apply("turn_log",s.turn_log||[]);apply("stats_kv",s.stats_kv||{});apply("notes",s.notes||[]);
   apply("npc_tree",s.npc_tree||[]);apply("topics_tree",s.topics_tree||[]);apply("resolved",s.resolved||[]);
   apply("turn_window",s.turn_window);
+  apply("throttle_ms",s.throttle_ms||0);
 }
 function connect(){
   const es=new EventSource("/events");
@@ -701,6 +730,7 @@ $("askbtn").onclick=()=>{const q=$("askbox").value.trim();if(q){post("/ask",{que
 $("askbox").addEventListener("keydown",e=>{if(e.key==="Enter")$("askbtn").click();});
 $("savebtn").onclick=()=>post("/save",{});
 $("turnwin").onchange=e=>post("/turn-window",{turns:e.target.value});
+$("throttle").onchange=e=>{let v=parseInt(e.target.value||"0",10);if(isNaN(v))v=0;v=Math.max(0,Math.min(v,1000));e.target.value=v;post("/throttle",{ms:v});};
 connect();
 </script>
 </body>
