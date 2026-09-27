@@ -2916,7 +2916,27 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # navigation and caused up/down oscillation. When oscillating while
         # elevated, just use the normal flood-fill / known-place escape below,
         # same as at ground level.)
-        if best and best_d >= 3 and _force_step:
+        #
+        # ELEVATED ESCAPE: if we're standing on a wall-top/roof (above ground,
+        # tz > 0) and wedged, the visible-grid gotos and known-place routes fail
+        # with "no path to destination" because they target GROUND tiles the
+        # pathfinder can't reach from up here (seen live at z5 on the fortress
+        # crenellations). The engine's `descend` action is purpose-built for
+        # this: it BFS-scans for the nearest standable ground and paths there
+        # reliably (unlike the old goto-far-tile hack that fought the wedge
+        # guard). Use it FIRST when elevated - but rate-limit so that if descend
+        # itself can't find ground we fall through to the normal escape instead
+        # of spamming it. (tz > 0 matches the driver's existing "UP HIGH"
+        # convention; note tz can be 5 on a wall-top, so a %5 test is wrong.)
+        _elevated = (_cur_tz_here or 0) > 0
+        _last_descend = session.get("wedge_descend_at", -99)
+        if _elevated and (n - _last_descend) >= 3:
+            session["wedge_descend_at"] = n
+            session["wedge_recent"] = []
+            action = {"type": "descend"}
+            reason = (f"(guard) wedged while elevated (tz={_cur_tz_here}); "
+                      f"descending to nearest ground")
+        elif best and best_d >= 3 and _force_step:
             # We're trapped in a tiny pocket but the flood-fill sees a far open
             # tile: commit a goto straight to it and clear the recent buffer so
             # we don't immediately re-trigger.
