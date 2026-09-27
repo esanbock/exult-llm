@@ -1151,6 +1151,16 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         if _ov:
             _alog_n = _ov if lvl == 0 else min(_ov, _alog_n)
         ah = kb.action_view(_alog_n)
+        # Factual digest of turns that have scrolled PAST the shown window, so
+        # continuity survives independent of whether the LLM kept its
+        # plot_summary current. Placed in the durable top-context (not at the
+        # bottom with the raw log). Deterministic - counts + notable events.
+        try:
+            _digest = kb.action_digest(_alog_n)
+            if _digest:
+                view["earlier_this_session"] = _digest
+        except Exception:
+            pass
         # NOTE: action_log is intentionally added LAST (just before return) so it
         # is the final thing in the context - it is the continuously-appended
         # temporal memory and belongs at the bottom for readability + recency.

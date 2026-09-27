@@ -934,6 +934,57 @@ class KnowledgeBase:
         self.action_history.append(_e)
         self.action_history = self.action_history[-self.ACTION_WINDOW:]
 
+    def action_digest(self, shown_limit: int) -> str:
+        """Compress the action-log entries OLDER than the shown window into a
+        compact FACTUAL digest, so continuity survives when raw turns scroll off
+        (or age past what we display). Deterministic - counts + notable events,
+        no LLM call, no narrative invention. Complements the LLM's plot_summary
+        (which is its own story) with a ground-truth 'earlier this session'.
+        Returns '' if nothing has scrolled off yet."""
+        hist = [e for e in self.action_history if isinstance(e, dict)]
+        if len(hist) <= shown_limit:
+            return ""
+        older = hist[:-shown_limit] if shown_limit > 0 else hist
+        if not older:
+            return ""
+        import re
+        _ANIMALS = ("cat", "dog", "horse", "sheep", "cow", "rat", "bat", "fox",
+                    "chicken", "pig", "bird")
+        places, people, took, opened, read_it = set(), set(), set(), set(), set()
+        n_moves = 0
+        for e in older:
+            t = (e.get("text") or "")
+            tl = t.lower()
+            if "hungrier" in tl or "gold " in tl or "hp " in tl:
+                continue   # stat-change bookkeeping, not an action of note
+            if tl.startswith(("- you walked", "bumped a wall")) or "walked toward" in tl:
+                n_moves += 1
+            m = re.search(r"->\s*got (.+?)(?:\s*\(|$)", t)
+            if m:
+                took.add(m.group(1).strip()[:24])
+            if t.startswith("talk") or "conversed" in tl:
+                m = re.search(r"talk(?:ed)?\s+(?:to\s+)?([A-Za-z][\w']{1,20})", t)
+                if m and m.group(1).strip().lower() not in _ANIMALS:
+                    people.add(m.group(1).strip()[:20])
+            m = re.search(r"opened (?:the )?([a-z][\w ]{1,20})", tl)
+            if m:
+                opened.add(m.group(1).strip()[:20])
+            m = re.search(r"reads: \"([^\"]{0,40})", t)
+            if m:
+                read_it.add(m.group(1).strip())
+        parts = [f"Earlier this session ({len(older)} older turns, condensed):"]
+        if took:
+            parts.append("  took: " + ", ".join(sorted(took)[:12]))
+        if opened:
+            parts.append("  opened: " + ", ".join(sorted(opened)[:10]))
+        if read_it:
+            parts.append("  read: " + "; ".join(list(read_it)[:4]))
+        if people:
+            parts.append("  talked to: " + ", ".join(sorted(people)[:12]))
+        if n_moves:
+            parts.append(f"  (+{n_moves} movement/exploration turns)")
+        return "\n".join(parts) if len(parts) > 1 else ""
+
     def action_view(self, limit: int = 300) -> list:
         """Return the action log as formatted one-per-line strings with the game
         turn and the quest being worked, so the agent has a clean temporal
