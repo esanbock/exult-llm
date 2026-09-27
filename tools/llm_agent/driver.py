@@ -1165,7 +1165,14 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             _pp_nav = state.get("player") or {}
             _nav = kb.navigation_summary(_pp_nav.get("tx", 0), _pp_nav.get("ty", 0))
             if _nav:
-                view["navigation"] = {
+                # PROACTIVE arrival hint: name any known landmark(s) the agent is
+                # already ON/next to (dist <= 2), so it sees "you're already here"
+                # BEFORE deciding - and stops re-issuing goto to a place it's
+                # standing in (the #1 wasted-turn loop). General: works for any
+                # landmark in any quest.
+                _at_now = [n["name"] for n in _nav
+                           if abs(n.get("dx", 9)) + abs(n.get("dy", 9)) <= 2 and n.get("name")]
+                nav = {
                     "you_are_at": [_pp_nav.get("tx", 0), _pp_nav.get("ty", 0)],
                     "known_places_nearest_first": _nav,
                     "how_to_use": ("goto any place BY NAME (e.g. {\"type\":\"goto\","
@@ -1174,6 +1181,16 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
                                    "climbing stairs. Use the 'map' tool only for a "
                                    "visual overview of explored vs unexplored areas."),
                 }
+                if _at_now:
+                    nav["you_are_ALREADY_AT"] = _at_now
+                    nav["arrival_directive"] = (
+                        f"You are ALREADY standing at: {', '.join(_at_now)}. Do "
+                        f"NOT 'goto' {'/'.join(_at_now)} again - you are here. "
+                        "Either INVESTIGATE right here (open a container/body and "
+                        "take items, talk to someone, read a sign, go through a "
+                        "door), or if you've already done that, treat this place "
+                        "as DONE and 'goto' a DIFFERENT place by name.")
+                view["navigation"] = nav
         except Exception:
             pass
         # ALWAYS-ON activity scorecard: shows lifetime counts of physical
