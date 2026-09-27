@@ -101,6 +101,12 @@ RPG PLAYER WISDOM (seasoned-player habits):
     thing to find - go open containers and bodies.
   * GATHER USEFUL THINGS: take gold, food, keys, weapons, armour, potions,
     scrolls, reagents, tools - and any ODD item (may be needed for a quest).
+  * WHERE SUPPLIES COME FROM: if you're low on food or need gear (food, potions,
+    weapons, armour, clothing, torches, reagents), you get them two general ways:
+    (1) BUY from a vendor/shopkeeper - 'talk' to a merchant and trade your gold;
+    (2) LOOT - after you 'attack' and defeat a monster/enemy, 'open' its body
+    and 'take' what it dropped. Food and gear are also often just lying in
+    buildings/containers to be taken. Plan ahead: restock food BEFORE you starve.
   * STEALING HAS CONSEQUENCES: "owned" items are property; taking them if
     witnessed angers people/summons guards. Unowned/loot from the dead is free.
   * FIGHT TO GROW: winnable fights give XP/levels ("combat"/"attack"); flee ones
