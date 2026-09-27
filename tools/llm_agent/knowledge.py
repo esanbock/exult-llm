@@ -998,9 +998,9 @@ class KnowledgeBase:
                 if q and q != last_quest:
                     out.append(f">>> now working: {q}")
                     last_quest = q
-                # Move entries already carry their own turn span in .text; other
-                # entries get a [T<turn>] prefix here.
-                if e.get("kind") == "move":
+                # Move/wander entries already carry their own full prose in
+                # .text; other entries get the "- you ..." prefix here.
+                if e.get("kind") in ("move", "wander"):
                     out.append(e.get("text", ""))
                 else:
                     # Prose, NOT a "[T###] ..." line: that machine-y format was
@@ -1032,14 +1032,44 @@ class KnowledgeBase:
         _r = (reason or "").strip()
         if _r.startswith("(guard"):
             _r = ""
+        # Parse a coordinate target "(x,y)" so we can collapse a RUN of nearby
+        # coordinate gotos (aimless wandering in a small area) into one summary,
+        # rather than one log line per scattered tile. NAMED targets (stables,
+        # Finnigan) are meaningful and stay distinct - only coordinate wandering
+        # is consolidated.
+        import re as _re
+        _m = _re.match(r"\(?\s*(\d+)\s*,\s*(\d+)\s*\)?$", target)
+        _cxy = (int(_m.group(1)), int(_m.group(2))) if _m else None
         last = self.action_history[-1] if self.action_history else None
-        # Extend a same-target movement run in progress.
+        # Extend a same-NAMED-target movement run in progress.
         if (isinstance(last, dict) and last.get("kind") == "move"
                 and last.get("target") == target):
             last["count"] = last.get("count", 1) + 1
             last["turn_to"] = int(turn)
             last["progressed"] = last.get("progressed") or moved
             last["text"] = self._fmt_move(last)
+            return
+        # Extend a COORDINATE-WANDER run: consecutive coordinate gotos whose
+        # tiles all fall within a small (~12-tile) bounding box = circling one
+        # area. Track the box and count instead of listing every tile.
+        if (_cxy and isinstance(last, dict) and last.get("kind") == "wander"):
+            bx0, by0, bx1, by1 = last["box"]
+            nbx0, nby0 = min(bx0, _cxy[0]), min(by0, _cxy[1])
+            nbx1, nby1 = max(bx1, _cxy[0]), max(by1, _cxy[1])
+            if (nbx1 - nbx0) <= 12 and (nby1 - nby0) <= 12:
+                last["box"] = (nbx0, nby0, nbx1, nby1)
+                last["count"] = last.get("count", 1) + 1
+                last["turn_to"] = int(turn)
+                last["progressed"] = last.get("progressed") or moved
+                last["text"] = self._fmt_move(last)
+                return
+        if _cxy:
+            entry = {"turn": int(turn), "turn_to": int(turn), "quest": self.current_quest,
+                     "kind": "wander", "box": (_cxy[0], _cxy[1], _cxy[0], _cxy[1]),
+                     "target": target, "count": 1, "progressed": moved}
+            entry["text"] = self._fmt_move(entry)
+            self.action_history.append(entry)
+            self.action_history = self.action_history[-self.ACTION_WINDOW:]
             return
         entry = {"turn": int(turn), "turn_to": int(turn), "quest": self.current_quest,
                  "kind": "move", "target": target, "count": 1, "progressed": moved}
@@ -1051,6 +1081,17 @@ class KnowledgeBase:
 
     @staticmethod
     def _fmt_move(e: dict) -> str:
+        # Prose narrative. A 'wander' entry summarizes a run of nearby
+        # coordinate gotos as circling an area (the individual tiles carry no
+        # useful signal - only 'you've been circling here N turns' does).
+        if e.get("kind") == "wander":
+            bx0, by0, bx1, by1 = e.get("box", (0, 0, 0, 0))
+            cx, cy = (bx0 + bx1) // 2, (by0 + by1) // 2
+            n = e.get("count", 1)
+            if n <= 1:
+                return f"- you walked toward ({cx},{cy})"
+            prog = "" if e.get("progressed") else " making little progress (you're circling - try a NEW direction or a named destination)"
+            return f"- you wandered around ({cx},{cy}) for {n} turns{prog}"
         # Prose narrative (not "[T##] move toward ..."): a machine-y log line
         # invited the model to echo it back verbatim as output. Keep the count
         # and the no-progress signal, phrased as memory.
