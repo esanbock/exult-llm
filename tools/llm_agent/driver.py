@@ -419,6 +419,12 @@ periodically). For finer detail you have the recall/quests tools.
             {"finished": true} to review COMPLETED quests. Shown as "quest_detail".
   answer  - Reply during a conversation. params: {"index":<int>} (into "answers")
             or {"text":"..."}. Only when conversation_active.
+            *** When answer choices are shown (conversation_active / the
+            "answers" list is non-empty) you MUST reply: pick an "answer" index
+            (or "continue" if the NPC is still talking). Do NOT "wait", "move",
+            "goto", or "think" while a conversation is open - those do nothing
+            and waste the turn. Choose the topic that best advances your goal;
+            if none help, pick a "bye/leave" option to end the conversation. ***
   set_number - Answer a numeric slider. params: {"value":<int>} (clamped to
             number_min..number_max). Only when number_prompt.
   continue - Advance an NPC's speech to the next page (npc_text showing but not
@@ -438,7 +444,8 @@ periodically). For finer detail you have the recall/quests tools.
             params: none. Rarely needed; use "combat" to toggle combat off.
   save    - Save the game so progress is not lost. params: none. (The driver
             also auto-saves periodically; you rarely need this.)
-  wait    - Do nothing this turn. params: none.
+  wait    - Do nothing this turn. params: none. NOT valid during a conversation
+            (when answer choices are shown) - use "answer"/"continue" instead.
   wait_until - Pass time until a target hour (0-23), e.g. wait for morning so
             sleeping NPCs wake. params: {"hour": 7} (default 7 = morning). Use
             this when the people you need are "sleeping" and it is night.
