@@ -1160,13 +1160,13 @@ class KnowledgeBase:
         container or picked up an item - the difference between guessing at
         quests and actually investigating."""
         la = self.lifetime_activity or {}
-        searched = int(la.get("search", 0))
+        looted = int(la.get("loot", 0))
         picked = int(la.get("pickup", 0)) + int(la.get("take", 0))
         opened = int(la.get("open", 0))
         read = int(la.get("read", 0))
-        return {"containers/things searched": searched,
+        return {"containers looted (take-all)": looted,
                 "items picked up / taken": picked,
-                "things opened": opened,
+                "containers/bodies opened": opened,
                 "signs/books read": read,
                 "talked to people": int(la.get("talk", 0))}
 

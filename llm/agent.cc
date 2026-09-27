@@ -1615,68 +1615,60 @@ namespace LLM_agent {
 					  : "{\"ok\":false,\"error\":\"no bandage in party\"}";
 		}
 
-		if (type == "search") {
-			// Open (activate) the nearest body or unlocked container so its
-			// contents become accessible - this is how you loot a murder
-			// victim or a chest.
+		if (type == "loot") {
+			// LOOT: take ALL takeable items from a specific container/body into
+			// inventory. Convenience for "empty this whole chest"; the prompt
+			// steers the agent to prefer deliberate per-item "take" instead.
+			// Targeting mirrors "open": {"name":...} or {"tx,ty"}/{"dx,dy"},
+			// else nearest container/body. (There is NO "search" action.)
 			Actor* av = gwin->get_main_actor();
 			if (!av) {
 				return "{\"ok\":false,\"error\":\"no avatar\"}";
 			}
-			const Tile_coord   at = av->get_tile();
+			const Tile_coord at = av->get_tile();
+			string want;
+			get_string(action_json, "name", want);
+			std::string wlow = want;
+			std::transform(wlow.begin(), wlow.end(), wlow.begin(), ::tolower);
+			long wtx = -1, wty = -1;
+			bool have_xy = get_int(action_json, "tx", wtx) && get_int(action_json, "ty", wty);
+			if (!have_xy) {
+				long dx = 0, dy = 0;
+				if (get_int(action_json, "dx", dx) && get_int(action_json, "dy", dy)) {
+					wtx = at.tx + dx; wty = at.ty + dy; have_xy = true;
+				}
+			}
 			Game_object_vector objs;
 			Game_object::find_nearby(objs, at, -1, 4, 128);
 			Game_object* best   = nullptr;
 			int          best_d = 1 << 30;
 			for (Game_object* obj : objs) {
-				if (!obj) {
-					continue;
-				}
+				if (!obj) { continue; }
 				const Shape_info& info = obj->get_info();
-				const bool        is_container
-						= info.get_shape_class() == Shape_info::container;
-				// A murder victim is often a DEAD ACTOR (corpse), not a
-				// body-shape object. Include dead actors so the agent can loot
-				// a slain NPC just like a body/chest.
+				const bool is_container = info.get_shape_class() == Shape_info::container;
 				Actor* act = obj->as_actor();
 				const bool is_dead_actor = act && act->is_dead();
 				if (!info.is_body_shape() && !is_container && !is_dead_actor) {
 					continue;
 				}
+				if (!wlow.empty()) {
+					std::string nlow = obj->get_name();
+					std::transform(nlow.begin(), nlow.end(), nlow.begin(), ::tolower);
+					if (nlow.find(wlow) == std::string::npos) { continue; }
+				}
 				const Tile_coord ot = obj->get_tile();
+				if (have_xy && (std::abs(ot.tx - (int)wtx) + std::abs(ot.ty - (int)wty) > 2)) {
+					continue;
+				}
 				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
-				if (d < best_d) {
-					best_d = d;
-					best   = obj;
-				}
-			}
-			// Also scan nearby NPCs for a dead one, since dead actors may be
-			// tracked in the actor list rather than the object list.
-			{
-				std::vector<Actor*> npcs;
-				gwin->get_nearby_npcs(npcs);
-				for (Actor* npc : npcs) {
-					if (!npc || npc == av || !npc->is_dead()) {
-						continue;
-					}
-					const Tile_coord ot = npc->get_tile();
-					const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
-					if (d <= 4 && d < best_d) {
-						best_d = d;
-						best   = npc;
-					}
-				}
+				if (d < best_d) { best_d = d; best = obj; }
 			}
 			if (!best) {
-				return "{\"ok\":false,\"error\":\"no body or container nearby\"}";
+				return "{\"ok\":false,\"error\":\"no container or body to loot "
+					   "(name one, give tx,ty, or stand next to it)\"}";
 			}
 			const std::string nm = best->get_name();
-			best->activate();    // opens the body/container (shows the gump)
-			// LOOT it: transfer takeable contents into the avatar's inventory,
-			// like a person emptying a bag/chest/corpse. This is what makes
-			// "search" actually useful - just opening the gump left the gold,
-			// food, torches etc. sitting inside. We take everything that is
-			// freely takeable; a non-container corpse simply has nothing.
+			best->activate();    // ensure it's open
 			Container_game_object* cont = best->as_container();
 			std::string took;
 			int         took_n = 0;
@@ -1684,32 +1676,27 @@ namespace LLM_agent {
 				Game_object_vector contents;
 				cont->get_objects(contents, c_any_shapenum, c_any_qual, c_any_framenum);
 				for (Game_object* it : contents) {
-					if (!it) {
-						continue;
-					}
+					if (!it) { continue; }
 					const std::string inm = it->get_name();
 					Game_object_shared keep;
 					it->remove_this(&keep);
 					if (av->add(it, false, true)) {
 						if (took_n < 12) {
-							if (took_n) {
-								took += ", ";
-							}
+							if (took_n) { took += ", "; }
 							took += inm;
 						}
 						++took_n;
 					} else {
-						// Couldn't carry it (too heavy/full) - put it back.
 						cont->add(it, true);
 					}
 				}
 			}
 			if (took_n > 0) {
-				return "{\"ok\":true,\"did\":\"search\",\"target\":\""
+				return "{\"ok\":true,\"did\":\"loot\",\"target\":\""
 					   + json_escape(nm) + "\",\"looted\":\"" + json_escape(took)
 					   + "\",\"count\":" + std::to_string(took_n) + "}";
 			}
-			return "{\"ok\":true,\"did\":\"search\",\"target\":\""
+			return "{\"ok\":true,\"did\":\"loot\",\"target\":\""
 				   + json_escape(nm) + "\",\"looted\":\"\",\"empty\":true}";
 		}
 
@@ -2376,33 +2363,105 @@ namespace LLM_agent {
 		}
 
 		if (type == "open") {
-			// Open (toggle) the nearest door within a few tiles.  Optional
-			// {"dir":...} biases toward a door in that compass direction.
+			// OPEN a specific door, container, or body. Targeting:
+			//   {"name":"chest"}  - nearest object whose name contains this
+			//   {"tx":X,"ty":Y} or {"dx":,"dy":} - object at/near that tile
+			//   (none)            - nearest door (back-compat)
+			// A door toggles open/closed. A container/body is opened so its
+			// CONTENTS become visible (reported below) - it does NOT auto-take
+			// anything; use "take <item>" or "loot" for that.
 			Actor* av = gwin->get_main_actor();
 			if (!av) {
 				return "{\"ok\":false,\"error\":\"no avatar\"}";
 			}
 			const Tile_coord   at = av->get_tile();
+			string want;
+			get_string(action_json, "name", want);
+			std::string wlow = want;
+			std::transform(wlow.begin(), wlow.end(), wlow.begin(), ::tolower);
+			long wtx = -1, wty = -1;
+			bool have_xy = get_int(action_json, "tx", wtx) && get_int(action_json, "ty", wty);
+			if (!have_xy) {
+				long dx = 0, dy = 0;
+				if (get_int(action_json, "dx", dx) && get_int(action_json, "dy", dy)) {
+					wtx = at.tx + dx; wty = at.ty + dy; have_xy = true;
+				}
+			}
 			Game_object_vector objs;
 			Game_object::find_nearby(objs, at, -1, 4, 128);
 			Game_object* best   = nullptr;
 			int          best_d = 1 << 30;
 			for (Game_object* obj : objs) {
-				if (!obj || !obj->get_info().is_door()) {
+				if (!obj) {
+					continue;
+				}
+				const Shape_info& info = obj->get_info();
+				const bool is_door = info.is_door();
+				const bool is_cont = info.get_shape_class() == Shape_info::container;
+				const bool is_body = info.is_body_shape();
+				Actor* act = obj->as_actor();
+				const bool is_dead = act && act->is_dead();
+				if (!is_door && !is_cont && !is_body && !is_dead) {
 					continue;
 				}
 				const Tile_coord ot = obj->get_tile();
+				// Filter by the requested target, if any.
+				if (!wlow.empty()) {
+					std::string nlow = obj->get_name();
+					std::transform(nlow.begin(), nlow.end(), nlow.begin(), ::tolower);
+					if (nlow.find(wlow) == std::string::npos) {
+						continue;
+					}
+				}
+				if (have_xy && (std::abs(ot.tx - (int)wtx) + std::abs(ot.ty - (int)wty) > 2)) {
+					continue;
+				}
 				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
 				if (d < best_d) {
 					best_d = d;
 					best   = obj;
 				}
 			}
-			if (!best) {
-				return "{\"ok\":false,\"error\":\"no door nearby\"}";
+			// If no name/xy given and nothing matched, fall back to nearest door.
+			if (!best && wlow.empty() && !have_xy) {
+				for (Game_object* obj : objs) {
+					if (!obj || !obj->get_info().is_door()) {
+						continue;
+					}
+					const Tile_coord ot = obj->get_tile();
+					const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+					if (d < best_d) { best_d = d; best = obj; }
+				}
 			}
-			best->activate();    // toggles open/closed
-			return "{\"ok\":true,\"did\":\"open\"}";
+			if (!best) {
+				return "{\"ok\":false,\"error\":\"nothing to open there (name a "
+					   "visible container/body/door, or give tx,ty)\"}";
+			}
+			const std::string onm = best->get_name();
+			const bool is_door_t = best->get_info().is_door();
+			best->activate();    // toggles a door; opens a container/body
+			if (is_door_t) {
+				return "{\"ok\":true,\"did\":\"open\",\"target\":\""
+					   + json_escape(onm) + "\",\"kind\":\"door\"}";
+			}
+			// Report the container's/body's CONTENTS (no auto-take). The agent
+			// then chooses to "take <item>" or "loot".
+			std::string items;
+			int n = 0;
+			if (Container_game_object* cont = best->as_container()) {
+				Game_object_vector contents;
+				cont->get_objects(contents, c_any_shapenum, c_any_qual, c_any_framenum);
+				for (Game_object* it : contents) {
+					if (!it) { continue; }
+					if (n) { items += ", "; }
+					if (n < 20) { items += json_escape(it->get_name()); }
+					++n;
+				}
+			}
+			return "{\"ok\":true,\"did\":\"open\",\"target\":\"" + json_escape(onm)
+				   + "\",\"kind\":\"container\",\"contents\":[" + items
+				   + "],\"count\":" + std::to_string(n)
+				   + (n == 0 ? ",\"empty\":true" : "") + "}";
 		}
 
 		if (type == "unlock" || type == "use_key") {

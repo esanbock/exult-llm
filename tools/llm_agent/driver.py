@@ -68,23 +68,23 @@ General principles (apply to ANY situation, not one specific puzzle):
 
 DEFAULT_INTERACTION = """\
 INTERACTION RULES (how the world works - know these so you don't waste turns):
-  * PROXIMITY: to take, pickup, search, or open something you must be RIGHT NEXT
+  * PROXIMITY: to take, pickup, open, or loot something you must be RIGHT NEXT
     to it (about 1 tile away). If you are farther, first "goto" the target's tile
-    (or its dx,dy), THEN act. A failed take/search will tell you if the item is
+    (or its dx,dy), THEN act. A failed take will tell you if the item is
     too far and give the tile to goto. To TALK you only need the person in view,
     but being close is more reliable - goto them first.
   * KEYS OPEN LOCKS: locked DOORS and locked CHESTS/containers cannot just be
     opened - you need the right KEY. Keys are items you find (on the ground, on
     bodies, in other containers) - PICK THEM UP and keep them. To open a lock:
     stand next to it and use "unlock" (it tries your keys); if you have the
-    matching key it opens, then "open"/"search" it. If unlock says no key fits,
+    matching key it opens, then "open" it. If unlock says no key fits,
     go FIND the key (often near who/what the lock belongs to) and come back. Do
     not abandon a locked chest/door - the key is usually findable.
   * DOORS: '+' = closed (a passage, not a wall - "open" it or "goto" beyond it),
     '/' = open. Locked doors need a key as above.
   * CONTAINERS: chests, desks, drawers, cabinets, bags, barrels, crates, sacks
-    are all searchable ("search" opens the nearest; "take" pulls items out). A
-    body of a slain creature/person is also searchable/lootable.
+    are all openable ("open" a specific one to reveal contents; "take" pulls
+    items out; "loot" takes all). A slain creature/person's body is openable too.
   * COMBAT: enemies show HOSTILE. "attack" (by name or nearest hostile) engages
     one; "combat" toggles auto-fight. You must be near a foe to hit it (melee)
     or have a ranged weapon. Flee fights you cannot win."""
@@ -95,9 +95,10 @@ RPG PLAYER WISDOM (seasoned-player habits):
     skipped topics.
   * EXPLORE EVERYWHERE: enter every building; open doors ('+') - rooms hold
     people, loot, and clues.
-  * OPEN AND SEARCH: search every container and body; try levers/switches.
-    SELF-CHECK "what_i_have_actually_done": if searched/picked-up are ~0 while
-    you keep talking, the answer you need is a PHYSICAL thing to find - go search.
+  * OPEN AND LOOT: OPEN every container and body, then TAKE what is useful;
+    try levers/switches. SELF-CHECK "what_i_have_actually_done": if opened/
+    picked-up are ~0 while you keep talking, the answer you need is a PHYSICAL
+    thing to find - go open containers and bodies.
   * GATHER USEFUL THINGS: take gold, food, keys, weapons, armour, potions,
     scrolls, reagents, tools - and any ODD item (may be needed for a quest).
   * STEALING HAS CONSEQUENCES: "owned" items are property; taking them if
@@ -292,8 +293,8 @@ periodically). For finer detail you have the recall/quests tools.
   objects (list)              - ground items: {name, tx, ty (ABSOLUTE), dir}.
                                 goto (tx,ty) to reach. "owned":true = someone's
                                 property (taking = stealing). "body":true =
-                                LOOTABLE (search it); "corpse_not_lootable":true
-                                = empty corpse (don't search). "town_exit":true =
+                                LOOTABLE (open it); "corpse_not_lootable":true
+                                = empty corpse (nothing inside). "town_exit":true =
                                 the gate OUT of town.
   doors (list)                - nearby doors: {name, dx, dy, closed}
 
@@ -356,15 +357,19 @@ periodically). For finer detail you have the recall/quests tools.
   talk    - START a conversation with a nearby NPC. params: {"name":"<NPC>"}.
             The only way to begin dialog. Prefer to be CLOSE first. NPC must be
             AWAKE (sleeping ones need wait_until morning). Party = nothing new.
-  open    - Open/close the nearest door within a few tiles. params: none.
-            '+' closed (a passage, not a wall) / '/' open. goto through a door
-            opens it automatically.
-  search  - Open the nearest body/container to see + loot its contents. params:
-            none. Then "take" items and "close" it.
+  open    - Open a specific DOOR, CONTAINER, or BODY. params: {"name":"<chest/
+            bag/barrel/desk/body/door>"} or {"tx":X,"ty":Y} (or omit to open the
+            nearest door). A door toggles open/closed. A container/body opens to
+            REVEAL its contents (returned as "contents": [...]) - it does NOT
+            take anything. Stand within a few tiles. THEN use "take <item>" to
+            pull out what you want. '+' closed door / '/' open on the map.
+  loot    - Take ALL items from a container/body at once. params: {"name":...}
+            or {"tx,ty"} or nearest. Convenience only - PREFER "take <item>" to
+            pick specific things deliberately; use loot to empty a chest fast.
   close   - Close an open container/body gump. params: none. Do this to move again.
   unlock  - Use your KEYS on the nearest locked door/container. params: none.
             Stand adjacent. Works only if you carry a matching key; else find
-            the key first. Then "open"/"search".
+            the key first. Then "open" it.
   use     - INTERACT with a world object OR a carried item (the generic
             double-click). params: {"name":"<object>"} or nearest. Stand next
             to a world object first. Covers: well, winch/lever/switch (gates/
@@ -490,7 +495,7 @@ periodically). For finer detail you have the recall/quests tools.
   4. If no actionable quest and no new NPC -> explore a NEW area. Travel via
      "goto" (pathfinds around walls/doors); if stranded far away, goto a known
      town/place. Use "move" only for tiny steps; never onto '#'.
-  4b. Interact with relevant "objects": goto/search bodies+containers, pickup
+  4b. Interact with relevant "objects": goto then OPEN bodies+containers, take/pickup
      useful items - don't pace past them.
   5. Low food -> "feed". Threatened -> "combat".
 
@@ -1109,7 +1114,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         if se:
             view["already_searched_empty_DO_NOT_RETURN"] = se
             view["already_searched_note"] = (
-                f"You have already searched {len(se)} spot(s) and found them EMPTY "
+                f"You have already opened {len(se)} spot(s) and found them EMPTY "
                 "(listed above). Searching or gotoing them again wastes turns - the "
                 "item is NOT there. Pursue a DIFFERENT lead.")
         # If we're in a conversation, proactively show what we've already asked
@@ -1184,15 +1189,15 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             # exploring buildings and searching containers.
             _sc = kb.activity_scorecard()
             _talked = _sc.get("talked to people", 0)
-            _searched = _sc.get("containers/things searched", 0)
-            _opened = _sc.get("things opened", 0)
-            if _talked >= 8 and (_searched + _opened) == 0:
+            _opened = _sc.get("containers/bodies opened", 0)
+            _took = _sc.get("items picked up / taken", 0)
+            if _talked >= 8 and (_opened + _took) == 0:
                 view["INVESTIGATE_NOW"] = (
-                    f"You have TALKED {_talked} times but SEARCHED 0 containers "
-                    "and OPENED 0 things. Talking alone will NOT solve this - the "
-                    "clue/item you need is a PHYSICAL thing to find. STOP asking "
+                    f"You have TALKED {_talked} times but OPENED 0 containers/"
+                    "bodies and TAKEN 0 items. Talking alone will NOT solve this "
+                    "- the clue/item you need is a PHYSICAL thing to find. STOP asking "
                     "questions: ENTER a building, walk RIGHT UP to a chest/desk/"
-                    "barrel (adjacent, ~1 tile), and 'search' it. If a door is "
+                    "barrel (adjacent, ~1 tile), and 'open' it, then 'take' items. If a door is "
                     "locked, 'unlock' it. Do this for SEVERAL turns, trying "
                     "DIFFERENT buildings you haven't entered.")
         except Exception:
@@ -1344,10 +1349,10 @@ def parse_reply(text: str) -> tuple[str, dict]:
         if mt:
             return ("(guard) salvaged goto from a garbled reply",
                     {"type": "goto", "tx": int(mt.group(1)), "ty": int(mt.group(2))})
-        for _verb, _act in (("search", {"type": "search"}),
-                            ("look", {"type": "search"}),
+        for _verb, _act in (("open", {"type": "open"}),
+                            ("loot", {"type": "loot"}),
+                            ("look", {"type": "look"}),
                             ("talk", {"type": "talk"}),
-                            ("open", {"type": "open"}),
                             ("continue", {"type": "continue"})):
             if re.search(rf'\b{_verb}\b', text, re.I):
                 return (f"(guard) salvaged {_verb} from a garbled reply", _act)
@@ -1391,16 +1396,20 @@ def parse_reply(text: str) -> tuple[str, dict]:
     if isinstance(_t, str):
         _TYPE_ALIASES = {
             # "look around / observe" -> the engine's search (it reports what's
-            # nearby). There is no separate "look" action.
-            "look": "search", "look_around": "search", "lookaround": "search",
-            "look_at": "search", "observe": "search", "examine": "search",
-            "survey": "search", "scan": "search",
+            # "look around / observe" -> the driver's own "look" handler (it
+            # describes the scene). NOT "search" - search was removed; opening
+            # is now the deliberate "open" action.
+            "look_around": "look", "lookaround": "look", "look_at": "look",
+            "observe": "look", "examine": "look", "survey": "look", "scan": "look",
             # movement synonyms
             "walk": "move", "go": "move", "step": "move", "travel": "goto",
             "navigate": "goto", "goto_tile": "goto", "move_to": "goto",
             # item synonyms
-            "grab": "take", "get": "take", "pick_up": "pickup",
-            "pick": "pickup", "loot": "take",
+            "grab": "take", "get": "take", "pick_up": "pickup", "pick": "pickup",
+            # container synonyms: open a specific container/body (reveals
+            # contents); "loot" is its own take-all action (do NOT alias it).
+            "open_container": "open", "unlock_and_open": "open",
+            "take_all": "loot", "empty": "loot", "loot_all": "loot",
             # conversation synonyms
             "reply": "answer", "respond": "answer", "choose": "answer",
             "select": "answer", "ask": "answer",
@@ -1508,7 +1517,7 @@ def describe_scene(state: dict, kb=None) -> str:
             nm = o.get("name")
             cnt = names.get(nm, 1)
             multi = f" (you see {cnt} of these nearby)" if cnt > 1 else ""
-            body = " - a body you can search" if o.get("body") else ""
+            body = " - a body you can open" if o.get("body") else ""
             lines.append(f"  - {nm}, {_where(px, py, o.get('dx',0), o.get('dy',0))}{body}{multi}")
 
     doors = state.get("doors") or []
@@ -2435,7 +2444,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             try:
                 _throttle = window.get_throttle_ms()
                 if _throttle and _throttle > 0:
-                    time.sleep(min(int(_throttle), 1000) / 1000.0)
+                    time.sleep(min(int(_throttle), 5000) / 1000.0)
             except Exception:
                 pass
         res = ollama.chat_ex(get_effective_system_prompt(), _user)
@@ -3339,8 +3348,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                                if n.get("dead") and abs(n.get("dx", 99)) <= 2
                                and abs(n.get("dy", 99)) <= 2]
                 if dead_bodies and not session.get("searched_body"):
-                    action = {"type": "search"}
-                    reason = "(guard) stuck near a body; searching it"
+                    action = {"type": "open"}
+                    reason = "(guard) stuck near a body; opening it to see contents"
                     session["searched_body"] = True
                     recent_positions.clear()
                 elif objs:
@@ -3408,139 +3417,61 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     elif isinstance(action, dict) and action.get("type") != "wait":
         session["bare_wait_streak"] = 0   # reset once a real action is taken
 
-    # --- Search reachability guard: if the model wants to SEARCH but no body/
-    #     container is within reach (search scans ~4 tiles engine-side), yet a
-    #     dead body or a container is VISIBLE further away, walk to it first so
-    #     the search will actually hit something (fixes endless "no body nearby"
-    #     when the corpse is a few tiles off). ---------------------------------
-    if (isinstance(action, dict) and action.get("type") == "search"
+    # --- Open/Loot reachability guard: "open" and "loot" act on a body or
+    #     container within reach (~few tiles). If the model targets one that is
+    #     visible but a few tiles away, walk to it first so the action lands.
+    #     Also break the re-loot loop: if we already emptied the spot we're at,
+    #     nudge the agent to move on. (search was removed; opening is deliberate
+    #     now, so this is much simpler than the old search guard.) -------------
+    if (isinstance(action, dict) and action.get("type") in ("open", "loot")
             and not state.get("conversation_in_progress")):
         _pp = state.get("player") or {}
         _here = (_pp.get("tx"), _pp.get("ty"))
-        # Non-lootable corpse short-circuit: if the closest body-like thing is a
-        # corpse the engine flagged as NOT a container (nothing to take) and no
-        # real lootable body/container is nearby, searching it is pointless -
-        # examine it instead and tell the agent. (The ritually-murdered human
-        # body vs the lootable gargoyle - general, not plot-specific.)
-        _objs_all = state.get("objects") or []
-        _lootable_near = [o for o in _objs_all
-                          if o.get("body")
-                          and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 4]
-        _corpse_near = [o for o in _objs_all
-                        if o.get("corpse")
-                        and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 4]
-        if _corpse_near and not _lootable_near:
-            session["last_look"] = describe_scene(state, kb)
-            kb.record_action("examined a corpse (not lootable)")
-            action = {"type": "wait"}
-            reason = "(guard) corpse not lootable; examined instead"
-            session["last_bump"] = (
-                "That corpse is NOT a container - it has nothing to take, so "
-                "'search' does nothing on it. You've noted the scene; move on "
-                "(look for a real container/body, loose items, or a person "
-                "with information).")
-            print(f"[{step:03d}] search-guard: corpse not lootable; examine instead")
-
-    # Remaining search-guard logic only applies if the action is STILL a search
-    # (the corpse short-circuit above may have turned it into a wait).
-    if (isinstance(action, dict) and action.get("type") == "search"
-            and not state.get("conversation_in_progress")):
-        _pp = state.get("player") or {}
-        _here = (_pp.get("tx"), _pp.get("ty"))
-        # Consider "already looted here" if we're within 2 tiles of any spot we
-        # emptied (the agent re-searches slightly different adjacent tiles).
+        # Already looted this spot? Don't re-loot an empty body - move on.
         _looted = session.get("looted_spots", set())
-        _near_looted = any(abs(_here[0]-lx) + abs(_here[1]-ly) <= 2
-                           for (lx, ly) in _looted)
-        # Already looted from this exact spot? Don't re-search - the body is
-        # empty. Move on to the next objective instead of looping.
-        if _near_looted:
-            session["last_bump"] = ("You already searched and emptied the body here - "
-                                    "there is nothing left to take. Move on: grab any "
-                                    "loose items you can see, or pursue your other goals.")
-            # First, if there is notable UNOWNED loot visible nearby, grab it -
-            # the body being empty doesn't mean the SCENE is empty (e.g. the
-            # Gargoyle jewelry lying next to the body). This breaks the fruitless
-            # re-search loop by doing something productive.
-            _pp2 = state.get("player") or {}
-            _NOT_LOOT = ("blood", "trap", "lever", "switch", "grave", "coffin",
-                         "altar", "shrine", "cauldron", "skeleton", "locked",
-                         "rune", "chest", "body", "corpse")  # scenery/containers
-            _loot = [o for o in (state.get("objects") or [])
-                     if o.get("name") and not o.get("owned") and not o.get("body")
-                     and kb.is_notable_object(o.get("name"))
-                     and not any(w in o.get("name", "").lower() for w in _NOT_LOOT)
-                     and o.get("name") not in session.get("picked", set())
-                     and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 10]
-            if _loot:
-                _it = min(_loot, key=lambda o: abs(o["dx"]) + abs(o["dy"]))
-                if abs(_it["dx"]) <= 1 and abs(_it["dy"]) <= 1:
-                    action = {"type": "pickup", "name": _it["name"]}
-                    session.setdefault("picked", set()).add(_it["name"])
-                    reason = f"(guard) body empty; grabbing nearby {_it['name']}"
-                else:
-                    action = {"type": "goto", "tx": _pp2.get("tx", 0) + _it["dx"],
-                              "ty": _pp2.get("ty", 0) + _it["dy"]}
-                    reason = f"(guard) body empty; going to loot {_it['name']}"
-                print(f"[{step:03d}] search-guard: body empty; loot '{_it['name']}'")
+        if any(abs(_here[0]-lx) + abs(_here[1]-ly) <= 2 for (lx, ly) in _looted):
+            session["last_bump"] = (
+                "You already emptied the container/body here - nothing left to "
+                "take. Grab any loose items you can see, or pursue another goal.")
+            qa, qr = _pursue_focus_quest(state, kb)
+            if qa and qa.get("type") not in ("open", "loot"):
+                action, reason = qa, qr
             else:
-                qa, qr = _pursue_focus_quest(state, kb)
-                if qa and qa.get("type") != "search":
-                    action, reason = qa, qr
-                else:
-                    action = _explore_far(state, session, wedged)
-                    reason = "(guard) body already looted; moving on to explore"
-                print(f"[{step:03d}] search-guard: body at {_here} already looted; moving on")
+                action = _explore_far(state, session, wedged)
+                reason = "(guard) already emptied here; moving on to explore"
+            print(f"[{step:03d}] loot-guard: {_here} already emptied; moving on")
         else:
-            _here_close = lambda dx, dy: abs(dx) <= 1 and abs(dy) <= 1
-            # Anything searchable right next to us? then let the search run.
-            # Searchable = a dead body, a body-flagged object, OR any container
-            # (chest, desk, drawer, bag, barrel, crate - flagged container:true
-            # by the engine).
-            adjacent = any(_here_close(n.get("dx", 9), n.get("dy", 9))
-                           for n in (state.get("nearby") or []) if n.get("dead"))
-            adjacent = adjacent or any(_here_close(o.get("dx", 9), o.get("dy", 9))
-                                       for o in (state.get("objects") or [])
-                                       if o.get("body") or o.get("container"))
-            if not adjacent:
-                # Nearest dead body (from NPC list) or body/container object.
-                cands = [(abs(n.get("dx", 99)) + abs(n.get("dy", 99)),
-                          _pp.get("tx", 0) + n.get("dx", 0),
-                          _pp.get("ty", 0) + n.get("dy", 0), n.get("name", "body"))
-                         for n in (state.get("nearby") or []) if n.get("dead")]
-                cands += [(abs(o.get("dx", 99)) + abs(o.get("dy", 99)),
-                           _pp.get("tx", 0) + o.get("dx", 0),
-                           _pp.get("ty", 0) + o.get("dy", 0), o.get("name", "container"))
-                          for o in (state.get("objects") or [])
-                          if o.get("body") or o.get("container")]
+            # If a target name/tx was given, trust it. Otherwise, if no
+            # body/container is adjacent (<=1 tile) but one is visible farther
+            # off, walk there first so open/loot hits something.
+            _named = action.get("name") or (action.get("tx") is not None)
+            _adj = any(abs(o.get("dx", 9)) <= 1 and abs(o.get("dy", 9)) <= 1
+                       for o in (state.get("objects") or [])
+                       if o.get("body") or o.get("container"))
+            _adj = _adj or any(abs(n.get("dx", 9)) <= 1 and abs(n.get("dy", 9)) <= 1
+                               for n in (state.get("nearby") or []) if n.get("dead"))
+            if not _named and not _adj:
+                cands = [(abs(o.get("dx", 99)) + abs(o.get("dy", 99)),
+                          _pp.get("tx", 0) + o.get("dx", 0),
+                          _pp.get("ty", 0) + o.get("dy", 0), o.get("name", "container"))
+                         for o in (state.get("objects") or [])
+                         if o.get("body") or o.get("container")]
+                cands += [(abs(n.get("dx", 99)) + abs(n.get("dy", 99)),
+                           _pp.get("tx", 0) + n.get("dx", 0),
+                           _pp.get("ty", 0) + n.get("dy", 0), n.get("name", "body"))
+                          for n in (state.get("nearby") or []) if n.get("dead")]
                 if cands:
                     cands.sort(key=lambda c: c[0])
                     _, btx, bty, bnm = cands[0]
                     action = {"type": "goto", "tx": btx, "ty": bty}
-                    reason = f"(guard) walking to '{bnm}' @({btx},{bty}) before searching"
-                    print(f"[{step:03d}] search-guard: goto '{bnm}' @({btx},{bty})")
+                    reason = f"(guard) walking to '{bnm}' @({btx},{bty}) before {action.get('type','open')}"
+                    print(f"[{step:03d}] loot-guard: goto '{bnm}' before open/loot")
                 else:
-                    # Nothing searchable anywhere (the agent tried to 'search the
-                    # garbage' etc). search only opens BODIES/CONTAINERS. The
-                    # look HANDLER already ran earlier this turn, so emitting a
-                    # look action here would fall through to the engine (unknown
-                    # action). Instead produce the examine description directly
-                    # and wait, and tell the agent what search is for.
-                    session["last_look"] = describe_scene(state, kb)
-                    kb.record_action("looked around")
-                    action = {"type": "wait"}
-                    reason = "(guard) nothing to search here; examined instead"
                     session["last_bump"] = (
-                        "'search' only opens a nearby BODY or CONTAINER. "
-                        "Containers include chests, desks, drawers, cabinets, "
-                        "bags, backpacks, barrels, crates, and sacks - the state "
-                        "flags them 'searchable_container' and lists their "
-                        "'contents'. There is none within reach right now, so "
-                        "search does nothing on plain scenery (tables, floors, "
-                        "garbage). Walk up to a searchable_container or body "
-                        "first; to grab a loose item use 'pickup'; to inspect "
-                        "the area use 'look'.")
-                    print(f"[{step:03d}] search-guard: no searchable target; examined instead")
+                        "There is no container or body within reach to open/loot. "
+                        "'open' works on a door, chest, desk, drawer, bag, barrel, "
+                        "crate, or body (name it or give its tx,ty). To grab a "
+                        "loose item use 'pickup'; to look around use 'look'.")
 
     # --- Repeat-failed-pickup guard: if the agent keeps trying to pick up an
     #     item that has already failed 2+ times (out of reach / owned / not
@@ -3710,8 +3641,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                               and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 3),
                              None)
                 if _body:
-                    action = {"type": "search"}
-                    reason = "(guard) thrashing between nearby goals; searching what's right here"
+                    action = {"type": "open"}
+                    reason = "(guard) thrashing between nearby goals; opening what's right here"
                 else:
                     # NOTE: emit a real no-op wait, NOT {"type":"look"} - the
                     # driver's look-handler runs EARLIER in the turn, so a look
@@ -3725,7 +3656,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                         "You have been walking back and forth between spots a few "
                         "tiles apart without arriving at anything - you ARE in the "
                         "area you keep trying to reach. STOP issuing goto to nearby "
-                        "coordinates. Instead: search/pickup an item or container "
+                        "coordinates. Instead: open/take an item or container "
                         "you can SEE, enter a door, or pick ONE distant NEW area "
                         "and commit to it.")
                 print(f"[{step:03d}] thrash-guard: bounded goto loop -> {action['type']}")
@@ -3754,7 +3685,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                         f"You have ARRIVED at '{nm}' - you are standing in it "
                         f"right now (within {_dist} tiles). STOP trying to "
                         f"'goto {nm}'; that is why it feels like a loop. "
-                        f"INVESTIGATE here instead: 'search' bodies/containers, "
+                        f"INVESTIGATE here instead: 'open' bodies/containers then 'take' items, "
                         f"go THROUGH a door ('+'/'/') to enter the building, or "
                         f"'talk' to someone present. Update your plot_summary to "
                         f"note you have reached '{nm}'.")
@@ -3767,16 +3698,16 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                                   and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 4),
                                  None)
                     if _body:
-                        action = {"type": "search"}
-                        reason = f"(guard) arrived at '{nm}'; searching the body here"
+                        action = {"type": "open"}
+                        reason = f"(guard) arrived at '{nm}'; opening the body here"
                     elif _door:
                         action = {"type": "goto",
                                   "tx": _pp0.get("tx", 0) + _door.get("dx", 0),
                                   "ty": _pp0.get("ty", 0) + _door.get("dy", 0)}
                         reason = f"(guard) arrived at '{nm}'; entering through the door"
                     else:
-                        action = {"type": "search"}
-                        reason = f"(guard) arrived at '{nm}'; investigating (search) here"
+                        action = {"type": "open"}
+                        reason = f"(guard) arrived at '{nm}'; opening/investigating here"
                     print(f"[{step:03d}] arrival-guard: already at '{nm}' ({_dist} tiles)")
                 # FIXATION BREAKER: if this landmark was already reached and had
                 # NOTHING searchable (marked exhausted), stop re-going there -
@@ -3864,7 +3795,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 _nm = _adj[0].get("name", "it")
                 session["last_bump"] = (
                     f"You are standing next to the {_nm}. Arriving there is NOT "
-                    "searching it. To look inside, emit the 'search' action now "
+                    "opening it. To look inside, emit the 'open' action now "
                     "(not goto). If you already searched it and it was empty, stop "
                     "returning - update your plot_summary and try another lead.")
                 print(f"[{step:03d}] conflation-info: adjacent {_nm}; suggested search")
@@ -4113,8 +4044,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                                if "door" in (o.get("name", "").lower())
                                and abs(o.get("dx", 9)) + abs(o.get("dy", 9)) <= 4), None)
             if _adj_cont:
-                action = {"type": "search"}
-                reason = "(guard) at target with a container here; searching it"
+                action = {"type": "open"}
+                reason = "(guard) at target with a container here; opening it"
             elif _near_door:
                 _pp = state.get("player") or {}
                 action = {"type": "goto",
@@ -4232,7 +4163,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # runs) so the agent can see whether it ever actually searches the world
         # vs only talking. Only count genuine (ok) engine actions.
         if _ok is not False and _atype in (
-                "search", "pickup", "take", "open", "read", "talk",
+                "loot", "pickup", "take", "open", "read", "talk",
                 "close", "equip", "unequip", "drop", "attack", "combat",
                 "unlock", "use_key", "use", "give"):
             kb.record_activity(_atype)
@@ -4312,27 +4243,44 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         p0 = state.get("player") or {}
         detail = action.get("name") or action.get("dir") or ""
         outcome = ""
-        if atype == "search":
+        if atype == "open":
             if _ok:
-                # The engine now LOOTS the body/container and reports exactly
-                # what it took ("looted": "gold, bread, torch", "count": N) or
-                # "empty": true. Trust that over the stale gump snapshot.
+                _kind = result.get("kind") if isinstance(result, dict) else None
+                if _kind == "door":
+                    outcome = " -> opened the door"
+                else:
+                    _contents = result.get("contents") if isinstance(result, dict) else None
+                    _cn = result.get("count") if isinstance(result, dict) else None
+                    if _cn:
+                        outcome = f" -> opened; inside: {', '.join(_contents)}"
+                    else:
+                        outcome = " -> opened; EMPTY (nothing inside)"
+                        pp = state.get("player") or {}
+                        kb.mark_searched_empty(pp.get("tx", 0), pp.get("ty", 0),
+                                               action.get("name") or "container")
+            else:
+                _e = result.get("error", "") if isinstance(result, dict) else ""
+                outcome = f" -> could not open: {_e}" if _e else " -> nothing to open here"
+        elif atype == "loot":
+            if _ok:
                 looted_str = result.get("looted") if isinstance(result, dict) else None
                 took_n = result.get("count") if isinstance(result, dict) else None
                 is_empty = result.get("empty") if isinstance(result, dict) else None
                 if took_n:
-                    outcome = f" -> LOOTED {looted_str} ({took_n})"
+                    outcome = f" -> LOOTED ALL: {looted_str} ({took_n})"
+                    pp = state.get("player") or {}
+                    session.setdefault("looted_spots", set()).add(
+                        (pp.get("tx", 0), pp.get("ty", 0)))
                 elif is_empty or not looted_str:
                     outcome = " -> EMPTY (nothing to take)"
-                    # Remember this spot as already-searched-and-empty so the
-                    # agent stops returning to it (short-term memory).
                     pp = state.get("player") or {}
                     kb.mark_searched_empty(pp.get("tx", 0), pp.get("ty", 0),
-                                           action.get("name") or "body")
+                                           action.get("name") or "container")
                 else:
-                    outcome = f" -> LOOTED {looted_str}"
+                    outcome = f" -> LOOTED ALL: {looted_str}"
             else:
-                outcome = " -> nothing to search here"
+                _e = result.get("error", "") if isinstance(result, dict) else ""
+                outcome = f" -> could not loot: {_e}" if _e else " -> nothing to loot here"
         elif atype in ("pickup", "take"):
             if _ok:
                 outcome = f" -> got {result.get('item')}"
@@ -4423,17 +4371,17 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _progressed = (_p1.get("tx"), _p1.get("ty")) != session.get("prev_xy_for_log")
         session["prev_xy_for_log"] = (_p1.get("tx"), _p1.get("ty"))
         kb.record_move(str(_tgt), moved=(_movedok and _progressed), reason=reason)
-    # A successful pickup/search changes the world -> NPCs may now have new
-    # dialogue, so allow revisiting them.
-    if atype in ("pickup", "search") and isinstance(result, dict) and result.get("ok"):
+    # A successful pickup/take/loot/open changes the world -> NPCs may now have
+    # new dialogue, so allow revisiting them.
+    if atype in ("pickup", "take", "loot", "open") and isinstance(result, dict) and result.get("ok"):
         kb.reset_talk_gate()
-    # A searched body/container OR a spot where we picked something up is a
+    # A looted/opened body/container OR a spot where we picked something up is a
     # notable location -> auto-mark it so the agent can find its way back even
     # if it never annotates on its own (e.g. returning to a crime scene).
-    if atype in ("search", "pickup") and isinstance(result, dict) and result.get("ok"):
+    if atype in ("loot", "open", "pickup", "take") and isinstance(result, dict) and result.get("ok"):
         pp = state.get("player") or {}
         tgt = result.get("target") or result.get("item") or action.get("name") or "spot"
-        verb = "searched" if atype == "search" else "found items at"
+        verb = "opened" if atype == "open" else ("looted" if atype == "loot" else "found items at")
         kb.record_place(f"where I {verb} {tgt}", pp.get("tx", 0), pp.get("ty", 0),
                         kind="marked")
         # Auto-resolve 'investigate/search/find <subject>' quests now that we've

@@ -369,7 +369,7 @@ class InspectorServer:
         self._broadcast("turn_window", turns)
 
     def _remote_throttle(self, ms: int) -> None:
-        ms = max(0, min(int(ms or 0), 1000))
+        ms = max(0, min(int(ms or 0), 5000))
         with self._lock:
             self._throttle_ms = ms
         self._broadcast("throttle_ms", ms)
@@ -448,7 +448,7 @@ def _make_handler(server: "InspectorServer"):
                 except (TypeError, ValueError):
                     ms = 0
                 server._remote_throttle(ms)
-                self._json(200, {"ok": True, "ms": max(0, min(ms, 1000))})
+                self._json(200, {"ok": True, "ms": max(0, min(ms, 5000))})
             else:
                 self._send(404, b"not found", "text/plain")
 
@@ -578,8 +578,8 @@ _INDEX_HTML = r"""<!DOCTYPE html>
     <option value="600">600</option><option value="800">800</option><option value="1000">1000</option>
   </select>
   <span id="turnwin-ok" style="color:var(--good);font-size:11px;"></span>
-  <label style="font-size:11px;color:var(--muted);" title="Extra delay per turn (ms) to cool the LLM box. 0 = full speed, up to 1000.">
-    throttle <input id="throttle" type="number" min="0" max="1000" step="50" value="0" style="width:64px;"/> ms
+  <label style="font-size:11px;color:var(--muted);" title="Extra delay before each LLM request (ms) to cool the box. 0=full speed; a Granite turn is ~1.2s compute, so use 2000-4000 to meaningfully lower GPU duty cycle. Max 5000.">
+    throttle <input id="throttle" type="number" min="0" max="5000" step="100" value="0" style="width:64px;"/> ms
   </label>
   <span id="throttle-ok" style="color:var(--good);font-size:11px;"></span>
 </header>
@@ -789,7 +789,7 @@ $("askbtn").onclick=()=>{const q=$("askbox").value.trim();if(q){post("/ask",{que
 $("askbox").addEventListener("keydown",e=>{if(e.key==="Enter")$("askbtn").click();});
 $("savebtn").onclick=()=>post("/save",{});
 $("turnwin").onchange=e=>post("/turn-window",{turns:e.target.value});
-$("throttle").onchange=e=>{let v=parseInt(e.target.value||"0",10);if(isNaN(v))v=0;v=Math.max(0,Math.min(v,1000));e.target.value=v;post("/throttle",{ms:v});};
+$("throttle").onchange=e=>{let v=parseInt(e.target.value||"0",10);if(isNaN(v))v=0;v=Math.max(0,Math.min(v,5000));e.target.value=v;post("/throttle",{ms:v});};
 connect();
 </script>
 </body>
