@@ -669,23 +669,29 @@ function renderQuests(data){
   const box=$("p-quests"); if(!box) return; box.innerHTML="";
   const open=(data&&data.open)||[];
   if(!open.length){box.innerHTML='<span class="child dim">(no open quests)</span>';return;}
-  // priority badge color: 1-2 hot, 3-5 warm, else dim
   function pcol(p){return p<=2?"#ff7a7a":p<=5?"var(--warn)":"var(--muted)";}
-  open.forEach(q=>{
-    const row=document.createElement("div"); row.style.cssText="padding:4px 0;border-bottom:1px solid #14181e;";
-    let h='<span style="display:inline-block;min-width:26px;font-weight:700;color:'+pcol(q.priority||9)+';">P'+esc(q.priority||"?")+'</span> ';
-    h+='<span>'+esc(q.title||q.id||"?")+'</span>';
+  const byId={}; open.forEach(q=>byId[q.id]=q);
+  // Partition into top-level quests vs sub-tasks (those whose depends_on points
+  // at another OPEN quest). Sub-tasks render nested under their parent.
+  const isSub=q=>(q.depends_on||[]).some(d=>byId[d]);
+  const tops=open.filter(q=>!isSub(q));
+  const subsOf=id=>open.filter(q=>(q.depends_on||[]).includes(id));
+  function qrow(q,indent){
+    const row=document.createElement("div");
+    row.style.cssText="padding:3px 0;"+(indent?"margin-left:16px;":"border-bottom:1px solid #14181e;");
+    let h=(indent?'<span class="child dim">↳</span> ':'')+
+      '<span style="display:inline-block;min-width:26px;font-weight:700;color:'+pcol(q.priority||9)+';">P'+esc(q.priority||"?")+'</span> '+
+      '<span'+(indent?' class="child dim"':'')+'>'+esc(q.title||q.id||"?")+'</span>';
     if(q.npc) h+=' <span class="child dim">['+esc(q.npc)+']</span>';
-    if(q.prereqs_unmet&&q.prereqs_unmet.length)
+    if(!indent && q.prereqs_unmet && q.prereqs_unmet.length)
       h+='<div class="child dim" style="color:#e0857a;">⛔ blocked on: '+esc(q.prereqs_unmet.join(", "))+'</div>';
-    if(q.notes) h+='<div class="child dim">'+esc(String(q.notes).slice(0,120))+'</div>';
+    if(q.notes) h+='<div class="child dim">'+esc(String(q.notes).slice(0,110))+'</div>';
     row.innerHTML=h; box.appendChild(row);
-  });
-  if(data.resolved) {
-    const f=document.createElement("div"); f.className="child dim"; f.style.marginTop="4px";
-    f.textContent=data.unresolved+" open · "+data.resolved+" resolved";
-    box.appendChild(f);
   }
+  tops.forEach(q=>{ qrow(q,false); subsOf(q.id).forEach(s=>qrow(s,true)); });
+  const f=document.createElement("div"); f.className="child dim"; f.style.marginTop="4px";
+  f.textContent=(data.unresolved||open.length)+" open · "+(data.resolved||0)+" resolved";
+  box.appendChild(f);
 }
 function renderGuards(rows){
   const box=$("p-guard_stats"); if(!box) return; box.innerHTML="";

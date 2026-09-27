@@ -435,19 +435,30 @@ periodically). For finer detail you have the recall/quests tools.
             this when the people you need are "sleeping" and it is night.
 
 # JOURNAL TOOLS (manage your own quest log & notes - do NOT affect the game)
-  add_quest    - Record a goal you discovered. params: {"title": "...",
-                 "priority": 1-9 (1=highest), "notes": "...",
-                 "depends_on": ["<quest id>", ...] (optional prerequisites)}.
-                 Use whenever you form an intention or infer a goal from what
-                 you observe or are told - e.g. "investigate the docks", "find
-                 the man who fled", "ask the Mayor about the murder". If your
-                 REASONING this turn identifies something you want to do next,
-                 capture it as a quest so you remember and can prioritise it. If
-                 quest B requires finishing quest A first, set B.depends_on=["<A id>"].
+#
+# QUEST vs SUB-TASK - organise your goals into TWO levels (this keeps your log
+# readable and stops it filling with dozens of tiny near-duplicate entries):
+#   * A QUEST is a BIG objective - a whole storyline or mission, e.g.
+#     "Solve the Trinsic murder", "Reach Britain", "Clear the dungeon". You
+#     should have only a FEW open quests at once (roughly 1-5).
+#   * A SUB-TASK is a concrete STEP toward a quest, e.g. "search the body",
+#     "read the sign", "ask Petre about the murder", "find the key". Record a
+#     sub-task as a quest whose depends_on = ["<parent quest id>"], so it nests
+#     UNDER its quest instead of becoming another top-level goal.
+# Before adding a quest, check the open list: if your new goal is a STEP toward
+# an existing quest, add it as a sub-task of that quest (or just DO it) - do NOT
+# create a second top-level quest for the same objective. Reserve add_quest
+# top-level entries for genuinely NEW big objectives.
+  add_quest    - Record a goal. params: {"title": "...", "priority": 1-9
+                 (1=highest), "notes": "...", "depends_on": ["<parent quest
+                 id>", ...]}. For a SUB-TASK, set depends_on to the parent
+                 quest's id (its title lower-cased with underscores). For a new
+                 big QUEST, omit depends_on. Don't log every micro-intention as
+                 its own top-level quest - nest steps under their quest.
   update_quest - Change a quest. params: {"id": "<quest id>", "status":
                  "active|blocked|done", "priority": n, "notes": "...",
-                 "depends_on": [...]}. Mark a quest "done" when you complete it,
-                 and add notes as you learn more about it.
+                 "depends_on": [...]}. Mark a quest/sub-task "done" when you
+                 complete it, and add notes as you learn more about it.
   note_npc     - Save a note about an NPC. params: {"name": "...", "note": "..."}.
                  Record leads, what they want, or what they told you.
   add_topic    - Record a TOPIC/subject you're tracking across the game (a
