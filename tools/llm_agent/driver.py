@@ -1997,8 +1997,20 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # non-party NPC. Without this, dialogue trees for such NPCs (e.g.
         # Finnigan reached via goto) stay empty. Only infer when unset.
         if cur_npc in ("?", "", None):
+            # Animals (dog/cat/horse/sheep/etc.) cannot hold a conversation in
+            # BG, yet they show up in 'nearby' and were sometimes CLOSER than the
+            # real speaker - so companion/NPC dialogue got misfiled under "dog"
+            # (which then made the LLM invent "the dog hinted..."). Exclude
+            # non-speaking creatures from the speaker inference.
+            _animals = ("dog", "cat", "horse", "sheep", "cow", "pig", "chicken",
+                        "rat", "bat", "rabbit", "deer", "wolf", "fox", "bird",
+                        "mouse", "goat", "donkey", "mule", "ox")
+            def _is_animal(nm):
+                low = (nm or "").lower()
+                return any(a == low or a in low.split() for a in _animals)
             _cands = [n for n in (state.get("nearby") or [])
-                      if n.get("name") and not n.get("in_party") and not n.get("dead")]
+                      if n.get("name") and not n.get("in_party") and not n.get("dead")
+                      and not _is_animal(n.get("name"))]
             if _cands:
                 _near = min(_cands, key=lambda n: abs(n.get("dx", 99)) + abs(n.get("dy", 99)))
                 cur_npc = _near["name"]
