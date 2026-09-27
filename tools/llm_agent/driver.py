@@ -3663,9 +3663,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                               if (o.get("body") or o.get("container"))
                               and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 3),
                              None)
-                if _body:
-                    action = {"type": "open"}
-                    reason = "(guard) thrashing between nearby goals; opening what's right here"
+                if _body and abs(_body.get("dx", 9)) <= 1 and abs(_body.get("dy", 9)) <= 1:
+                    action = {"type": "open", "name": _body.get("name", "")}
+                    reason = f"(guard) thrashing; opening the {_body.get('name','container')} right here"
+                elif _body:
+                    action = {"type": "goto",
+                              "tx": (state.get("player") or {}).get("tx", 0) + _body.get("dx", 0),
+                              "ty": (state.get("player") or {}).get("ty", 0) + _body.get("dy", 0)}
+                    reason = f"(guard) thrashing; walking to the {_body.get('name','container')} to open it"
                 else:
                     # NOTE: emit a real no-op wait, NOT {"type":"look"} - the
                     # driver's look-handler runs EARLIER in the turn, so a look
@@ -3716,21 +3721,34 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     _door = next((d for d in (state.get("doors") or [])
                                   if abs(d.get("dx", 99)) + abs(d.get("dy", 99)) <= 5),
                                  None)
-                    _body = next((o for o in (state.get("objects") or [])
-                                  if o.get("body")
+                    _cont = next((o for o in (state.get("objects") or [])
+                                  if (o.get("body") or o.get("container"))
                                   and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 4),
                                  None)
-                    if _body:
-                        action = {"type": "open"}
-                        reason = f"(guard) arrived at '{nm}'; opening the body here"
+                    if _cont and abs(_cont.get("dx", 9)) <= 1 and abs(_cont.get("dy", 9)) <= 1:
+                        # Adjacent openable -> open it BY NAME (bare open scans
+                        # only ~1 tile and was failing).
+                        action = {"type": "open", "name": _cont.get("name", "")}
+                        reason = f"(guard) arrived at '{nm}'; opening the {_cont.get('name','container')} here"
+                    elif _cont:
+                        # Openable in view but not adjacent -> walk onto its tile.
+                        action = {"type": "goto",
+                                  "tx": _pp0.get("tx", 0) + _cont.get("dx", 0),
+                                  "ty": _pp0.get("ty", 0) + _cont.get("dy", 0)}
+                        reason = f"(guard) arrived at '{nm}'; walking to the {_cont.get('name','container')} to open it"
                     elif _door:
                         action = {"type": "goto",
                                   "tx": _pp0.get("tx", 0) + _door.get("dx", 0),
                                   "ty": _pp0.get("ty", 0) + _door.get("dy", 0)}
                         reason = f"(guard) arrived at '{nm}'; entering through the door"
                     else:
-                        action = {"type": "open"}
-                        reason = f"(guard) arrived at '{nm}'; opening/investigating here"
+                        # Nothing openable here at all -> do NOT emit a bare
+                        # 'open' (it just fails 'nothing to open there'). Mark
+                        # this landmark exhausted and move on so we don't loop.
+                        session.setdefault("exhausted_landmarks", set()).add(
+                            (_pp0.get("tx", 0), _pp0.get("ty", 0)))
+                        action = _explore_far(state, session, wedged)
+                        reason = f"(guard) arrived at '{nm}'; nothing to open here, exploring on"
                     print(f"[{step:03d}] arrival-guard: already at '{nm}' ({_dist} tiles)")
                 # FIXATION BREAKER: if this landmark was already reached and had
                 # NOTHING searchable (marked exhausted), stop re-going there -
