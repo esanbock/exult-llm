@@ -3641,6 +3641,47 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             kb.record_action(f"answered: \"{_chosen[:60]}\"")
             session["answer_text"] = _chosen
 
+    # --- Anti-THRASH guard: the model can ping-pong between TWO goto goals a
+    #     few tiles apart (e.g. "enter stables" <-> "read the sign"), each goto
+    #     moving a little then switching, so it never ARRIVES at either. This
+    #     bounces across a ~6-10 tile box - too big for the <=3 oscillation
+    #     detector, too small to be progress - and uses raw {tx,ty} so the
+    #     named-arrival guard misses it. Detect it directly: if recent turns are
+    #     dominated by gotos confined to a small bounding box, stop navigating
+    #     and COMMIT to investigating right here. -----------------------------
+    if (isinstance(action, dict) and action.get("type") == "goto"
+            and not state.get("conversation_in_progress")):
+        _pp = state.get("player") or {}
+        _th = session.setdefault("thrash_pos", [])
+        _th.append((_pp.get("tx"), _pp.get("ty")))
+        del _th[:-10]
+        if len(_th) >= 8:
+            _xs = [t[0] for t in _th if t[0] is not None]
+            _ys = [t[1] for t in _th if t[1] is not None]
+            if _xs and max(max(_xs) - min(_xs), max(_ys) - min(_ys)) <= 10:
+                # Confined to a small area for 8+ goto turns = thrashing between
+                # goals while standing in the place. Commit to a real local
+                # action instead of another goto.
+                session["thrash_pos"] = []
+                _body = next((o for o in (state.get("objects") or [])
+                              if (o.get("body") or o.get("container"))
+                              and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 3),
+                             None)
+                if _body:
+                    action = {"type": "search"}
+                    reason = "(guard) thrashing between nearby goals; searching what's right here"
+                else:
+                    action = {"type": "look"}
+                    reason = "(guard) thrashing between nearby goals; looking around to re-assess"
+                    session["last_bump"] = (
+                        "You have been walking back and forth between spots a few "
+                        "tiles apart without arriving at anything - you ARE in the "
+                        "area you keep trying to reach. STOP issuing goto to nearby "
+                        "coordinates. Instead: search/pickup an item or container "
+                        "you can SEE, enter a door, or pick ONE distant NEW area "
+                        "and commit to it.")
+                print(f"[{step:03d}] thrash-guard: bounded goto loop -> {action['type']}")
+
     # If the model asks to "goto" a named target that isn't visible but IS a
     # remembered place or NPC, resolve it to coordinates from the mental map.
     if (isinstance(action, dict) and action.get("type") == "goto"
