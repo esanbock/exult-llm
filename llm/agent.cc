@@ -2201,12 +2201,30 @@ namespace LLM_agent {
 							2, dest.tz, lx, ly, new_lift, av->get_type_flags(),
 							1 /*max_drop*/, 6 /*max_rise: allow climbing stairs*/);
 					if (blk) {
-						// Blocked at this Z; probe upward for a standable surface.
-						for (int z = dest.tz + 1; z <= dest.tz + 6; ++z) {
-							int nl = z;
-							if (!dchunk->is_blocked(2, z, lx, ly, nl,
-									av->get_type_flags(), 1, 0)) {
-								dest.tz = z;
+						// Blocked at this Z. Probe OUTWARD for the nearest
+						// standable surface - both DOWN and UP - so goto handles
+						// descending (e.g. off a wall-top to the ground) as well
+						// as climbing (up stairs), symmetrically. We interleave
+						// z-1,z+1,z-2,z+2,... and take the closest hit, biasing
+						// toward the SAME level or below first (the common case
+						// is "reach that ground tile from up here"). This
+						// replaces the old descend-escape band-aid: a plain goto
+						// to a ground tile now resolves its Z correctly.
+						for (int r = 1; r <= 6; ++r) {
+							int zd = dest.tz - r;   // downward candidate
+							int nld = zd;
+							if (zd >= 0 && !dchunk->is_blocked(
+									2, zd, lx, ly, nld, av->get_type_flags(),
+									6 /*max_drop*/, 0)) {
+								dest.tz = zd;
+								break;
+							}
+							int zu = dest.tz + r;   // upward candidate
+							int nlu = zu;
+							if (!dchunk->is_blocked(
+									2, zu, lx, ly, nlu, av->get_type_flags(),
+									1, 6 /*max_rise: climb stairs*/)) {
+								dest.tz = zu;
 								break;
 							}
 						}

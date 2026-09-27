@@ -1243,6 +1243,14 @@ def parse_reply(text: str) -> tuple[str, dict]:
             "up": "n", "down": "s", "left": "w", "right": "e",
         }
         action["dir"] = _DIR_WORDS.get(_d.lower(), _d.lower())
+    # Shape alias: a "move"/"walk"/"go" with a NAMED target but no dir/tx is
+    # really a goto-by-name (the engine resolves the name to a tile and its
+    # z-aware pathfinder walks/climbs there). Seen live: {"type":"move",
+    # "name":"stairs"} was rejected as a bad direction. Route it to goto.
+    if (action.get("type") == "move" and action.get("name")
+            and not action.get("dir")
+            and action.get("tx") is None and action.get("ty") is None):
+        action["type"] = "goto"
     return (reason, action)
 
 
@@ -2911,32 +2919,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         else:
             _oscillating = False
         _force_step = _oscillating
-        _cur_tz_here = (state.get("player") or {}).get("tz", 0) or 0
-        # (Elevated force-descend REMOVED - it fought the agent's own stair
-        # navigation and caused up/down oscillation. When oscillating while
-        # elevated, just use the normal flood-fill / known-place escape below,
-        # same as at ground level.)
-        #
-        # ELEVATED ESCAPE: if we're standing on a wall-top/roof (above ground,
-        # tz > 0) and wedged, the visible-grid gotos and known-place routes fail
-        # with "no path to destination" because they target GROUND tiles the
-        # pathfinder can't reach from up here (seen live at z5 on the fortress
-        # crenellations). The engine's `descend` action is purpose-built for
-        # this: it BFS-scans for the nearest standable ground and paths there
-        # reliably (unlike the old goto-far-tile hack that fought the wedge
-        # guard). Use it FIRST when elevated - but rate-limit so that if descend
-        # itself can't find ground we fall through to the normal escape instead
-        # of spamming it. (tz > 0 matches the driver's existing "UP HIGH"
-        # convention; note tz can be 5 on a wall-top, so a %5 test is wrong.)
-        _elevated = (_cur_tz_here or 0) > 0
-        _last_descend = session.get("wedge_descend_at", -99)
-        if _elevated and (n - _last_descend) >= 3:
-            session["wedge_descend_at"] = n
-            session["wedge_recent"] = []
-            action = {"type": "descend"}
-            reason = (f"(guard) wedged while elevated (tz={_cur_tz_here}); "
-                      f"descending to nearest ground")
-        elif best and best_d >= 3 and _force_step:
+        # NOTE: no special elevated/descend escape here. goto is z-aware - it
+        # resolves the destination's elevation (probing down AND up for the
+        # nearest standable surface) and the pathfinder climbs/descends stairs
+        # as needed. So a plain goto to a ground tile from a wall-top resolves
+        # correctly; we don't need a band-aid descend action in the wedge guard.
+        if best and best_d >= 3 and _force_step:
             # We're trapped in a tiny pocket but the flood-fill sees a far open
             # tile: commit a goto straight to it and clear the recent buffer so
             # we don't immediately re-trigger.
