@@ -2201,30 +2201,12 @@ namespace LLM_agent {
 							2, dest.tz, lx, ly, new_lift, av->get_type_flags(),
 							1 /*max_drop*/, 6 /*max_rise: allow climbing stairs*/);
 					if (blk) {
-						// Blocked at this Z. Probe OUTWARD for the nearest
-						// standable surface - both DOWN and UP - so goto handles
-						// descending (e.g. off a wall-top to the ground) as well
-						// as climbing (up stairs), symmetrically. We interleave
-						// z-1,z+1,z-2,z+2,... and take the closest hit, biasing
-						// toward the SAME level or below first (the common case
-						// is "reach that ground tile from up here"). This
-						// replaces the old descend-escape band-aid: a plain goto
-						// to a ground tile now resolves its Z correctly.
-						for (int r = 1; r <= 6; ++r) {
-							int zd = dest.tz - r;   // downward candidate
-							int nld = zd;
-							if (zd >= 0 && !dchunk->is_blocked(
-									2, zd, lx, ly, nld, av->get_type_flags(),
-									6 /*max_drop*/, 0)) {
-								dest.tz = zd;
-								break;
-							}
-							int zu = dest.tz + r;   // upward candidate
-							int nlu = zu;
-							if (!dchunk->is_blocked(
-									2, zu, lx, ly, nlu, av->get_type_flags(),
-									1, 6 /*max_rise: climb stairs*/)) {
-								dest.tz = zu;
+						// Blocked at this Z; probe upward for a standable surface.
+						for (int z = dest.tz + 1; z <= dest.tz + 6; ++z) {
+							int nl = z;
+							if (!dchunk->is_blocked(2, z, lx, ly, nl,
+									av->get_type_flags(), 1, 0)) {
+								dest.tz = z;
 								break;
 							}
 						}
@@ -2238,6 +2220,22 @@ namespace LLM_agent {
 			if (av->walk_path_to_tile(dest, static_cast<int>(speed))) {
 				return "{\"ok\":true,\"did\":\"goto\"," + json_int("tx", dest.tx) + ","
 					   + json_int("ty", dest.ty) + "}";
+			}
+			// DESCEND RETRY (Option B): if the same-Z path failed and we're
+			// standing ELEVATED (on a wall-top/roof, at.tz > 0) with no explicit
+			// tz requested, the target is very likely a GROUND tile we couldn't
+			// reach because the search stayed at our high Z. Retry once at tz 0
+			// so the pathfinder routes down the stairs to the ground. This is
+			// self-correcting: it only kicks in AFTER the normal path fails, so
+			// walking along an elevated walkway (same-Z path succeeds) is
+			// unaffected. Replaces the old descend-escape band-aid.
+			if (!tz_was_explicit && at.tz > 0 && dest.tz != 0) {
+				Tile_coord ground_dest(dest.tx, dest.ty, 0);
+				if (av->walk_path_to_tile(ground_dest, static_cast<int>(speed))) {
+					return "{\"ok\":true,\"did\":\"goto\",\"descended\":true,"
+						   + json_int("tx", ground_dest.tx) + ","
+						   + json_int("ty", ground_dest.ty) + "}";
+				}
 			}
 			// Path failed - a closed door may be blocking. Open the nearest
 			// closed door and retry once (the pathfinder also auto-opens doors
