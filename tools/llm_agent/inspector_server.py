@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional
 
 # Panels the driver pushes as plain text (key -> latest string).
 _TEXT_KEYS = (
-    "room",
+    "room", "action_digest",
     "gstatus", "plot", "map", "inventory", "dialog", "quests",
     "tool_stats", "context_dump", "area_map", "answer", "thinking",
 )
@@ -267,6 +267,10 @@ class InspectorServer:
     def set_room(self, text: str) -> None:
         """Zork-style narrated room description."""
         self._broadcast("room", text)
+
+    def set_action_digest(self, text: str) -> None:
+        """Factual digest of turns that scrolled off the shown action log."""
+        self._broadcast("action_digest", text)
 
     def set_quests(self, text: str) -> None:
         self._broadcast("quests", text)
@@ -602,6 +606,7 @@ _INDEX_HTML = r"""<!DOCTYPE html>
   <!-- RIGHT rail: plot, quests, notes, stats (priority order) -->
   <div class="stack">
     <div class="card tall"><h2>Plot</h2><div class="body" id="p-plot"></div></div>
+    <div class="card tall"><h2>Earlier this session (scrolled-off digest)</h2><div class="body pre" id="p-action_digest"></div></div>
     <div class="card tall"><h2>Open quests</h2><div class="body" id="p-quests"></div></div>
     <div class="card tall"><h2>Resolved quests</h2><div class="body" id="p-resolved"></div></div>
     <div class="card tall"><h2>Notes / Journal</h2><div class="body" id="p-notes"></div></div>
@@ -769,7 +774,7 @@ function applySnapshot(s){
   setText("c-turn","turn "+(s.turn||0));
   setText("c-model", s.title? "" : "");
   apply("context",{pct:s.context_pct||0,label:s.context_label||""});
-  ["gstatus","plot","map","area_map","inventory","dialog","tool_stats","context_dump","room"].forEach(k=>apply(k,s[k]));
+  ["gstatus","plot","map","area_map","inventory","dialog","tool_stats","context_dump","room","action_digest"].forEach(k=>apply(k,s[k]));
   apply("turn_log",s.turn_log||[]);apply("stats_kv",s.stats_kv||{});apply("notes",s.notes||[]);
   apply("npc_tree",s.npc_tree||[]);apply("topics_tree",s.topics_tree||[]);apply("resolved",s.resolved||[]);
   apply("quests_data",s.quests_data||{});

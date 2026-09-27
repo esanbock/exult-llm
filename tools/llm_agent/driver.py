@@ -1954,6 +1954,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     window.set_guard_stats(kb.guard_stats_data(top=30))
                 except Exception:
                     pass
+            if hasattr(window, "set_action_digest"):
+                try:
+                    # 450 = the default shown action-log window; the digest is
+                    # everything older that has scrolled off it.
+                    window.set_action_digest(kb.action_digest(450))
+                except Exception:
+                    pass
         except Exception:
             pass
 
