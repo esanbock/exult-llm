@@ -121,7 +121,8 @@ RPG PLAYER WISDOM (seasoned-player habits):
     it's circular - find what UNLOCKS the blocker first.
   * FINISH THE CHAIN: do multi-step paths A->B->C step by step; don't drift back
     to a blocked action before its prerequisite is met.
-  * SURVIVE: "feed" when food is low, heal when hurt; avoid needless danger."""
+  * SURVIVE: when food is low, EAT - "use" a food item from your pack (bread,
+    apple, etc.); heal when hurt; avoid needless danger."""
 
 SYSTEM_PROMPT = """\
 You are an autonomous agent playing Ultima VII: The Black Gate as the Avatar.
@@ -235,7 +236,7 @@ periodically). For finer detail you have the recall/quests tools.
                                 (== your strength). hp == max_hp means FULL
                                 health - you do NOT need healing. Only seek a
                                 healer/rest when hp is well below max_hp (hp_pct
-                                low). food is hunger (eat when it gets low).
+                                low). food is hunger - when low, "use" a food item from your pack (bread/apple) to eat.
                                 COORDINATES: everything uses ONE ABSOLUTE frame,
                                 in 3D. Your tile is (tx,ty,tz). Every nearby
                                 person/object also gives ABSOLUTE (tx,ty,tz) plus
@@ -375,6 +376,9 @@ periodically). For finer detail you have the recall/quests tools.
             to a world object first. Covers: well, winch/lever/switch (gates/
             bridges/puzzles), sextant (your coords), carriage/boat (board), bed
             (sleep), plaque/book, moongate; and carried potions/scrolls/tools.
+            TO EAT: "use" a food item in your pack (e.g. {"name":"bread"} or
+            "apple") - this double-clicks/consumes it and restores your food.
+            Do this when food is low, BEFORE you starve.
   read    - Read a nearby SIGN/readable object OR a book/scroll/document you are
             CARRYING. params: omit=nearest sign, or {"name":"<obj>"} (matches a
             world object or an item in your pack). Returns "text". Use this to
@@ -425,7 +429,9 @@ periodically). For finer detail you have the recall/quests tools.
   set_combat_mode - How you fight. params: {"mode":
             "nearest"|"weakest"|"strongest"|"berserk"|"defend"|"flank"|"flee"|
             "protect"|"random"|"manual"} ("flee" to retreat, "defend" when hurt).
-  feed    - Eat food to refill your food level (prevents starving). params: none.
+  feed    - EMERGENCY only: refill food when you have NOTHING edible in your
+            pack. Normally you EAT the real way instead: "use" a food item you
+            are carrying (see below).
   heal    - Use a bandage from your pack to restore HP when hurt. params: none.
             Do this when your hp is well below max_hp and you are safe (not mid-
             fight if avoidable). Needs a bandage in the party's inventory.
@@ -1964,19 +1970,29 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         except Exception:
             pass
 
-    # Survival safety net: never let the avatar starve on-stream. Feed when food
-    # is actually LOW (responsive), not only on a fixed cadence - the model
-    # frequently ignores the "feed when low" instruction and had starved to HP 1
-    # with bread/apple still in its pack. Enabled by default (auto_feed); the
-    # periodic feed is kept as a backstop.
+    # Survival net (honest mechanic): if the avatar is about to STARVE, eat a
+    # real food item from the pack via 'use' (U7's double-click, which consumes
+    # the item) - NOT the magic 'feed' refill. This is a last-resort anti-death
+    # only (food very low), so the LLM still owns eating in normal play and
+    # learns the general mechanic: carried consumables must be actively USED.
+    # If it has no food item, fall back to the emergency refill to avoid a
+    # stream-ending death.
     if args.auto_feed:
         _food = (state.get("player") or {}).get("food")
-        _low = isinstance(_food, int) and _food <= 8
-        if _low or (step % args.auto_feed_every == 0):
+        if isinstance(_food, int) and _food <= 3:
+            _pack = (state.get("player") or {}).get("carrying") or []
+            _FOODS = ("bread", "apple", "meat", "mutton", "cheese", "ham",
+                      "fish", "ribs", "roll", "cake", "carrot", "food", "ration")
+            _fooditem = next((it for it in _pack
+                              if any(f in str(it).lower() for f in _FOODS)), None)
             try:
-                exult.act({"type": "feed", "level": 30})
-                if _low:
-                    print(f"[{step:03d}] survival: food low ({_food}) -> auto-fed")
+                if _fooditem:
+                    _fn = _fooditem.split(" ", 1)[-1] if _fooditem[:1].isdigit() else _fooditem
+                    exult.act({"type": "use", "name": _fn})
+                    print(f"[{step:03d}] survival: starving (food {_food}) -> ate '{_fn}' from pack")
+                else:
+                    exult.act({"type": "feed", "level": 30})   # no food carried
+                    print(f"[{step:03d}] survival: starving (food {_food}), no food in pack -> emergency refill")
             except Exception:
                 pass
 
