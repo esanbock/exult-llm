@@ -3473,25 +3473,35 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                         "crate, or body (name it or give its tx,ty). To grab a "
                         "loose item use 'pickup'; to look around use 'look'.")
 
-    # --- Repeat-failed-pickup guard: if the agent keeps trying to pick up an
-    #     item that has already failed 2+ times (out of reach / owned / not
-    #     takeable), stop retrying and move on / walk toward it instead. -------
-    if (isinstance(action, dict) and action.get("type") == "pickup"
+    # --- Reach-the-item guard: "take"/"pickup" need you within ~1 tile. If the
+    #     model targets a VISIBLE item that's farther, walk to its exact tile
+    #     first (using the object's own coords), then it can take it next turn.
+    #     This fixes "'key' is TOO FAR (7 tiles)" loops where the engine told the
+    #     agent to goto the tile but it didn't follow through. General: any item,
+    #     any quest. After repeated failures on the same item, give up on it.
+    if (isinstance(action, dict) and action.get("type") in ("take", "pickup")
             and not state.get("conversation_in_progress")):
         _pn = (action.get("name") or "").lower()
-        if _pn and session.get("pickup_fails", {}).get(_pn, 0) >= 2:
-            # If the item is visible but far, walk to it once; else give up on it.
-            _pp = state.get("player") or {}
-            match = next((o for o in (state.get("objects") or [])
-                          if (o.get("name") or "").lower() == _pn), None)
-            if match and (abs(match.get("dx", 9)) > 1 or abs(match.get("dy", 9)) > 1):
+        _pp = state.get("player") or {}
+        match = next((o for o in (state.get("objects") or [])
+                      if _pn and (o.get("name") or "").lower() == _pn), None)
+        _fails = session.get("pickup_fails", {}).get(_pn, 0)
+        if match and (abs(match.get("dx", 0)) > 1 or abs(match.get("dy", 0)) > 1):
+            if _fails >= 3:
+                # Tried to reach it several times without success - give up.
+                action = _explore_far(state, session, wedged)
+                reason = f"(guard) '{_pn}' unreachable after retries; moving on"
+            else:
+                # Walk to the item's EXACT tile, then take next turn.
                 action = {"type": "goto",
                           "tx": _pp.get("tx", 0) + match.get("dx", 0),
                           "ty": _pp.get("ty", 0) + match.get("dy", 0)}
-                reason = f"(guard) '{_pn}' pickup kept failing; walking to it first"
-            else:
-                action = _explore_far(state, session, wedged)
-                reason = f"(guard) '{_pn}' cannot be taken; moving on"
+                reason = f"(guard) '{_pn}' is {abs(match.get('dx',0))+abs(match.get('dy',0))} tiles away; walking to it to take it"
+                session.setdefault("pickup_fails", {})[_pn] = _fails + 1
+                print(f"[{step:03d}] reach-guard: goto '{_pn}' @({action['tx']},{action['ty']}) before take")
+        elif match:
+            # Adjacent - clear the fail counter; let the take proceed.
+            session.setdefault("pickup_fails", {}).pop(_pn, None)
             print(f"[{step:03d}] pickup-guard: stop retrying '{_pn}'")
 
     # --- Open guard: "open" only works on a real DOOR within a few tiles. If
