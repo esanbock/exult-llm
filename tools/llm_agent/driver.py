@@ -693,6 +693,112 @@ def _action_phrase(action) -> str:
     return f"{t} {_n}" if _n else t
 
 
+def _dir_word(dx: int, dy: int) -> str:
+    """Compass word for a tile delta (north = -y). '' if on top of it."""
+    ns = "north" if dy < 0 else ("south" if dy > 0 else "")
+    ew = "east" if dx > 0 else ("west" if dx < 0 else "")
+    return (ns + ew) or "right here"
+
+
+# Mass nouns / already-plural that read wrong with "A " (a hay -> just "hay").
+_NO_ARTICLE = ("hay", "straw", "water", "gold", "grass", "sand", "equipment",
+               "furniture", "clothing", "food")
+
+
+def _article(name: str) -> str:
+    """Return the object phrase with a correct article: 'a chest', 'an anvil',
+    'hay' (mass noun, no article)."""
+    low = name.lower()
+    if any(low == m or low.startswith(m + " ") or low.endswith(" " + m)
+           for m in _NO_ARTICLE):
+        return name
+    art = "an" if low[:1] in "aeiou" else "a"
+    return f"{art} {name}"
+
+
+def describe_room(state: dict, place: str = "") -> str:
+    """Translate the visual environment into Zork-style prose, which LLMs read
+    far more fluently than a flat coordinate table. Composes: where you are,
+    the people present, and the notable/ACTIONABLE objects with their state
+    (a door 'to the west, closed'; a body 'to the south, searchable'). Grounded
+    entirely in real state fields (name, dx/dy, closed/body/container/owned/
+    town_exit) - it never invents anything. Scenery is de-prioritized in favor
+    of things you can act on. Returns a short paragraph.
+    """
+    p = state.get("player") or {}
+    px, py = p.get("tx", 0), p.get("ty", 0)
+    objs = state.get("objects") or []
+    nearby = state.get("nearby") or []
+    doors = state.get("doors") or []
+    sentences: list = []
+
+    # 1) Where you are.
+    if place:
+        sentences.append(f"You are in {place}.")
+    elif (p.get("tz", 0) or 0) > 0:
+        sentences.append("You are up high, on a wall-top or upper floor.")
+    else:
+        sentences.append("You are outdoors." if not objs else "You look around.")
+
+    def near(it, r=10):
+        return abs(it.get("dx", 99)) + abs(it.get("dy", 99)) <= r
+
+    # 2) People (living, non-party first).
+    people = [n for n in nearby if n.get("name") and not n.get("dead")
+              and not n.get("in_party") and near(n, 12)]
+    people.sort(key=lambda n: abs(n.get("dx", 0)) + abs(n.get("dy", 0)))
+    for n in people[:3]:
+        d = _dir_word(n.get("dx", 0), n.get("dy", 0))
+        cond = ""
+        if n.get("condition") == "sleeping":
+            cond = ", asleep"
+        sentences.append(f"{n['name'].capitalize()} is to the {d}{cond}."
+                         if d != "right here" else f"{n['name'].capitalize()} is right beside you.")
+
+    # 3) Actionable objects: doors, bodies, containers, town exits, loose items.
+    #    De-dup by name+dir so repeated scenery (walls) doesn't flood.
+    seen_desc = set()
+    def add_obj(desc):
+        if desc not in seen_desc:
+            seen_desc.add(desc)
+            sentences.append(desc)
+
+    # doors (from the dedicated doors list, which carries 'closed')
+    for dr in sorted(doors, key=lambda d: abs(d.get("dx", 0)) + abs(d.get("dy", 0)))[:2]:
+        if near(dr, 8):
+            d = _dir_word(dr.get("dx", 0), dr.get("dy", 0))
+            st = "closed" if dr.get("closed") else "open"
+            add_obj(f"A door leads {d}; it is {st}.")
+
+    bodies = [o for o in objs if o.get("body") and near(o, 10)]
+    for o in sorted(bodies, key=lambda o: abs(o.get("dx", 0)) + abs(o.get("dy", 0)))[:2]:
+        d = _dir_word(o.get("dx", 0), o.get("dy", 0))
+        add_obj(f"{_article(o.get('name','body')).capitalize()} lies to the {d} - it can be searched.")
+
+    containers = [o for o in objs if o.get("container") and not o.get("body") and near(o, 8)]
+    for o in sorted(containers, key=lambda o: abs(o.get("dx", 0)) + abs(o.get("dy", 0)))[:2]:
+        d = _dir_word(o.get("dx", 0), o.get("dy", 0))
+        own = " (owned - taking is theft)" if o.get("owned") else ""
+        add_obj(f"{_article(o.get('name','container')).capitalize()} sits to the {d}{own}.")
+
+    exits = [o for o in objs if o.get("town_exit") and near(o, 16)]
+    for o in sorted(exits, key=lambda o: abs(o.get("dx", 0)) + abs(o.get("dy", 0)))[:2]:
+        d = _dir_word(o.get("dx", 0), o.get("dy", 0))
+        add_obj(f"A way out of town lies to the {d}.")
+
+    # A couple of loose items worth grabbing (not owned, not scenery-ish).
+    _scenery = ("wall", "tree", "fence", "roof", "floor", "window", "shutters",
+                "curtain", "grass", "post", "pillar")
+    items = [o for o in objs if near(o, 8) and not o.get("owned")
+             and not o.get("body") and not o.get("container")
+             and o.get("name") and not any(s in o.get("name", "").lower() for s in _scenery)]
+    for o in sorted(items, key=lambda o: abs(o.get("dx", 0)) + abs(o.get("dy", 0)))[:3]:
+        d = _dir_word(o.get("dx", 0), o.get("dy", 0))
+        add_obj(f"{_article(o['name']).capitalize()} is to the {d}.")
+
+    return " ".join(sentences)
+
+
 def _recognize_place(objects: list, nearby: list) -> str:
     """Give the LLM the 'sense of place' a human gets at a glance. The engine
     sends a flat object list with coordinates but no synthesis, so the model
@@ -817,6 +923,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         # convey that). Only when NOT mid-conversation, to avoid clutter.
         **({"you_appear_to_be_in": _recognize_place(objects, nearby)}
            if (not in_convo and _recognize_place(objects, nearby)) else {}),
+        # Zork-style narrated room description (LLMs read prose far better than a
+        # coordinate table): where you are + people + actionable objects and
+        # their state. Grounded in real fields; scenery de-prioritized.
+        **({"room_description": describe_room(state, _recognize_place(objects, nearby))}
+           if not in_convo else {}),
         "conversation_in_progress": in_convo,
         "conversation_active": state.get("conversation_active"),
         "npc_text": state.get("npc_text") if in_convo else None,
