@@ -1964,9 +1964,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         except Exception:
             pass
 
-    # Safety net: keep the party fed so a long run can't starve.
-    if args.auto_feed and step % args.auto_feed_every == 0:
-        exult.act({"type": "feed", "level": 30})
+    # Survival safety net: never let the avatar starve on-stream. Feed when food
+    # is actually LOW (responsive), not only on a fixed cadence - the model
+    # frequently ignores the "feed when low" instruction and had starved to HP 1
+    # with bread/apple still in its pack. Enabled by default (auto_feed); the
+    # periodic feed is kept as a backstop.
+    if args.auto_feed:
+        _food = (state.get("player") or {}).get("food")
+        _low = isinstance(_food, int) and _food <= 8
+        if _low or (step % args.auto_feed_every == 0):
+            try:
+                exult.act({"type": "feed", "level": 30})
+                if _low:
+                    print(f"[{step:03d}] survival: food low ({_food}) -> auto-fed")
+            except Exception:
+                pass
 
     if not state.get("world_loaded"):
         if window.available:
@@ -4687,8 +4699,10 @@ def main() -> int:
     ap.add_argument("--raw-log", action="store_true",
                     help="append the exact prompt+reply for EVERY turn to raw_comms.log "
                          "(parse failures are always logged regardless)")
-    ap.add_argument("--auto-feed", action="store_true",
-                    help="periodically restore food so the party can't starve")
+    ap.add_argument("--auto-feed", dest="auto_feed", action="store_true", default=True,
+                    help="keep the party fed so it can't starve (DEFAULT ON)")
+    ap.add_argument("--no-auto-feed", dest="auto_feed", action="store_false",
+                    help="disable the auto-feed survival net")
     ap.add_argument("--auto-feed-every", type=int, default=20,
                     help="feed every N turns when --auto-feed is set")
     ap.add_argument("--exult-exe", default=None,
