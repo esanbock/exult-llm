@@ -3459,11 +3459,51 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         if nm not in nearby_names:
             pos = kb.place_pos(nm) or kb.npc_last_pos(nm)
             if pos and pos[0] is not None:
+                _pp0 = state.get("player") or {}
+                _dist = (abs(pos[0] - _pp0.get("tx", 0))
+                         + abs(pos[1] - _pp0.get("ty", 0)))
+                # ARRIVAL CHECK: if we're already essentially AT the place we
+                # keep trying to goto, the model is looping "goto <place>" while
+                # standing in it, reading the no-op as "can't reach it" (seen
+                # live: at the stables talking to Petre, yet plot says "failing
+                # to reach the stables"). Tell it plainly it has ARRIVED so it
+                # investigates here (search/enter the building/talk) instead of
+                # re-routing to a phantom coordinate.
+                if _dist <= 6:
+                    session["last_bump"] = (
+                        f"You have ARRIVED at '{nm}' - you are standing in it "
+                        f"right now (within {_dist} tiles). STOP trying to "
+                        f"'goto {nm}'; that is why it feels like a loop. "
+                        f"INVESTIGATE here instead: 'search' bodies/containers, "
+                        f"go THROUGH a door ('+'/'/') to enter the building, or "
+                        f"'talk' to someone present. Update your plot_summary to "
+                        f"note you have reached '{nm}'.")
+                    # Prefer a productive local action over the no-op goto.
+                    _door = next((d for d in (state.get("doors") or [])
+                                  if abs(d.get("dx", 99)) + abs(d.get("dy", 99)) <= 5),
+                                 None)
+                    _body = next((o for o in (state.get("objects") or [])
+                                  if o.get("body")
+                                  and abs(o.get("dx", 99)) + abs(o.get("dy", 99)) <= 4),
+                                 None)
+                    if _body:
+                        action = {"type": "search"}
+                        reason = f"(guard) arrived at '{nm}'; searching the body here"
+                    elif _door:
+                        action = {"type": "goto",
+                                  "tx": _pp0.get("tx", 0) + _door.get("dx", 0),
+                                  "ty": _pp0.get("ty", 0) + _door.get("dy", 0)}
+                        reason = f"(guard) arrived at '{nm}'; entering through the door"
+                    else:
+                        action = {"type": "search"}
+                        reason = f"(guard) arrived at '{nm}'; investigating (search) here"
+                    print(f"[{step:03d}] arrival-guard: already at '{nm}' ({_dist} tiles)")
                 # FIXATION BREAKER: if this landmark was already reached and had
                 # NOTHING searchable (marked exhausted), stop re-going there -
                 # the model loops 'goto stables' forever. Redirect to a NEW area.
-                _exh = session.get("exhausted_landmarks") or set()
-                if any(abs(pos[0] - ex) + abs(pos[1] - ey) <= 2 for (ex, ey) in _exh):
+                elif (session.get("exhausted_landmarks")
+                      and any(abs(pos[0] - ex) + abs(pos[1] - ey) <= 2
+                              for (ex, ey) in session.get("exhausted_landmarks"))):
                     session["last_bump"] = (
                         f"'{nm}' is a DEAD END for searching - you already went "
                         "there and there was nothing to search/loot. STOP going "
