@@ -1346,6 +1346,43 @@ class KnowledgeBase:
         out.sort(key=lambda t: t[0])
         return [o for _, o in out[:limit]]
 
+    def unexplored_bearing(self, here_tx: int, here_ty: int, region: str = "world"):
+        """Return an (dx, dy) unit-ish vector pointing toward the LEAST-explored
+        direction, based on the visited-cell fog of war. Used to send the agent
+        toward genuinely NEW territory (discover new buildings) instead of
+        shuffling within the already-explored pocket. Returns None if we have
+        too little data to judge. General - no map/quest specifics."""
+        cells = self.visited_cells.get(region, [])
+        if len(cells) < 3:
+            return None
+        hcx, hcy = int(here_tx) // self.MAP_CELL, int(here_ty) // self.MAP_CELL
+        # Count visited cells in each of the 8 compass sectors around us.
+        import math
+        sectors = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0),
+                   "ne": (1, -1), "nw": (-1, -1), "se": (1, 1), "sw": (-1, 1)}
+        visited_dir = {k: 0 for k in sectors}
+        for c in cells:
+            try:
+                cx, cy = (int(v) for v in c.split(","))
+            except ValueError:
+                continue
+            ddx, ddy = cx - hcx, cy - hcy
+            if ddx == 0 and ddy == 0:
+                continue
+            # nearest sector by dot product
+            best_k, best_dot = None, -1e9
+            mag = math.hypot(ddx, ddy) or 1
+            for k, (sx, sy) in sectors.items():
+                smag = math.hypot(sx, sy) or 1
+                dot = (ddx * sx + ddy * sy) / (mag * smag)
+                if dot > best_dot:
+                    best_dot, best_k = dot, k
+            if best_k:
+                visited_dir[best_k] += 1
+        # The least-visited sector is the most unexplored direction.
+        least = min(visited_dir, key=lambda k: visited_dir[k])
+        return sectors[least]
+
     def record_visit(self, tx: int, ty: int, region: str = "world") -> None:
         """Mark the avatar's current cell as explored (coarse fog-of-war). Cheap
         and bounded: rounds to MAP_CELL-sized cells and stores per region."""

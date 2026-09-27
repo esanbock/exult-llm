@@ -1782,13 +1782,24 @@ def _explore_far(state: dict, session: dict, wedged: bool) -> dict:
             tried.clear()
     else:
         tried.clear()
-    target = {"type": "goto", "tx": tx + dx * 6, "ty": ty + dy * 6}
+    # EXPLORE TOWARD THE UNKNOWN: if we have a fog-of-war bearing toward the
+    # least-explored direction AND that direction is reasonably open on the
+    # visible grid, prefer it and commit a LONGER hop (15 tiles) - this actually
+    # leaves the current pocket to discover new buildings, instead of a timid
+    # 6-tile shuffle in the most-open VISIBLE direction (which just circles a
+    # walled enclosure). Falls back to the openness choice otherwise.
+    _bearing = session.get("explore_bearing")
+    _hop = 6
+    if _bearing:
+        _bdx, _bdy = _bearing
+        # Only take the unexplored bearing if it isn't walled off immediately.
+        if openness(_bdx, _bdy) >= 2 and not _lands_on_recent(_bdx, _bdy):
+            dx, dy = _bdx, _bdy
+            _hop = 15
+    target = {"type": "goto", "tx": tx + dx * _hop, "ty": ty + dy * _hop}
     recent_targets.append((target["tx"], target["ty"]))
     if len(recent_targets) > 5:
         del recent_targets[0]
-    # Shorter hop (6 tiles): the engine A* has a bounded search budget, so far
-    # targets often fail; a nearer target in the most-open direction routes
-    # reliably, and the engine now single-steps toward it if A* still gives up.
     return target
 
 
@@ -2452,6 +2463,16 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # Operator-adjustable temporal-memory window (GUI 'Turn memory' box).
         if window.available:
             state["_turn_window_override"] = window.get_turn_window()
+        # Compute the least-explored compass direction (fog of war) so the
+        # explore guard can head toward GENUINELY NEW territory - discovering
+        # new buildings - instead of shuffling within the already-explored
+        # pocket (seen live: it circled the stable pen for dozens of turns).
+        try:
+            _pp_ex = state.get("player") or {}
+            session["explore_bearing"] = kb.unexplored_bearing(
+                _pp_ex.get("tx", 0), _pp_ex.get("ty", 0)) if kb else None
+        except Exception:
+            session["explore_bearing"] = None
         _user = summarize_state(state, kb, session.pop("last_look", ""), alert, squeeze)
         # Operator THROTTLE: wait N ms BEFORE sending the request to ollama, to
         # cool the LLM box when it runs hot (spaces out the GPU-heavy inference
