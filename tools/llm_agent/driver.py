@@ -1818,6 +1818,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         try:
             nearby_names = [n.get("name") for n in (state.get("nearby") or []) if n.get("name")]
             window.set_quests(kb.quests_pretty())
+            if hasattr(window, "set_quests_data"):
+                try:
+                    window.set_quests_data(kb.quest_view(max_open=30))
+                except Exception:
+                    pass
             window.set_resolved_quests(kb.resolved_quests_list())
             window.set_npc_tree(kb.npcs_tree_data())
             window.set_topics_tree(kb.topics_tree_data())

@@ -89,6 +89,7 @@ class InspectorServer:
             "context_label": "",
             "turn_window": None,   # operator override (None = driver default 450)
             "throttle_ms": 0,      # operator per-turn cooldown ms (0 = off)
+            "quests_data": {},     # structured open-quests for the readable panel
         }
         for k in _TEXT_KEYS:
             self._state[k] = ""
@@ -283,6 +284,10 @@ class InspectorServer:
     def set_guard_stats(self, rows: list) -> None:
         """Per-run guard-firing counts for the dedicated Guard-stats panel."""
         self._broadcast("guard_stats", list(rows or []))
+
+    def set_quests_data(self, data: dict) -> None:
+        """Structured quest data (open[] + counts) for a readable quests panel."""
+        self._broadcast("quests_data", dict(data or {}))
 
     def set_npc_tree(self, chars: list) -> None:
         self._broadcast("npc_tree", list(chars or []))
@@ -660,6 +665,28 @@ function renderNotes(groups){const box=$("p-notes");box.innerHTML="";
   (groups||[]).forEach(g=>{const h=document.createElement("div");h.className="name";
     h.textContent=(g.npc||"?")+" ("+(g.total_notes||(g.notes||[]).length)+")";box.appendChild(h);
     (g.notes||[]).forEach(n=>{const d=document.createElement("div");d.className="child dim";d.textContent="• "+n;box.appendChild(d);});});}
+function renderQuests(data){
+  const box=$("p-quests"); if(!box) return; box.innerHTML="";
+  const open=(data&&data.open)||[];
+  if(!open.length){box.innerHTML='<span class="child dim">(no open quests)</span>';return;}
+  // priority badge color: 1-2 hot, 3-5 warm, else dim
+  function pcol(p){return p<=2?"#ff7a7a":p<=5?"var(--warn)":"var(--muted)";}
+  open.forEach(q=>{
+    const row=document.createElement("div"); row.style.cssText="padding:4px 0;border-bottom:1px solid #14181e;";
+    let h='<span style="display:inline-block;min-width:26px;font-weight:700;color:'+pcol(q.priority||9)+';">P'+esc(q.priority||"?")+'</span> ';
+    h+='<span>'+esc(q.title||q.id||"?")+'</span>';
+    if(q.npc) h+=' <span class="child dim">['+esc(q.npc)+']</span>';
+    if(q.prereqs_unmet&&q.prereqs_unmet.length)
+      h+='<div class="child dim" style="color:#e0857a;">⛔ blocked on: '+esc(q.prereqs_unmet.join(", "))+'</div>';
+    if(q.notes) h+='<div class="child dim">'+esc(String(q.notes).slice(0,120))+'</div>';
+    row.innerHTML=h; box.appendChild(row);
+  });
+  if(data.resolved) {
+    const f=document.createElement("div"); f.className="child dim"; f.style.marginTop="4px";
+    f.textContent=data.unresolved+" open · "+data.resolved+" resolved";
+    box.appendChild(f);
+  }
+}
 function renderGuards(rows){
   const box=$("p-guard_stats"); if(!box) return; box.innerHTML="";
   if(!rows||!rows.length){box.innerHTML='<span class="child dim">(none yet)</span>';return;}
@@ -713,6 +740,8 @@ function apply(key,value){
     case "stats_kv": renderKV(value); break;
     case "notes": renderNotes(value); break;
     case "guard_stats": renderGuards(value); break;
+    case "quests_data": renderQuests(value); break;
+    case "quests": break;  // superseded by quests_data (structured renderer)
     case "npc_tree": renderTree("p-npc_tree",value,npcSpec); break;
     case "topics_tree": renderTree("p-topics_tree",value,topicSpec); break;
     case "resolved": renderList("p-resolved",value,x=>typeof x==="string"?x:(x.name||JSON.stringify(x))); break;
@@ -734,9 +763,10 @@ function applySnapshot(s){
   setText("c-turn","turn "+(s.turn||0));
   setText("c-model", s.title? "" : "");
   apply("context",{pct:s.context_pct||0,label:s.context_label||""});
-  ["gstatus","plot","map","area_map","inventory","dialog","quests","tool_stats","context_dump","room"].forEach(k=>apply(k,s[k]));
+  ["gstatus","plot","map","area_map","inventory","dialog","tool_stats","context_dump","room"].forEach(k=>apply(k,s[k]));
   apply("turn_log",s.turn_log||[]);apply("stats_kv",s.stats_kv||{});apply("notes",s.notes||[]);
   apply("npc_tree",s.npc_tree||[]);apply("topics_tree",s.topics_tree||[]);apply("resolved",s.resolved||[]);
+  apply("quests_data",s.quests_data||{});
   apply("turn_window",s.turn_window);
   apply("throttle_ms",s.throttle_ms||0);
   apply("guard_stats",s.guard_stats||[]);
