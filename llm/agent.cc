@@ -265,6 +265,8 @@ namespace {
 	//   *  a takeable/interactable object
 	//   #  a blocked/impassable tile (wall, gate, water, furniture)
 	//   .  open, walkable ground
+	//   v  a drop-off (only when elevated): open ground lies BELOW this tile -
+	//      you're on an edge/wall-top, not blocked by a wall. goto it to descend.
 	std::string build_grid(Actor* av, int rx, int ry) {
 		Game_window* gwin = Game_window::get_instance();
 		Game_map*    gmap = gwin ? gwin->get_map() : nullptr;
@@ -324,6 +326,51 @@ namespace {
 						reach[idx(nx, ny)] = to.tz;   // resulting standing height
 						rows[ny][nx] = '.';
 						bfs.emplace_back(nx, ny);
+					}
+				}
+			}
+
+			// EDGE / DROP-OFF pass: any tile still '#' after the BFS is either
+			// solid structure at our level OR empty AIR with walkable ground
+			// BELOW (e.g. the grass outside a thin town wall, seen from up on
+			// the battlement). Rendering both as '#' lies: it paints open space
+			// as if it were a wall. Only meaningful when we're ELEVATED (at.tz
+			// > 0); at ground level a '#' really is blocked. So when elevated,
+			// probe each '#' cell downward for a standable surface and mark it
+			// 'v' (a drop-off: not walkable from here, but open ground is below
+			// - you'd descend, not bump a wall).
+			if (at.tz > 0) {
+				for (int gy = 0; gy < dimy; ++gy) {
+					for (int gx = 0; gx < dimx; ++gx) {
+						if (rows[gy][gx] != '#') {
+							continue;
+						}
+						const Tile_coord probe(
+								(at.tx + (gx - cxg) + c_num_tiles) % c_num_tiles,
+								(at.ty + (gy - cyg) + c_num_tiles) % c_num_tiles,
+								at.tz);
+						Game_map* gm = gwin->get_map();
+						Map_chunk* pc = gm ? gm->get_chunk(
+								probe.tx / c_tiles_per_chunk,
+								probe.ty / c_tiles_per_chunk) : nullptr;
+						if (!pc) {
+							continue;
+						}
+						pc->setup_cache();
+						const int plx = probe.tx % c_tiles_per_chunk;
+						const int ply = probe.ty % c_tiles_per_chunk;
+						// If a standable surface exists anywhere from just below
+						// us down to ground, this is open air over ground, not a
+						// wall. Use a generous max_drop to see the ground below.
+						int nl = at.tz;
+						const bool solid_here = pc->is_blocked(
+								2, at.tz, plx, ply, nl, move_flags, 0, 0);
+						int nl2 = 0;
+						const bool ground_below = !pc->is_blocked(
+								2, 0, plx, ply, nl2, move_flags, at.tz + 2, 0);
+						if (!solid_here && ground_below) {
+							rows[gy][gx] = 'v';   // drop-off: open ground below
+						}
 					}
 				}
 			}
@@ -1009,7 +1056,7 @@ namespace LLM_agent {
 					"@=you C=companion &=person b=lootable-body x=corpse(empty) "
 					"n=container *=item E=exit/route(gate/stairs) ~=water "
 					"==fence/barrier +=closed_door /=open_door W=building-wall/roof "
-					".=walkable #=blocked; "
+					".=walkable #=blocked v=drop-off(open ground below-you're on an edge); "
 					"north=up east=right. Cell [row][col] is tile "
 					"(grid_origin_tx+col, grid_origin_ty+row). Walls/roofs (W) "
 					"show only for YOUR floor; items and people show on any level "

@@ -306,7 +306,9 @@ periodically). For finer detail you have the recall/quests tools.
                                 town by these; enter via its doors). Walls/roofs
                                 show only for YOUR level; items and people show
                                 on any level (take stairs/ladders E to reach them)
-                                . walkable  # blocked. north=up, east=right.
+                                . walkable  # blocked  v drop-off (open ground
+                                BELOW you - you're on an edge/wall; goto a tile
+                                out there to climb DOWN). north=up, east=right.
                                 Walk only on '.', '*', or '/'. STAIRS ARE
                                 DIRECTIONAL - climb from the BOTTOM step (if a
                                 step is "blocked", walk around to line up, then
@@ -3144,6 +3146,34 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             action = {"type": "talk", "name": target["name"]}
             reason = f"(guard) greeting new person '{target['name']}' before moving on"
             print(f"[{step:03d}] greet-guard: talk to new NPC {target['name']}")
+
+    # --- Narrate-but-WAIT guard: the model often writes a paragraph about
+    #     moving ("I will head north to the stables") but then emits a bare
+    #     {"type":"wait"}, which does nothing - so it narrates progress while
+    #     standing still, burning turns (seen live: many consecutive waits with
+    #     movement-intent reasoning). A single wait is fine (it may be pausing
+    #     for a threat to pass); but 2+ bare waits in a row outside a
+    #     conversation/gump/combat means it's idling. Redirect to a real action:
+    #     pursue a quest lead, else explore. Legitimate waits (wait_until for
+    #     night, combat) are excluded. --------------------------------------
+    if (isinstance(action, dict) and action.get("type") == "wait"
+            and not state.get("conversation_in_progress")
+            and not state.get("gump_open")
+            and not state.get("in_combat")
+            and not action.get("_counted")):   # _counted = a guard-issued wait
+        n_wait = session.get("bare_wait_streak", 0) + 1
+        session["bare_wait_streak"] = n_wait
+        if n_wait >= 2:
+            session["bare_wait_streak"] = 0
+            qa, qr = _pursue_focus_quest(state, kb)
+            if qa:
+                action, reason = qa, qr
+            else:
+                action = _explore_far(state, session, wedged)
+                reason = "(guard) narrated but waited repeatedly; acting (explore) instead"
+            print(f"[{step:03d}] wait-guard: {n_wait} bare waits -> {action.get('type')}")
+    elif isinstance(action, dict) and action.get("type") != "wait":
+        session["bare_wait_streak"] = 0   # reset once a real action is taken
 
     # --- Search reachability guard: if the model wants to SEARCH but no body/
     #     container is within reach (search scans ~4 tiles engine-side), yet a
