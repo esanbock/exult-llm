@@ -3733,23 +3733,24 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 # against nearby objects and NPCs; if one matches, route there.
                 _pp = state.get("player") or {}
                 _nml = nm.lower()
-                _SYN = {  # abstract label -> substrings that identify the object
-                    "victim": ("body", "corpse"), "murder victim": ("body", "corpse"),
-                    "the body": ("body", "corpse"), "corpse": ("body", "corpse"),
-                    "dead body": ("body", "corpse"), "the dead": ("body", "corpse"),
-                }
-                _wants = _SYN.get(_nml, (_nml,))
+                # GENERIC name resolution (no puzzle-specific synonyms): match
+                # the requested name as a substring of a visible object/NPC name.
+                # Additionally, if the name refers to a "body"/"corpse", match any
+                # object the ENGINE flagged body=true (its own generic flag - not
+                # a curated list). This resolves things like "the body", "chest",
+                # "guard" to what's actually in view, for ANY quest.
+                _body_ref = ("body" in _nml or "corpse" in _nml)
                 _cands = []
                 for o in (state.get("objects") or []):
                     _on = (o.get("name") or "").lower()
-                    if _on and (any(w in _on for w in _wants) or _nml in _on
-                                or (o.get("body") and any(w in ("body", "corpse") for w in _wants))):
+                    if _on and (_nml in _on or (o.get("name","").lower() in _nml)
+                                or (_body_ref and o.get("body"))):
                         _cands.append((abs(o.get("dx", 99)) + abs(o.get("dy", 99)),
                                        _pp.get("tx", 0) + o.get("dx", 0),
                                        _pp.get("ty", 0) + o.get("dy", 0), o.get("name")))
                 for n2 in (state.get("nearby") or []):
                     _nn = (n2.get("name") or "").lower()
-                    if _nn and (any(w in _nn for w in _wants) or _nml in _nn):
+                    if _nn and (_nml in _nn or _nn in _nml):
                         _cands.append((abs(n2.get("dx", 99)) + abs(n2.get("dy", 99)),
                                        _pp.get("tx", 0) + n2.get("dx", 0),
                                        _pp.get("ty", 0) + n2.get("dy", 0), n2.get("name")))
