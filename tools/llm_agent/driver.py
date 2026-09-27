@@ -1209,6 +1209,25 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
                 view["navigation"] = nav
         except Exception:
             pass
+        # PROACTIVE hunger warning (informational only - the agent decides). When
+        # food is getting low, make it impossible to miss so the LLM eats BEFORE
+        # it starves. We do NOT name which item or auto-eat: identifying what in
+        # the pack is edible (apple, mutton, bread, cheese...) and choosing to
+        # 'use' it is the agent's own reasoning - a general mechanic (carried
+        # consumables must be actively used), not a scripted rescue.
+        try:
+            _fd = (state.get("player") or {}).get("food")
+            if isinstance(_fd, int) and _fd <= 10:
+                _sev = "CRITICALLY LOW - you will START STARVING soon" if _fd <= 4 \
+                       else "getting LOW"
+                view["HUNGER_WARNING"] = (
+                    f"Your food is {_sev} (food={_fd}). EAT NOW: look at your "
+                    "'carrying' list, pick an item that is edible (e.g. bread, "
+                    "apple, mutton, cheese, meat, fish), and 'use' it "
+                    "(e.g. {\"type\":\"use\",\"name\":\"apple\"}) - that eats it "
+                    "and restores food. Do this before you starve.")
+        except Exception:
+            pass
         # ALWAYS-ON activity scorecard: shows lifetime counts of physical
         # investigation (searched / picked up / opened / read) vs talking, so a
         # stateless model can NOTICE if it has been talking without ever
@@ -1970,31 +1989,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         except Exception:
             pass
 
-    # Survival net (honest mechanic): if the avatar is about to STARVE, eat a
-    # real food item from the pack via 'use' (U7's double-click, which consumes
-    # the item) - NOT the magic 'feed' refill. This is a last-resort anti-death
-    # only (food very low), so the LLM still owns eating in normal play and
-    # learns the general mechanic: carried consumables must be actively USED.
-    # If it has no food item, fall back to the emergency refill to avoid a
-    # stream-ending death.
-    if args.auto_feed:
-        _food = (state.get("player") or {}).get("food")
-        if isinstance(_food, int) and _food <= 3:
-            _pack = (state.get("player") or {}).get("carrying") or []
-            _FOODS = ("bread", "apple", "meat", "mutton", "cheese", "ham",
-                      "fish", "ribs", "roll", "cake", "carrot", "food", "ration")
-            _fooditem = next((it for it in _pack
-                              if any(f in str(it).lower() for f in _FOODS)), None)
-            try:
-                if _fooditem:
-                    _fn = _fooditem.split(" ", 1)[-1] if _fooditem[:1].isdigit() else _fooditem
-                    exult.act({"type": "use", "name": _fn})
-                    print(f"[{step:03d}] survival: starving (food {_food}) -> ate '{_fn}' from pack")
-                else:
-                    exult.act({"type": "feed", "level": 30})   # no food carried
-                    print(f"[{step:03d}] survival: starving (food {_food}), no food in pack -> emergency refill")
-            except Exception:
-                pass
+    # NOTE: no auto-feed / survival net. Identifying food in the inventory
+    # (apple, mutton, bread...) and eating BEFORE starving is exactly the kind of
+    # general reasoning the agent should do itself - "use" a food item from the
+    # pack. We surface food + hunger clearly (always-on inventory, food level,
+    # and a low-food warning) and let the LLM own the decision.
 
     if not state.get("world_loaded"):
         if window.available:
@@ -4715,12 +4714,6 @@ def main() -> int:
     ap.add_argument("--raw-log", action="store_true",
                     help="append the exact prompt+reply for EVERY turn to raw_comms.log "
                          "(parse failures are always logged regardless)")
-    ap.add_argument("--auto-feed", dest="auto_feed", action="store_true", default=True,
-                    help="keep the party fed so it can't starve (DEFAULT ON)")
-    ap.add_argument("--no-auto-feed", dest="auto_feed", action="store_false",
-                    help="disable the auto-feed survival net")
-    ap.add_argument("--auto-feed-every", type=int, default=20,
-                    help="feed every N turns when --auto-feed is set")
     ap.add_argument("--exult-exe", default=None,
                     help="path to Exult.exe (auto-detected at repo root if omitted)")
     ap.add_argument("--no-launch", action="store_true",
