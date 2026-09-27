@@ -1327,6 +1327,26 @@ def parse_reply(text: str) -> tuple[str, dict]:
                     return (rm.group(1) if rm else "(recovered)", act)
                 except json.JSONDecodeError:
                     pass
+    # SALVAGE a regurgitated action-log reply: some turns the model echoes its
+    # own temporal memory back as output - a JSON object whose keys/values are
+    # past log lines like "[T658] move toward (1062,2145)" - and runs to the
+    # token cap, producing no valid action (seen live as repeated
+    # "could not parse reply" -> wait). Rather than waste the turn, pull the
+    # FIRST concrete intent out of that text: a "move/go toward (x,y)" tile, or
+    # a recognizable action verb. This keeps the agent progressing.
+    if not isinstance(obj, dict) or ("action" not in obj and "type" not in obj):
+        mt = re.search(r'(?:move|go|goto|walk|head)\w*\s+(?:toward\s+)?\(?\s*(\d{3,5})\s*,\s*(\d{3,5})\s*\)?',
+                       text, re.I)
+        if mt:
+            return ("(salvaged: goto from regurgitated log)",
+                    {"type": "goto", "tx": int(mt.group(1)), "ty": int(mt.group(2))})
+        for _verb, _act in (("search", {"type": "search"}),
+                            ("look", {"type": "search"}),
+                            ("talk", {"type": "talk"}),
+                            ("open", {"type": "open"}),
+                            ("continue", {"type": "continue"})):
+            if re.search(rf'\b{_verb}\b', text, re.I):
+                return (f"(salvaged: {_verb} from unparseable reply)", _act)
     if not isinstance(obj, dict):
         return ("(could not parse reply)", {"type": "wait"})
     # Accept the model's rationale under any of the common field names it emits
