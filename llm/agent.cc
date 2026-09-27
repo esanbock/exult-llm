@@ -370,10 +370,18 @@ namespace {
 				//     can still see a chest on the floor above or a body below.
 				//     Stairs/ladders (transitions) are objects and always show.
 				if (info.get_shape_class() == Shape_info::building) {
-					const int zbot = ot.tz;
-					const int ztop = ot.tz + info.get_3d_height() - 1;
-					if (at.tz < zbot || at.tz > ztop) {
-						continue;    // structure on a different level
+					// Floor-based rule, matching Exult's own convention
+					// (get_lift() / 5 == floor, used throughout schedule.cc):
+					// a building-class structure belongs to the avatar's floor
+					// only when its BASE lift is on the same 5-tz storey. This
+					// fixes the "standing on top of a wall" case, where the
+					// avatar's elevated tz (e.g. 5) previously fell inside a
+					// tall GROUND wall's span [0..3+] and let lower/other-floor
+					// structures bleed onto the current-floor outline.
+					const int struct_floor = ot.tz / 5;
+					const int avatar_floor = at.tz / 5;
+					if (struct_floor != avatar_floor) {
+						continue;    // structure on a different floor
 					}
 				}
 				if (info.is_door()) {
@@ -807,10 +815,18 @@ namespace LLM_agent {
 				// stay visible across levels so you can still see a chest
 				// upstairs or a body below. Goal: simpler navigation.
 				if (info.get_shape_class() == Shape_info::building) {
-					const int zbot = ot.tz;
-					const int ztop = ot.tz + info.get_3d_height() - 1;
-					if (at.tz < zbot || at.tz > ztop) {
-						continue;    // structure on a different level
+					// Floor-based rule, matching Exult's own convention
+					// (get_lift() / 5 == floor, used throughout schedule.cc):
+					// a building-class structure belongs to the avatar's floor
+					// only when its BASE lift is on the same 5-tz storey. This
+					// fixes the "standing on top of a wall" case, where the
+					// avatar's elevated tz (e.g. 5) previously fell inside a
+					// tall GROUND wall's span [0..3+] and let lower/other-floor
+					// structures bleed onto the current-floor outline.
+					const int struct_floor = ot.tz / 5;
+					const int avatar_floor = at.tz / 5;
+					if (struct_floor != avatar_floor) {
+						continue;    // structure on a different floor
 					}
 				}
 				const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
