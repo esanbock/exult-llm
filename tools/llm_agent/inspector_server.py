@@ -43,7 +43,7 @@ _TEXT_KEYS = (
     "tool_stats", "context_dump", "area_map", "answer", "thinking",
 )
 # Panels pushed as structured data (lists/dicts) rendered specially by the client.
-_STRUCT_KEYS = ("topics_tree", "npc_tree", "resolved", "stats_kv", "turn_log")
+_STRUCT_KEYS = ("topics_tree", "npc_tree", "resolved", "stats_kv", "turn_log", "notes")
 
 
 def _primary_lan_ip() -> Optional[str]:
@@ -268,6 +268,10 @@ class InspectorServer:
 
     def set_topics_tree(self, topics: list) -> None:
         self._broadcast("topics_tree", list(topics or []))
+
+    def set_notes(self, notes: list) -> None:
+        """Aggregated per-NPC notes/journal for the dedicated Notes panel."""
+        self._broadcast("notes", list(notes or []))
 
     def set_npc_tree(self, chars: list) -> None:
         self._broadcast("npc_tree", list(chars or []))
@@ -541,6 +545,8 @@ _INDEX_HTML = r"""<!DOCTYPE html>
   <div class="panel tall"><h2>Tool stats</h2><div class="body mono" id="p-tool_stats"></div></div>
 
   <div class="panel wide tall"><h2>Full context (prompt)</h2><div class="body mono" id="p-context_dump"></div></div>
+
+  <div class="panel wide tall"><h2>Notes / Journal (what the agent has learned)</h2><div class="body" id="p-notes"></div></div>
 </div>
 
 <script>
@@ -572,6 +578,16 @@ function renderList(id, items, fmt){
   const box=$(id); box.innerHTML="";
   (items||[]).forEach(it=>{ const d=document.createElement("div");
     d.className="child"; d.textContent=fmt(it); box.appendChild(d); });
+}
+function renderNotes(groups){
+  const box=$("p-notes"); if(!box) return; box.innerHTML="";
+  (groups||[]).forEach(g=>{
+    const h=document.createElement("div"); h.className="name";
+    h.textContent=(g.npc||"?")+" ("+(g.total_notes||(g.notes||[]).length)+" notes)";
+    box.appendChild(h);
+    (g.notes||[]).forEach(n=>{ const d=document.createElement("div");
+      d.className="child dim"; d.textContent="• "+n; box.appendChild(d); });
+  });
 }
 function renderTree(id, nodes, spec){
   const box=$(id); box.innerHTML="";
@@ -624,6 +640,7 @@ function apply(key, value){
     case "npc_tree": renderTree("p-npc_tree", value, npcSpec); break;
     case "topics_tree": renderTree("p-topics_tree", value, topicSpec); break;
     case "resolved": renderList("p-resolved", value, x => typeof x==="string"?x:(x.name||JSON.stringify(x))); break;
+    case "notes": renderNotes(value); break;
     case "save_ack": { const b=$("savebtn"); b.textContent=value?"Saved!":"Save failed";
       setTimeout(()=>b.textContent="Save game",2500); break; }
     case "answer": setText("answer", value); break;
@@ -646,6 +663,7 @@ function applySnapshot(s){
   apply("npc_tree", s.npc_tree||[]);
   apply("topics_tree", s.topics_tree||[]);
   apply("resolved", s.resolved||[]);
+  apply("notes", s.notes||[]);
   apply("turn_window", s.turn_window);
 }
 

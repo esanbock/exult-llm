@@ -1814,6 +1814,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             window.set_resolved_quests(kb.resolved_quests_list())
             window.set_npc_tree(kb.npcs_tree_data())
             window.set_topics_tree(kb.topics_tree_data())
+            # Aggregated notes/journal for a dedicated panel (the notes were
+            # only visible buried in the NPC tree before). Guarded: the tkinter
+            # window may not implement set_notes.
+            if hasattr(window, "set_notes"):
+                try:
+                    window.set_notes(kb.npc_notes_view(limit_npcs=20, notes_each=8))
+                except Exception:
+                    pass
             window.set_plot(kb.episodic_summary or "(no plot summary yet - the LLM builds this)")
             p = state.get("player") or {}
             # Feed the Show-inventory button from the always-on player state

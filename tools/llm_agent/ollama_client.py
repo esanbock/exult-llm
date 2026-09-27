@@ -119,7 +119,13 @@ class OllamaClient:
         }
         _ml = (self.model or "").lower()
         _is_qwen = _ml.startswith("qwen") or "qwen3" in _ml
-        if _is_qwen and not self.allow_think:
+        # Thinking models emit a long chain-of-thought that consumes response
+        # tokens (slow, and can starve the JSON). Unless the caller explicitly
+        # asked for thinking (--think), turn it OFF so we get a fast, clean JSON
+        # action. gpt-oss is the known EXCEPTION (think=false + format=json
+        # triggers an empty-reply/repeat-loop abort), so leave it alone.
+        _is_gptoss = "gpt-oss" in _ml or "gpt_oss" in _ml
+        if not self.allow_think and not _is_gptoss:
             payload["think"] = False
         if force_json:
             payload["format"] = "json"
