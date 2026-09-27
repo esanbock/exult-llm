@@ -39,6 +39,7 @@ from typing import Any, Dict, List, Optional
 
 # Panels the driver pushes as plain text (key -> latest string).
 _TEXT_KEYS = (
+    "room",
     "gstatus", "plot", "map", "inventory", "dialog", "quests",
     "tool_stats", "context_dump", "area_map", "answer", "thinking",
 )
@@ -260,6 +261,10 @@ class InspectorServer:
     def set_dialog(self, text: str) -> None:
         self._broadcast("dialog", text)
 
+    def set_room(self, text: str) -> None:
+        """Zork-style narrated room description."""
+        self._broadcast("room", text)
+
     def set_quests(self, text: str) -> None:
         self._broadcast("quests", text)
 
@@ -455,237 +460,225 @@ _INDEX_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Exult LLM Agent - Inspector</title>
 <style>
-  :root { --bg:#12151b; --panel:#1b2029; --panel2:#232a35; --fg:#d7dde5;
-          --muted:#8b96a5; --accent:#5ab0ff; --good:#4ec97a; --warn:#e0b34a; }
+  :root { --bg:#0f1216; --panel:#181d24; --panel2:#212832; --fg:#dfe6ee;
+          --muted:#8a95a3; --accent:#5ab0ff; --good:#4ec97a; --warn:#e0b34a;
+          --err:#ff5c5c; --think:#b58bff; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
-         font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
-  header { display:flex; align-items:center; gap:14px; padding:8px 14px;
-           background:var(--panel2); border-bottom:1px solid #000; position:sticky; top:0; z-index:5; }
-  header h1 { font-size:14px; margin:0; font-weight:600; }
-  #conn { font-size:11px; padding:2px 8px; border-radius:10px; background:#3a2323; color:#e88; }
-  #conn.ok { background:#213a24; color:var(--good); }
-  #turn { color:var(--muted); }
-  .ctxwrap { flex:1; max-width:340px; }
-  .ctxbar { height:10px; background:#0c0f14; border-radius:5px; overflow:hidden; }
+         font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  /* Header */
+  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+           padding:6px 12px; background:var(--panel2); border-bottom:1px solid #000;
+           position:sticky; top:0; z-index:10; }
+  header b { font-size:13px; }
+  .chip { font-size:11px; padding:2px 8px; border-radius:10px; background:#0c0f14; color:var(--muted); }
+  .chip.hp { color:var(--good); } .chip.err { color:var(--err); }
+  #conn { background:#3a2323; color:#e88; } #conn.ok { background:#213a24; color:var(--good); }
+  .ctxbar { width:160px; height:9px; background:#0c0f14; border-radius:5px; overflow:hidden; display:inline-block; vertical-align:middle;}
   .ctxfill { height:100%; width:0; background:var(--accent); transition:width .3s; }
-  .ctxlbl { font-size:10px; color:var(--muted); margin-top:2px; }
-  .controls { display:flex; gap:6px; align-items:center; }
   input,button,select { font:inherit; background:var(--panel); color:var(--fg);
-         border:1px solid #333; border-radius:4px; padding:4px 7px; }
-  button { cursor:pointer; }
-  button:hover { border-color:var(--accent); }
-  #grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:8px; }
-  .panel { background:var(--panel); border:1px solid #000; border-radius:6px;
-           display:flex; flex-direction:column; min-height:120px; max-height:420px; }
-  .panel h2 { margin:0; font-size:11px; text-transform:uppercase; letter-spacing:.5px;
-              color:var(--muted); padding:6px 10px; border-bottom:1px solid #000; background:var(--panel2); }
-  .panel .body { padding:8px 10px; overflow:auto; white-space:pre-wrap; flex:1; }
-  .panel.wide { grid-column:span 2; }
-  .panel.tall .body { max-height:380px; }
-  .mono { white-space:pre; font-size:12px; }
-  .tree .node { margin:2px 0; }
-  .tree .name { color:var(--accent); cursor:pointer; }
-  .tree .meta { color:var(--muted); font-size:11px; }
-  .tree .child { margin-left:16px; color:var(--fg); }
-  .tree .child.dim { color:var(--muted); }
-  table.kv { width:100%; border-collapse:collapse; }
-  table.kv td { padding:2px 6px; border-bottom:1px solid #000; }
-  table.kv td.k { color:var(--muted); }
-  .turnentry { border-bottom:1px solid #000; padding:5px 0; }
-  .turnentry .t { color:var(--warn); }
-  .turnentry .r { color:var(--fg); }
-  .turnentry .a { color:var(--good); }
-  .turnentry .th { color:var(--muted); font-size:11px; }
-  #answer { color:var(--good); }
+         border:1px solid #333; border-radius:4px; padding:3px 7px; }
+  button{cursor:pointer;} button:hover{border-color:var(--accent);}
+  /* Layout: big left (the turn + feed), right rail (plot/quest/notes/stats), map + debug below */
+  main { display:grid; grid-template-columns: 1.6fr 1fr; gap:8px; padding:8px; }
+  .stack{display:flex;flex-direction:column;gap:8px;min-width:0;}
+  .card { background:var(--panel); border:1px solid #000; border-radius:6px; min-width:0;}
+  .card>h2{margin:0;font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;
+           color:var(--muted);padding:5px 10px;border-bottom:1px solid #000;background:var(--panel2);
+           cursor:default;display:flex;justify-content:space-between;}
+  .card .body{padding:8px 10px;overflow:auto;}
+  /* THE TURN - centerpiece */
+  #now .body{padding:10px 12px;}
+  .now-act{font-size:17px;font-weight:600;color:var(--fg);margin-bottom:2px;}
+  .now-act .out{font-size:13px;font-weight:400;color:var(--good);}
+  .now-act .out.err{color:var(--err);}
+  .now-reason{color:#cdd6e0;margin:6px 0;white-space:pre-wrap;}
+  .now-think{color:var(--think);font-size:12px;white-space:pre-wrap;opacity:.85;border-left:2px solid var(--think);padding-left:8px;margin-top:6px;}
+  /* live feed */
+  #feed .body{max-height:340px;padding:4px 0;}
+  .frow{padding:3px 10px;border-bottom:1px solid #14181e;display:flex;gap:8px;}
+  .frow .ft{color:var(--warn);flex:0 0 46px;}
+  .frow .fa{flex:1;min-width:0;}
+  .frow .fa .fr{color:var(--muted);font-size:11px;}
+  .frow .out{color:var(--good);} .frow .out.err{color:var(--err);font-weight:600;}
+  /* right rail */
+  .card.tall .body{max-height:220px;}
+  .name{color:var(--accent);cursor:pointer;} .child{margin-left:14px;} .child.dim{color:var(--muted);}
+  table.kv{width:100%;border-collapse:collapse;} table.kv td{padding:1px 6px;border-bottom:1px solid #14181e;}
+  table.kv td.k{color:var(--muted);}
+  .mono{white-space:pre;font-size:11.5px;line-height:1.15;}
+  /* collapsible */
+  details{background:var(--panel);border:1px solid #000;border-radius:6px;}
+  details>summary{padding:6px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase;
+                  letter-spacing:.6px;cursor:pointer;background:var(--panel2);border-radius:6px;}
+  details[open]>summary{border-bottom:1px solid #000;border-radius:6px 6px 0 0;}
+  details .body{padding:8px 10px;overflow:auto;max-height:300px;}
+  #wide{grid-column:1 / -1;display:flex;flex-direction:column;gap:8px;}
 </style>
 </head>
 <body>
 <header>
-  <h1>Exult LLM Inspector</h1>
-  <span id="conn">connecting…</span>
-  <span id="turn">turn —</span>
-  <div class="ctxwrap">
-    <div class="ctxbar"><div class="ctxfill" id="ctxfill"></div></div>
-    <div class="ctxlbl" id="ctxlbl"></div>
-  </div>
-  <div class="controls">
-    <input id="askbox" placeholder="Ask the agent…" size="26"/>
-    <button id="askbtn">Ask</button>
-    <button id="savebtn">Save game</button>
-    <select id="turnwin" title="Action-log memory window (turns). Default is 450; shrinks automatically under context pressure.">
-      <option value="default">turn mem: default (450)</option>
-      <option value="100">100</option><option value="200">200</option>
-      <option value="300">300</option><option value="450">450</option>
-      <option value="600">600</option><option value="800">800</option>
-      <option value="1000">1000</option>
-    </select>
-    <span id="turnwin-ok" style="color:var(--good);font-size:11px;"></span>
-  </div>
+  <b>Exult LLM Inspector</b>
+  <span id="conn" class="chip">connecting…</span>
+  <span id="c-turn" class="chip">turn —</span>
+  <span id="c-loc" class="chip"></span>
+  <span id="c-hp" class="chip hp"></span>
+  <span id="c-pos" class="chip"></span>
+  <span class="chip">ctx <span class="ctxbar"><span class="ctxfill" id="ctxfill"></span></span> <span id="ctxlbl"></span></span>
+  <span id="c-model" class="chip"></span>
+  <span style="flex:1"></span>
+  <input id="askbox" placeholder="Ask the agent…" size="22"/>
+  <button id="askbtn">Ask</button>
+  <button id="savebtn">Save</button>
+  <select id="turnwin" title="Action-log memory window (default 450; auto-shrinks under context pressure)">
+    <option value="default">mem: default (450)</option>
+    <option value="100">100</option><option value="200">200</option>
+    <option value="300">300</option><option value="450">450</option>
+    <option value="600">600</option><option value="800">800</option><option value="1000">1000</option>
+  </select>
+  <span id="turnwin-ok" style="color:var(--good);font-size:11px;"></span>
 </header>
 
-<div id="grid">
-  <div class="panel"><h2>Game status</h2><div class="body" id="p-gstatus"></div></div>
-  <div class="panel"><h2>Dialog</h2><div class="body" id="p-dialog"></div></div>
-  <div class="panel"><h2>Latest answer</h2><div class="body" id="answer"></div></div>
+<main>
+  <!-- LEFT: the turn (centerpiece) + live feed -->
+  <div class="stack">
+    <div class="card" id="now"><h2>Now — action · reasoning · thinking · outcome</h2>
+      <div class="body">
+        <div class="now-act" id="now-act">—</div>
+        <div class="now-reason" id="now-reason"></div>
+        <div class="now-think" id="now-think" style="display:none"></div>
+      </div>
+    </div>
+    <div class="card" id="feed"><h2>Live activity (recent turns)</h2><div class="body" id="feed-body"></div></div>
+    <div class="card"><h2>Room</h2><div class="body" id="p-room"></div></div>
+    <div class="card"><h2>Dialog</h2><div class="body" id="p-dialog"></div></div>
+    <div class="card"><h2>Latest answer to a viewer</h2><div class="body" id="p-answer"></div></div>
+  </div>
 
-  <div class="panel wide tall"><h2>Reasoning / actions (recent turns)</h2><div class="body" id="p-turnlog"></div></div>
-  <div class="panel tall"><h2>Plot summary</h2><div class="body" id="p-plot"></div></div>
+  <!-- RIGHT rail: plot, quests, notes, stats (priority order) -->
+  <div class="stack">
+    <div class="card tall"><h2>Plot</h2><div class="body" id="p-plot"></div></div>
+    <div class="card tall"><h2>Open quests</h2><div class="body" id="p-quests"></div></div>
+    <div class="card tall"><h2>Resolved quests</h2><div class="body" id="p-resolved"></div></div>
+    <div class="card tall"><h2>Notes / Journal</h2><div class="body" id="p-notes"></div></div>
+    <div class="card tall"><h2>Stats</h2><div class="body" id="p-stats_kv"></div></div>
+  </div>
 
-  <div class="panel tall"><h2>Map</h2><div class="body mono" id="p-map"></div></div>
-  <div class="panel tall"><h2>Area map</h2><div class="body mono" id="p-area_map"></div></div>
-  <div class="panel tall"><h2>Inventory</h2><div class="body" id="p-inventory"></div></div>
-
-  <div class="panel tall"><h2>Open quests</h2><div class="body" id="p-quests"></div></div>
-  <div class="panel tall"><h2>Resolved quests</h2><div class="body" id="p-resolved"></div></div>
-  <div class="panel tall"><h2>NPCs</h2><div class="body tree" id="p-npc_tree"></div></div>
-
-  <div class="panel tall"><h2>Topics</h2><div class="body tree" id="p-topics_tree"></div></div>
-  <div class="panel"><h2>Stats</h2><div class="body" id="p-stats_kv"></div></div>
-  <div class="panel tall"><h2>Tool stats</h2><div class="body mono" id="p-tool_stats"></div></div>
-
-  <div class="panel wide tall"><h2>Full context (prompt)</h2><div class="body mono" id="p-context_dump"></div></div>
-
-  <div class="panel wide tall"><h2>Notes / Journal (what the agent has learned)</h2><div class="body" id="p-notes"></div></div>
-</div>
+  <!-- FULL WIDTH BELOW: map, then collapsible debug -->
+  <div id="wide">
+    <div class="card"><h2>Map</h2><div class="body mono" id="p-map"></div></div>
+    <details><summary>NPCs met</summary><div class="body" id="p-npc_tree"></div></details>
+    <details><summary>Topics</summary><div class="body" id="p-topics_tree"></div></details>
+    <details><summary>Area map</summary><div class="body mono" id="p-area_map"></div></details>
+    <details><summary>Inventory</summary><div class="body" id="p-inventory"></div></details>
+    <details><summary>Tool stats</summary><div class="body mono" id="p-tool_stats"></div></details>
+    <details><summary>Full context (prompt sent to the model)</summary><div class="body mono" id="p-context_dump"></div></details>
+    <details><summary>Game status (raw)</summary><div class="body" id="p-gstatus"></div></details>
+  </div>
+</main>
 
 <script>
-const $ = id => document.getElementById(id);
-function setText(id, v){ const e=$(id); if(e) e.textContent = (v==null?"":String(v)); }
+const $=id=>document.getElementById(id);
+function esc(s){ if(s==null)s=""; else if(typeof s==="object"){try{s=JSON.stringify(s);}catch(e){s=String(s);}} else s=String(s);
+  return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function setText(id,v){const e=$(id); if(e)e.textContent=(v==null?"":String(v));}
+// An action string like "move -> blocked: ..." is an error if it mentions these.
+function isErr(s){ return /(?:->|:)\s*(blocked|failed|error|no path|unknown|bad )/i.test(String(s||"")); }
+function splitAct(s){ // "goto (x,y) -> ok"  =>  {act, out}
+  const m=String(s||"").split(/\s*->\s*/); return {act:m[0]||"", out:m.slice(1).join(" -> ")}; }
 
-function renderTurnLog(entries){
-  const box=$("p-turnlog"); box.innerHTML="";
+function renderNow(entries){
+  const e=(entries&&entries.length)?entries[entries.length-1]:null;
+  if(!e){return;}
+  const {act,out}=splitAct(e.action);
+  const err=isErr(e.action);
+  $("now-act").innerHTML='#'+esc(e.turn)+'  '+esc(act||"(thinking…)")+
+    (out?' <span class="out'+(err?' err':'')+'">→ '+esc(out)+'</span>':'');
+  $("now-reason").textContent=e.reason||"";
+  const th=$("now-think");
+  if(e.thought){th.style.display="";th.textContent="thinking: "+e.thought;} else {th.style.display="none";}
+}
+function renderFeed(entries){
+  const box=$("feed-body"); box.innerHTML="";
   (entries||[]).slice().reverse().forEach(e=>{
-    const d=document.createElement("div"); d.className="turnentry";
-    let h='<span class="t">#'+e.turn+'</span> ';
-    if(e.reason) h+='<span class="r">'+esc(e.reason)+'</span>';
-    if(e.action) h+='<div class="a">→ '+esc(e.action)+'</div>';
-    if(e.thought) h+='<div class="th">'+esc(e.thought)+'</div>';
-    d.innerHTML=h; box.appendChild(d);
+    const {act,out}=splitAct(e.action); const err=isErr(e.action);
+    const row=document.createElement("div"); row.className="frow";
+    row.innerHTML='<span class="ft">#'+esc(e.turn)+'</span><span class="fa">'+
+      esc(act)+(out?' <span class="out'+(err?' err':'')+'">→ '+esc(out)+'</span>':'')+
+      (e.reason?'<div class="fr">'+esc(e.reason.slice(0,160))+'</div>':'')+'</span>';
+    box.appendChild(row);
   });
 }
-function renderKV(kv){
-  const box=$("p-stats_kv"); box.innerHTML="";
-  const t=document.createElement("table"); t.className="kv";
-  Object.entries(kv||{}).forEach(([k,v])=>{
-    const tr=document.createElement("tr");
-    tr.innerHTML='<td class="k">'+esc(k)+'</td><td>'+esc(v)+'</td>';
-    t.appendChild(tr);
-  });
-  box.appendChild(t);
-}
-function renderList(id, items, fmt){
-  const box=$(id); box.innerHTML="";
-  (items||[]).forEach(it=>{ const d=document.createElement("div");
-    d.className="child"; d.textContent=fmt(it); box.appendChild(d); });
-}
-function renderNotes(groups){
-  const box=$("p-notes"); if(!box) return; box.innerHTML="";
-  (groups||[]).forEach(g=>{
-    const h=document.createElement("div"); h.className="name";
-    h.textContent=(g.npc||"?")+" ("+(g.total_notes||(g.notes||[]).length)+" notes)";
-    box.appendChild(h);
-    (g.notes||[]).forEach(n=>{ const d=document.createElement("div");
-      d.className="child dim"; d.textContent="• "+n; box.appendChild(d); });
-  });
-}
-function renderTree(id, nodes, spec){
-  const box=$(id); box.innerHTML="";
-  (nodes||[]).forEach(n=>{
-    const wrap=document.createElement("div"); wrap.className="node";
+function renderKV(kv){const box=$("p-stats_kv");box.innerHTML="";const t=document.createElement("table");t.className="kv";
+  Object.entries(kv||{}).forEach(([k,v])=>{const tr=document.createElement("tr");
+    tr.innerHTML='<td class="k">'+esc(k)+'</td><td>'+esc(v)+'</td>';t.appendChild(tr);});box.appendChild(t);}
+function renderList(id,items,fmt){const box=$(id);box.innerHTML="";
+  (items||[]).forEach(it=>{const d=document.createElement("div");d.className="child";d.textContent=fmt(it);box.appendChild(d);});}
+function renderNotes(groups){const box=$("p-notes");box.innerHTML="";
+  (groups||[]).forEach(g=>{const h=document.createElement("div");h.className="name";
+    h.textContent=(g.npc||"?")+" ("+(g.total_notes||(g.notes||[]).length)+")";box.appendChild(h);
+    (g.notes||[]).forEach(n=>{const d=document.createElement("div");d.className="child dim";d.textContent="• "+n;box.appendChild(d);});});}
+function renderTree(id,nodes,spec){const box=$(id);box.innerHTML="";
+  (nodes||[]).forEach(n=>{const wrap=document.createElement("div");
     const head=document.createElement("div");
-    head.innerHTML='<span class="name">▸ '+esc(spec.name(n))+'</span> <span class="meta">'+esc(spec.meta(n))+'</span>';
-    const kids=document.createElement("div"); kids.style.display="none";
-    spec.children(n).forEach(c=>{ const k=document.createElement("div");
-      k.className="child dim"; k.textContent=c; kids.appendChild(k); });
-    head.querySelector(".name").onclick=()=>{ kids.style.display = kids.style.display==="none"?"block":"none"; };
-    wrap.appendChild(head); wrap.appendChild(kids); box.appendChild(wrap);
-  });
-}
-function esc(s){
-  if(s==null) s="";
-  else if(typeof s==="object"){ try{ s=JSON.stringify(s); }catch(e){ s=String(s); } }
-  else s=String(s);
-  return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-}
+    head.innerHTML='<span class="name">▸ '+esc(spec.name(n))+'</span> <span class="child dim">'+esc(spec.meta(n))+'</span>';
+    const kids=document.createElement("div");kids.style.display="none";
+    spec.children(n).forEach(c=>{const k=document.createElement("div");k.className="child dim";k.textContent=c;kids.appendChild(k);});
+    head.querySelector(".name").onclick=()=>{kids.style.display=kids.style.display==="none"?"block":"none";};
+    wrap.appendChild(head);wrap.appendChild(kids);box.appendChild(wrap);});}
+const npcSpec={name:n=>n.name||"?",meta:n=>"x"+(n.times_talked||0),children:n=>{let o=[];
+  (n.transcript||[]).forEach(e=>o.push(e.said?((n.name||"")+": "+e.said):("you: "+(e.me||""))));
+  (n.topics_unasked||[]).forEach(t=>o.push("not asked: "+t));(n.topics_asked||[]).forEach(t=>o.push("asked: "+t));
+  (n.notes||[]).slice(-8).forEach(x=>o.push("note: "+x));return o;}};
+const topicSpec={name:t=>t.name||"?",meta:t=>((t.notes||t.mentions||[]).length)+" notes",children:t=>{let o=[];
+  (t.notes||[]).forEach(n=>o.push("@"+(n.step||"")+": "+(n.note||"")));
+  (t.mentions||[]).forEach(m=>o.push((m.npc||"")+": "+(m.said||"")));return o;}};
 
-const npcSpec = {
-  name:n=>n.name||"?",
-  meta:n=>"x"+(n.times_talked||0),
-  children:n=>{ let out=[];
-    (n.transcript||[]).forEach(e=> out.push(e.said?((n.name||"")+": "+e.said):("you: "+(e.me||""))));
-    (n.topics_unasked||[]).forEach(t=> out.push("not asked: "+t));
-    (n.topics_asked||[]).forEach(t=> out.push("asked: "+t));
-    (n.notes||[]).slice(-6).forEach(x=> out.push("note: "+x));
-    return out; }
-};
-const topicSpec = {
-  name:t=>t.name||"?",
-  meta:t=>((t.notes||t.mentions||[]).length)+" notes",
-  children:t=>{ let out=[];
-    (t.notes||[]).forEach(n=> out.push("@"+(n.step||"")+": "+(n.note||"")));
-    (t.mentions||[]).forEach(m=> out.push((m.npc||"")+": "+(m.said||"")));
-    return out; }
-};
-
-function apply(key, value){
+function apply(key,value){
   switch(key){
-    case "turn": setText("turn","turn "+value); break;
-    case "context": {
-      const pct=value.pct||0; $("ctxfill").style.width=pct+"%";
-      $("ctxfill").style.background = pct>90?"#e0574a":pct>75?"#e0b34a":"#5ab0ff";
-      setText("ctxlbl", value.label); break; }
-    case "turn_log": renderTurnLog(value); break;
+    case "turn": setText("c-turn","turn "+value); break;
+    case "context":{const p=value.pct||0;$("ctxfill").style.width=p+"%";
+      $("ctxfill").style.background=p>90?"#ff5c5c":p>75?"#e0b34a":"#5ab0ff";setText("ctxlbl",(p||0)+"%");break;}
+    case "turn_log": renderNow(value); renderFeed(value); break;
     case "stats_kv": renderKV(value); break;
-    case "npc_tree": renderTree("p-npc_tree", value, npcSpec); break;
-    case "topics_tree": renderTree("p-topics_tree", value, topicSpec); break;
-    case "resolved": renderList("p-resolved", value, x => typeof x==="string"?x:(x.name||JSON.stringify(x))); break;
     case "notes": renderNotes(value); break;
-    case "save_ack": { const b=$("savebtn"); b.textContent=value?"Saved!":"Save failed";
-      setTimeout(()=>b.textContent="Save game",2500); break; }
-    case "answer": setText("answer", value); break;
-    case "turn_window": {
-      const sel=$("turnwin");
-      sel.value = (value==null ? "default" : String(value));
-      const st=$("turnwin-ok"); if(st){ st.textContent="✓ set to "+(value==null?"default":value);
-        setTimeout(()=>{ st.textContent=""; }, 2500); }
-      break; }
-    default: setText("p-"+key, value);
+    case "npc_tree": renderTree("p-npc_tree",value,npcSpec); break;
+    case "topics_tree": renderTree("p-topics_tree",value,topicSpec); break;
+    case "resolved": renderList("p-resolved",value,x=>typeof x==="string"?x:(x.name||JSON.stringify(x))); break;
+    case "room": setText("p-room",value); break;
+    case "answer": setText("p-answer",value); break;
+    case "gstatus": setText("p-gstatus",value);
+      // pull HP/pos/location chips out of the status line for the header
+      { const t=String(value||""); const hp=t.match(/hp\s+(\d+\/\d+)/i); const pos=t.match(/pos\(([^)]+)\)/i);
+        if(hp){$("c-hp").textContent="HP "+hp[1]; $("c-hp").className="chip hp"+(/(^|\D)[0-3]\//.test(hp[1])?" err":"");}
+        if(pos)$("c-pos").textContent=pos[1]; } break;
+    case "save_ack":{const b=$("savebtn");b.textContent=value?"Saved!":"Save failed";setTimeout(()=>b.textContent="Save",2500);break;}
+    case "turn_window":{const s=$("turnwin");s.value=(value==null?"default":String(value));
+      const st=$("turnwin-ok");if(st){st.textContent="✓ "+(value==null?"default":value);setTimeout(()=>st.textContent="",2500);}break;}
+    default: setText("p-"+key,value);
   }
 }
 function applySnapshot(s){
-  setText("turn","turn "+(s.turn||0));
-  apply("context",{pct:s.context_pct||0,label:s.context_label||""});
-  ["gstatus","plot","map","area_map","inventory","dialog","quests",
-   "tool_stats","context_dump","answer","thinking"].forEach(k=>apply(k,s[k]));
-  apply("turn_log", s.turn_log||[]);
-  apply("stats_kv", s.stats_kv||{});
-  apply("npc_tree", s.npc_tree||[]);
-  apply("topics_tree", s.topics_tree||[]);
-  apply("resolved", s.resolved||[]);
-  apply("notes", s.notes||[]);
-  apply("turn_window", s.turn_window);
+  setText("c-turn","turn "+(s.turn||0));
+  setText("c-model", s.title? "" : "");
+  apply("context",{pct:s.context_pct||0});
+  ["gstatus","plot","map","area_map","inventory","dialog","quests","tool_stats","context_dump","answer","room"].forEach(k=>apply(k,s[k]));
+  apply("turn_log",s.turn_log||[]);apply("stats_kv",s.stats_kv||{});apply("notes",s.notes||[]);
+  apply("npc_tree",s.npc_tree||[]);apply("topics_tree",s.topics_tree||[]);apply("resolved",s.resolved||[]);
+  apply("turn_window",s.turn_window);
 }
-
 function connect(){
   const es=new EventSource("/events");
-  es.addEventListener("snapshot", ev=>{ try{applySnapshot(JSON.parse(ev.data));}catch(e){} });
-  es.onmessage = ev => { try{ const m=JSON.parse(ev.data); apply(m.key,m.value);}catch(e){} };
-  es.onopen = ()=>{ const c=$("conn"); c.textContent="live"; c.className="ok"; };
-  es.onerror = ()=>{ const c=$("conn"); c.textContent="reconnecting…"; c.className="";
-    es.close(); setTimeout(connect,2000); };
+  es.addEventListener("snapshot",ev=>{try{applySnapshot(JSON.parse(ev.data));}catch(e){}});
+  es.onmessage=ev=>{try{const m=JSON.parse(ev.data);apply(m.key,m.value);}catch(e){}};
+  es.onopen=()=>{const c=$("conn");c.textContent="live";c.className="chip ok";};
+  es.onerror=()=>{const c=$("conn");c.textContent="reconnecting…";c.className="chip";es.close();setTimeout(connect,2000);};
 }
-
-async function post(path,body){ try{
-  await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(body||{})}); }catch(e){} }
-
-$("askbtn").onclick = ()=>{ const q=$("askbox").value.trim();
-  if(q){ post("/ask",{question:q}); $("askbox").value=""; } };
-$("askbox").addEventListener("keydown", e=>{ if(e.key==="Enter") $("askbtn").click(); });
-$("savebtn").onclick = ()=> post("/save",{});
-$("turnwin").onchange = e=> post("/turn-window",{turns:e.target.value});
-
+async function post(p,b){try{await fetch(p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})});}catch(e){}}
+$("askbtn").onclick=()=>{const q=$("askbox").value.trim();if(q){post("/ask",{question:q});$("askbox").value="";}};
+$("askbox").addEventListener("keydown",e=>{if(e.key==="Enter")$("askbtn").click();});
+$("savebtn").onclick=()=>post("/save",{});
+$("turnwin").onchange=e=>post("/turn-window",{turns:e.target.value});
 connect();
 </script>
 </body>

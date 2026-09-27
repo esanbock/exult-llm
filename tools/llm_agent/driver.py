@@ -1807,6 +1807,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         window.update_turn(kb.turn_counter)   # persistent monotonic turn, not per-run step
         window.set_map(state.get("grid") or "(no map)")
         window.set_dialog(format_dialog(state))
+        # Zork-style room description for the Room panel (guarded: tkinter window
+        # may not implement set_room).
+        if hasattr(window, "set_room"):
+            try:
+                _objs = state.get("objects") or []
+                _nb = state.get("nearby") or []
+                window.set_room(describe_room(state, _recognize_place(_objs, _nb)))
+            except Exception:
+                pass
         # Inspector panels: quests, NPC knowledge, and stats.
         try:
             nearby_names = [n.get("name") for n in (state.get("nearby") or []) if n.get("name")]
