@@ -4398,12 +4398,13 @@ def _write_overlay(path: str, step: int, action: dict, reason: str,
         # (mostly lowercase). Wrap by MEASURED pixel width instead, using the
         # real font metrics, so each line fills the frame. Falls back to a
         # conservative char estimate if the font can't be measured.
-        # Frame is 960px wide; box starts at x=15; leave ~15px right margin.
-        _PX_BUDGET = 930
+        # Frame is 512px wide; drawtext box at x=10, boxborder 8; leave a small
+        # right margin -> usable text width ~490px.
+        _PX_BUDGET = 490
         _FONT_PATH = os.environ.get(
             "OVERLAY_FONT",
             "/usr/share/fonts/liberation-fonts/LiberationSans-Regular.ttf")
-        _FONT_SIZE = int(os.environ.get("OVERLAY_FONTSIZE", "20"))
+        _FONT_SIZE = int(os.environ.get("OVERLAY_FONTSIZE", "26"))
         _measure = None
         try:
             from PIL import ImageFont  # metrics only; no image is rendered
