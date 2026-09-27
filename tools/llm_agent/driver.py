@@ -3854,74 +3854,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     #     turns REGARDLESS of the LLM, physically pulling the avatar away from
     #     the wall's pull. This is a last-resort anti-stall, not content steering.
     _cur_tz_now = (state.get("player") or {}).get("tz", 0) or 0
-    if session.get("escape_latch", 0) > 0:
-        session["escape_latch"] -= 1
-        _et = session.get("escape_target", (1065, 2180))
-        # If we've arrived (near target, ground level), drop the latch.
-        _pp = state.get("player") or {}
-        if (abs(_pp.get("tx", 0) - _et[0]) + abs(_pp.get("ty", 0) - _et[1]) <= 3
-                and (_pp.get("tz", 0) or 0) == 0):
-            session["escape_latch"] = 0
-        else:
-            action = {"type": "goto", "tx": _et[0], "ty": _et[1], "tz": 0}
-            reason = f"(latch) escaping to ({_et[0]},{_et[1]}) - leaving the wall area"
-            print(f"[{step:03d}] escape-latch: committed goto {_et} ({session['escape_latch']} left)")
-            # skip the rest of the guards this turn; execute the latched move
-            _atype = action.get("type")
-            result = exult.act(action)
-            kb.record_tool(_atype, result.get("ok") if isinstance(result, dict) else None)
-            session["last_action_type"] = _atype
-            if window.available:
-                window.update_turn(kb.turn_counter)
-                window.set_action(_action_phrase(action))
-                window.set_thinking(reason)
-            return
-    # Arm the latch on a confined + descend-heavy loop.  (DISABLED: the latch
-    # fired excessively (~94x/run) and re-armed, creating its own churn that
-    # made the stairs loop WORSE rather than better. We rely instead on the
-    # temporal action log + full quest log + explicit GROUND-LEVEL label to let
-    # the agent self-correct, and on the lighter descend/ground guards.)
-    _recent_pos = session.get("wedge_recent", [])
-    if (False and len(_recent_pos) >= 6
-            and (max(t[0] for t in _recent_pos) - min(t[0] for t in _recent_pos)) <= 6
-            and (max(t[1] for t in _recent_pos) - min(t[1] for t in _recent_pos)) <= 6):
-        _descend_recent = sum(1 for r in (session.get("reason_hist") or [])[-6:]
-                              if "descend" in r or "fortress" in r or "stairs" in r)
-        if _descend_recent >= 3 and session.get("escape_latch", 0) == 0:
-            # Head to a far GROUND destination (a known place far away, else the
-            # murder-scene/start area to the NW of the fortress).
-            _pp = state.get("player") or {}
-            _far = None
-            for _pl in (kb.places_view(_pp.get("tx", 0), _pp.get("ty", 0), limit=12) if kb else []):
-                if abs(_pl.get("dx", 0)) + abs(_pl.get("dy", 0)) >= 14:
-                    _far = (_pp.get("tx", 0) + _pl.get("dx", 0), _pp.get("ty", 0) + _pl.get("dy", 0))
-                    break
-            session["escape_target"] = _far or (1065, 2180)
-            session["escape_latch"] = 10
-            # also demote the fortress cluster now
-            kb.deprioritize_matching_quest("fortress descend stairs wall ground")
-            print(f"[{step:03d}] escape-latch: ARMED -> {session['escape_target']}")
-
-    # Arm the latch when recent reasoning is DOMINATED by descend/fortress/
-    # stairs (the fixation), regardless of exact box size - the avatar may do a
-    # WIDE oscillation (fortress<->start) that a tiny-box check misses.
-    _rh6 = (session.get("reason_hist") or [])[-6:]
-    _fixate = sum(1 for r in _rh6
-                  if "descend" in r or "fortress" in r or "stairs" in r or "climb" in r)
-    if False and _fixate >= 4 and session.get("escape_latch", 0) == 0:
-        _pp = state.get("player") or {}
-        _far = None
-        for _pl in (kb.places_view(_pp.get("tx", 0), _pp.get("ty", 0), limit=12) if kb else []):
-            _nm = (_pl.get("name", "") or "").lower()
-            if ("fortress" in _nm or "wall" in _nm or "stair" in _nm):
-                continue   # don't escape TO the fortress
-            if abs(_pl.get("dx", 0)) + abs(_pl.get("dy", 0)) >= 10:
-                _far = (_pp.get("tx", 0) + _pl.get("dx", 0), _pp.get("ty", 0) + _pl.get("dy", 0))
-                break
-        session["escape_target"] = _far or (1065, 2180)
-        session["escape_latch"] = 12
-        kb.deprioritize_matching_quest("fortress descend stairs wall ground climb")
-        print(f"[{step:03d}] escape-latch: ARMED (fixation) -> {session['escape_target']}")
+    # (Removed: the escape-latch subsystem was dead code - both arming blocks
+    # were `if False and ...` after it was found to churn ~94x/run and worsen
+    # the stairs loop. We rely on the action log + quest log + GROUND-LEVEL
+    # label + the lighter descend/ground guards instead.)
 
     _at_ground = _cur_tz_now == 0
     _wants_descend = any(
@@ -3992,74 +3928,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         #     step (verified: walking east across the ramp took tz 0->5 onto the
         #     wall). goto stalls at tz1 and oscillates, so we drive MOVEs. We
         #     learn the ascending direction from feedback: remember our last tz;
-        # NOTE: the special-case stairs guards below are DISABLED. Testing showed
-        # Exult's own pathfinder climbs multi-level ramps correctly when goto is
-        # given a destination at the right elevation (the engine steps up 1 level
-        # per tile via is_blocked's max_rise). Our goto Z-resolution now sets the
-        # destination to the standable height, so 'goto a wall-top/upper tile'
-        # climbs the whole staircase (verified tz 0->5 in 2 gotos). The guards
-        # were solving the wrong problem (targeting the stairs TILE, where goto
-        # arrives at tz1 and stops) and fought the agent, so we let goto do it.
-        _reason_stairs = False
-        rows = (state.get("grid") or "").split("\n")
-        cx, cy = _grid_center(rows)
-        _e_cells = [(x - cx, y - cy)
-                    for y in range(len(rows)) for x in range(len(rows[y]))
-                    if rows[y][x] == "E"]
-        _cur_tz = (state.get("player") or {}).get("tz", 0) or 0
-        _sc = session.get("stairs_attempts", 0)
-        # Only ASSIST the climb when: the model itself is trying to move/goto
-        # (don't hijack talk/search/etc), it's reasoning about stairs, stairs
-        # are CLOSE (within ~4 tiles), and it isn't already up high. This keeps
-        # the guard from commandeering the agent every turn.
-        _near_stairs = _e_cells and min(abs(c[0]) + abs(c[1]) for c in _e_cells) <= 4
-        _act_type = action.get("type") if isinstance(action, dict) else None
-        if (_reason_stairs and _near_stairs and _sc < 25
-                and _act_type in ("move", "goto") and _cur_tz < 5):
-            session["stairs_attempts"] = _sc + 1
-            _nm = {(0,-1):"n",(0,1):"s",(1,0):"e",(-1,0):"w",
-                   (1,-1):"ne",(1,1):"se",(-1,1):"sw",(-1,-1):"nw"}
-            _prev_tz = session.get("climb_prev_tz")
-            _prev_dir = session.get("climb_dir")
-            session["climb_prev_tz"] = _cur_tz
-            # If our last move raised tz, we're on the ramp ascending - keep going.
-            if _prev_dir is not None and _prev_tz is not None and _cur_tz > _prev_tz:
-                action = {"type": "move", "dir": _prev_dir, "speed": 120}
-                reason = f"(guard) climbing ramp {_prev_dir} (tz {_prev_tz}->{_cur_tz})"
-                print(f"[{step:03d}] stairs-climb: continue {_prev_dir} tz={_cur_tz}")
-            else:
-                # Pick a direction toward the nearest E cell and try it; the
-                # ramp base is reached by heading at the stairs. Cycle the
-                # candidate directions across attempts until one raises tz.
-                _near = min(_e_cells, key=lambda c: abs(c[0]) + abs(c[1]))
-                _tdx = (1 if _near[0] > 0 else -1 if _near[0] < 0 else 0)
-                _tdy = (1 if _near[1] > 0 else -1 if _near[1] < 0 else 0)
-                # candidate step dirs, biased toward the stairs, rotating by attempt
-                _cands = [(_tdx, _tdy), (_tdx, 0), (0, _tdy),
-                          (1, 0), (-1, 0), (0, 1), (0, -1)]
-                _cands = [c for c in _cands if c != (0, 0)]
-                _pick = _cands[_sc % len(_cands)]
-                session["climb_dir"] = _nm[_pick]
-                action = {"type": "move", "dir": _nm[_pick], "speed": 120}
-                reason = f"(guard) approaching/climbing stairs: try {_nm[_pick]}"
-                print(f"[{step:03d}] stairs-climb: try {_nm[_pick]} toward E{_near} tz={_cur_tz}")
-        elif _reason_stairs and _e_cells and _sc >= 25:
-            # Gave the climb enough tries and it hasn't worked - stop forcing it.
-            # Inform the agent this staircase is a dead end so it stops trying to
-            # go up here and pursues its goal (the Mayor) by another route.
-            session["stairs_attempts"] = 0     # allow a fresh future attempt elsewhere
-            session["last_bump"] = (
-                "You've repeatedly tried to climb these stairs with no success - "
-                "treat this route as a DEAD END. The person you seek is likely "
-                "NOT up here; stop trying to climb and look for them elsewhere in "
-                "town (they may be in a building or wandering the streets).")
-            action = _explore_far(state, session, True)
-            reason = "(guard) stairs unclimbable; abandoning and exploring elsewhere"
-            print(f"[{step:03d}] stairs: attempts exhausted; abandoning dead-end")
-        # Reset the attempt counter once we actually climbed (tz>0) or wandered
-        # away from any stairs, so a legitimate future staircase isn't pre-capped.
-        if (p_now := (state.get("player") or {})).get("tz", 0) > 0 or not _e_cells:
-            session["stairs_attempts"] = 0
+        # (Removed: dead stairs-climb assist. It was gated on `_reason_stairs =
+        # False` after Exult's own pathfinder was found to climb ramps when goto
+        # targets the right elevation - the z-aware goto handles it now.)
         near_here = abs(tgt[0]-here[0]) + abs(tgt[1]-here[1]) <= 1
         last_was_goto = session.get("last_action_type") == "goto"
         if near_here:
