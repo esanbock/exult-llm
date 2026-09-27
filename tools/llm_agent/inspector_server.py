@@ -505,10 +505,12 @@ _INDEX_HTML = r"""<!DOCTYPE html>
     <input id="askbox" placeholder="Ask the agent…" size="26"/>
     <button id="askbtn">Ask</button>
     <button id="savebtn">Save game</button>
-    <select id="turnwin" title="Temporal memory window">
-      <option value="default">turn mem: default</option>
-      <option value="5">5</option><option value="10">10</option>
-      <option value="20">20</option><option value="40">40</option>
+    <select id="turnwin" title="Action-log memory window (turns). Default is 450; shrinks automatically under context pressure.">
+      <option value="default">turn mem: default (450)</option>
+      <option value="100">100</option><option value="200">200</option>
+      <option value="300">300</option><option value="450">450</option>
+      <option value="600">600</option><option value="800">800</option>
+      <option value="1000">1000</option>
     </select>
   </div>
 </header>
