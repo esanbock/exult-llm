@@ -1108,11 +1108,35 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     _streak = state.get("same_goal_streak")
     if _streak and _streak >= 3:
         view["same_goal_streak"] = _streak
-        view["progress_note"] = (
-            f"You have pursued the same goal ~{_streak} turns running. If it is "
-            "not producing progress, STOP repeating it: review your quests/notes "
-            "(quests/recall tools), question your assumptions (is this goal even "
-            "real?), and try a different lead.")
+        # ESCALATING FRUSTRATION (first-person, unmissable) - a human player who
+        # repeats the same thing with no result gets frustrated and CHANGES what
+        # they're doing. Model the same felt sense, escalating with the streak,
+        # and always offer concrete DIFFERENT actions so "stop" isn't a dead end.
+        _last_reason = ""
+        _rh = session.get("reason_hist", []) if isinstance(session, dict) else []
+        if _rh:
+            _last_reason = _rh[-1]
+        if _streak >= 6:
+            view["I_AM_STUCK_IN_A_LOOP"] = (
+                f"STOP. I have tried \"{_last_reason}\" about {_streak} times in a "
+                "row and NOTHING has changed. This approach DOES NOT WORK - "
+                "repeating it again is pointless. A real adventurer would give up "
+                "on this and do something COMPLETELY different. This turn I MUST "
+                "pick a different KIND of action - NOT another goto/look at the "
+                "same thing. Concretely, do ONE of: (a) if I'm next to it, "
+                "actually INTERACT - open / take / loot / talk / use - instead of "
+                "just moving toward it; (b) walk AWAY to somewhere I have not been "
+                "(explore an unvisited direction, or goto a different known "
+                "place); (c) talk to a NEW person for a fresh lead; (d) accept "
+                "this sub-task may be DONE or a dead end, and pursue a different "
+                "quest/lead. Choose one now.")
+        else:
+            view["progress_note"] = (
+                f"I have pursued \"{_last_reason}\" ~{_streak} turns running with no "
+                "result. If it isn't working, STOP repeating it: if I'm already "
+                "next to my target, INTERACT with it (open/take/talk/use) rather "
+                "than moving toward it again; otherwise question the goal (is it "
+                "real? is it already done?) and try a different lead.")
         # If the stall is navigational, point at the always-on 'navigation'
         # block: goto a known place BY NAME rather than walking toward stairs/
         # walls. (The full landmark list with bearings is always in context.)

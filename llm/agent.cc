@@ -2296,6 +2296,23 @@ namespace LLM_agent {
 					   "give explicit {tx,ty}; or 'move'/explore in a direction to "
 					   "DISCOVER it first, then goto once it's known.\"}";
 			}
+			// ALREADY THERE: if the avatar is already ON or ADJACENT to the
+			// destination tile (Chebyshev distance <= 1), we have ARRIVED - do
+			// not path (which would oscillate one tile back and forth around a
+			// reached target, returning 'partial' forever and looking like a
+			// loop). Report arrival so the model's "reach X" sub-goal resolves
+			// and it moves on to interacting (open/take/talk/use).
+			{
+				const int adx = std::abs(dest.tx - at.tx);
+				const int ady = std::abs(dest.ty - at.ty);
+				if (std::max(adx, ady) <= 1) {
+					return "{\"ok\":true,\"did\":\"goto\",\"arrived\":true,"
+						   + json_int("tx", at.tx) + "," + json_int("ty", at.ty)
+						   + ",\"note\":\"you are here, right next to the target - "
+						     "you have arrived. To learn about it 'look'; to "
+						     "interact use open/take/talk/use as appropriate.\"}";
+				}
+			}
 			// Z-LAYER RESOLUTION: only when the caller did NOT give an explicit
 			// tz. goto defaults the destination to the avatar's current Z; a
 			// stairs/wall-top tile is only walkable at a higher Z, so targeting
