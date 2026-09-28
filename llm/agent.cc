@@ -2289,7 +2289,12 @@ namespace LLM_agent {
 				}
 			}
 			if (!have_dest) {
-				return "{\"ok\":false,\"error\":\"no destination (give tx/ty or a visible name)\"}";
+				return "{\"ok\":false,\"error\":\"can't goto that - it is not "
+					   "visible and not on your map, so there's no destination. "
+					   "Do NOT repeat this goto. Instead: goto a target you can "
+					   "SEE (in nearby/objects) or a place in known_places by name; "
+					   "give explicit {tx,ty}; or 'move'/explore in a direction to "
+					   "DISCOVER it first, then goto once it's known.\"}";
 			}
 			// Z-LAYER RESOLUTION: only when the caller did NOT give an explicit
 			// tz. goto defaults the destination to the avatar's current Z; a

@@ -2668,6 +2668,24 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             reason = "advance the NPC's speech"
             _orig_action = dict(action)   # keep it under --no-guards revert too
             _orig_reason = reason
+        # ESSENTIAL NORMALIZER (runs even with --no-guards): resolve a
+        # goto/travel BY NAME to coordinates from the agent's KNOWN places / NPC
+        # memory when the target isn't currently visible. The engine's goto only
+        # knows nearby VISIBLE objects, so `goto {name:"stables"}` fails with
+        # "no destination" once off-screen - the model then spams it forever.
+        # Filling in tx,ty from our own map makes named travel actually work.
+        if (isinstance(action, dict) and action.get("type") == "goto"
+                and action.get("name") and action.get("tx") is None and kb is not None):
+            _gn = action["name"]
+            _vis = {(n.get("name") or "").lower() for n in (state.get("nearby") or [])}
+            _vis |= {(o.get("name") or "").lower() for o in (state.get("objects") or [])}
+            if _gn.lower() not in _vis:   # not visible -> resolve from memory
+                _pos = kb.place_pos(_gn) or kb.npc_last_pos(_gn)
+                if _pos and _pos[0] is not None:
+                    action = {"type": "goto", "tx": _pos[0], "ty": _pos[1]}
+                    reason = f"{reason} [->({_pos[0]},{_pos[1]})]"
+                    _orig_action = dict(action)
+                    _orig_reason = reason
         # (n/s/e/w/ne/nw/se/sw, optional "steps") OR game-tile "tx"/"ty".
         # Models often emit a delta {"dx":..,"dy":..} instead; translate that to
         # an absolute game-tile move (current tile + delta) - purely tile-based,
