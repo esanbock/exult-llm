@@ -265,12 +265,6 @@ MOVEMENT & NAVIGATION: the world is a 2D tile grid seen top-down; north = up.
   building/person, goto it by name or tile. If a goto says "partial", it walked
   as far as it could; just goto again to continue.
 
-ELEVATION (Z): the "elevation" field tells you your level - 0 is ground (the
-  normal case). ONLY IF it is not 0 does level matter: if you climbed stairs to a
-  wall/upper floor (elevation > 0), things on the ground are out of reach until
-  you goto a ground tile to come down; if underground (< 0), go up to the
-  surface. At elevation 0 you are already on the ground - there is nothing to
-  descend; ignore elevation entirely.
 
 BUILDINGS, DOORS, CHESTS, KEYS: towns are full of buildings; the interesting
   things (people, loot, clues) are usually INSIDE. Enter through DOORS ('+' =
@@ -335,11 +329,9 @@ TIME: the game clock advances; NPCs follow schedules (sleeping at night, working
                                 price higher than your gold (e.g. a 600-gold ship
                                 if you have 50). Don't commit to purchases you
                                 can't pay for.
-                                ELEVATION: 0 = ground (normal). Only matters if
-                                it is not 0: >0 = up (goto a ground tile to come
-                                down); <0 = underground (go up). At 0, ignore it.
-                                If you are at elevation 0 you are ALREADY at
-                                ground - do not try to "descend to ground".
+                                ELEVATION: your vertical level; 0 is ground and
+                                is normal. The live "level" field explains it
+                                only on the rare turns it is not 0.
                                 HEALTH: hp is CURRENT, max_hp is your MAXIMUM
                                 (== your strength). hp == max_hp means FULL
                                 health - you do NOT need healing. Only seek a
@@ -1013,15 +1005,6 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "turns_since_progress": state.get("turns_since_progress"),
         "player": {
             "tx": p.get("tx"), "ty": p.get("ty"), "tz": p.get("tz", 0),
-            "elevation": p.get("tz", 0),
-            "level": (
-                "ground"
-                if (p.get("tz", 0) or 0) == 0
-                else (f"up high (elevation {p.get('tz')}); to come down, goto a "
-                      "ground tile or known place"
-                      if (p.get("tz", 0) or 0) > 0
-                      else f"underground (elevation {p.get('tz')}); go up to reach "
-                           "the surface")),
             "hp": p.get("hp"), "max_hp": p.get("max_hp"),
             "hp_pct": (round(100 * p.get("hp", 0) / p["max_hp"])
                        if p.get("max_hp") else None),
@@ -1103,6 +1086,19 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         # wedge-escape logic and the inspector map; we just don't burden the
         # model's prompt with it.
     }
+    # ELEVATION: only surface it when it actually matters (tz != 0). On normal
+    # ground turns we say NOTHING about elevation/walls/descending - even a "you
+    # are at ground" note keeps the concept salient and primes the model to
+    # hallucinate being "on a wall". Teach it live, only when it is true.
+    _tz = (p.get("tz", 0) or 0)
+    if _tz != 0:
+        view["player"]["elevation"] = _tz
+        view["player"]["level"] = (
+            f"up high (elevation {_tz}); to come down, goto a ground tile or "
+            "known place"
+            if _tz > 0 else
+            f"underground (elevation {_tz}); go up to reach the surface")
+
     # Advisory: how many recent turns pursued the SAME goal. Surfacing this lets
     # the model NOTICE a cycle and change tack on its own (no steering).
     _streak = state.get("same_goal_streak")
