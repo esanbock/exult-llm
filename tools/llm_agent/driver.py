@@ -224,6 +224,29 @@ periodically). For finer detail you have the recall/quests tools.
    Need: report to Mayor Finnigan for the gate password to leave.",
    "reason": "record progress"}
 
+# GAME MECHANICS: CONVERSATIONS (how talking actually works - read this)
+Talking to an NPC is a MODAL, SYNCHRONOUS state - like a menu that takes over.
+It is NOT a spatial situation, so movement and world actions do NOTHING while
+you are in it.
+  * You ENTER a conversation with "talk" (once, when adjacent to the NPC). While
+    "conversation_in_progress" is true you are ALREADY talking to them - do NOT
+    "talk" again and do NOT "goto"/"move" toward them (you're already there;
+    walking does nothing until you leave).
+  * A conversation is a fixed DIALOGUE TREE of topics. When "conversation_active"
+    is true, the NPC has put ANSWER CHOICES on screen ("answers"): your ONLY
+    valid action is "answer" (by index or text) - pick a topic to explore it.
+    Picking a topic often reveals NEW topics (deeper branches).
+  * When "conversation_in_progress" is true but "conversation_active" is false,
+    the NPC is mid-speech: use "continue" to advance to the next line.
+  * You LEAVE by choosing a "bye"/"goodbye"/"leave" answer (or the tree ends).
+    Only AFTER leaving do movement and other actions work again.
+  * The tree is mostly FIXED, but branches can OPEN UP as the game progresses
+    (after you complete a quest, learn a name, or acquire an item, an NPC may
+    have new topics). So revisiting someone later - AFTER real progress - can be
+    worthwhile; re-opening the same tree with nothing changed is not.
+  * In short: talk -> answer/continue through the tree -> say bye -> then move.
+    Inside a conversation, think in TOPICS, not tiles.
+
 # STATE SCHEMA (what you receive each turn)
   alert (string, optional)    - urgent guidance for THIS turn. If it contains a
                                 "HINT from your operator", follow that hint as
