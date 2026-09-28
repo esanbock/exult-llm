@@ -2694,6 +2694,37 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     reason = f"{reason} [->({_pos[0]},{_pos[1]})]"
                     _orig_action = dict(action)
                     _orig_reason = reason
+        # ESSENTIAL NORMALIZER (runs even with --no-guards): a repeated goto to a
+        # target you've ALREADY ARRIVED AT is a no-op loop. Seen live: the model
+        # wants to "examine the victim", goto's it, gets arrived:true, but has no
+        # examine tool - so it re-goto's forever (the victim is a staged SCENE,
+        # not a lootable container, so open/take find nothing). Route a redundant
+        # arrival-goto into a "look" - the scene description IS the examination -
+        # and mark the spot looked so we don't loop on look either.
+        if (isinstance(action, dict) and action.get("type") == "goto"
+                and (action.get("name") or action.get("tx") is not None)):
+            _pp = state.get("player") or {}
+            _px, _py = _pp.get("tx"), _pp.get("ty")
+            _tgt = action.get("name") or f"({action.get('tx')},{action.get('ty')})"
+            # Are we already essentially at the target? (arrived last turn to the
+            # same target, OR the explicit tile is within 1 of us.)
+            _at_tile = (action.get("tx") is not None and _px is not None
+                        and abs(action["tx"] - _px) <= 1
+                        and abs(action.get("ty", _py) - _py) <= 1)
+            _arrived_here = (session.get("last_goto_arrived_target") == str(_tgt))
+            if _at_tile or _arrived_here:
+                _looked = session.get("looked_at_target")
+                if _looked == str(_tgt):
+                    # Already looked here last turn too - this spot is examined;
+                    # nothing more to learn. Nudge to move on to a new lead.
+                    action = {"type": "look"}
+                    reason = "(guard) already examined here; look then move on"
+                else:
+                    action = {"type": "look"}
+                    reason = f"examine {_tgt} (you are already here)"
+                    session["looked_at_target"] = str(_tgt)
+                _orig_action = dict(action)
+                _orig_reason = reason
         # (n/s/e/w/ne/nw/se/sw, optional "steps") OR game-tile "tx"/"ty".
         # Models often emit a delta {"dx":..,"dy":..} instead; translate that to
         # an absolute game-tile move (current tile + delta) - purely tile-based,
@@ -4358,6 +4389,16 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # missing assignment on the talk/answer path caused UnboundLocalError,
     # crashing every turn before the overlay/stats were written).
     _atype = action.get("type") if isinstance(action, dict) else "?"
+    # ARRIVED-TARGET tracking: remember the target of a goto that reported
+    # arrived:true, so a repeated goto to the SAME reached target next turn is
+    # recognized as a no-op loop and routed to 'look' (redundant-arrival
+    # normalizer). Cleared when we do something other than re-arrive/look.
+    if _atype == "goto" and isinstance(result, dict) and result.get("arrived"):
+        _atgt = action.get("name") or f"({action.get('tx')},{action.get('ty')})"
+        session["last_goto_arrived_target"] = str(_atgt)
+    elif _atype not in ("goto", "look"):
+        session.pop("last_goto_arrived_target", None)
+        session.pop("looked_at_target", None)
     # DESCEND outcome tracking: if the engine reports no REACHABLE way down from
     # this spot, remember it so the guard walks to a different platform edge and
     # retries, instead of the wedge guard thrashing in place (fortress-gateway
