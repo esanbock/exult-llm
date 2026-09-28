@@ -27,6 +27,13 @@
 
 ----
 
+> **This fork adds an LLM agent** that plays Ultima VII autonomously (via a local
+> Ollama model), streamed to Twitch with its reasoning on-screen and a live web
+> inspector — all headless (no X server). See
+> [`tools/llm_agent/README.md`](tools/llm_agent/README.md) for the agent, the
+> A/V streaming stack, the web inspector, launch instructions, and CLI options.
+> Build with `./configure --enable-llm-agent`.
+
 Ultima VII an RPG from the early 1990's, still has a huge following. But, being a DOS game with a very nonstandard memory manager, it is difficult to run it on the latest computers. Exult is a project to create an Ultima VII game engine that runs on modern operating systems, capable of using the data and graphics files that come with the game.
 
 Exult is written in C++ and runs on, at least, Linux, macOS and Windows using the SDL library to make porting to other platforms relatively easy. The current version supports all of "Ultima VII: The Black Gate" and "Ultima VII Part 2: Serpent Isle", allowing you to finish both games. This is only possible due to the work done by other fans who have decoded the various Ultima VII data files, especially Gary Thompson, Maxim Shatskih, Jakob Schonberg, and Wouter Dijkslag.
