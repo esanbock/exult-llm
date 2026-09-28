@@ -4696,7 +4696,7 @@ def run_loop(args, window: "ThoughtsWindow", ollama, exult_proc=None) -> None:
                 # per-tile joystick loop (was ~87% of turns), freeing the model's
                 # turns/context for strategy. Video keeps flowing (engine ticks);
                 # only LLM turns are saved.
-                if session.get("last_action_type") == "goto":
+                if session.get("last_action_type") in ("goto", "move"):
                     _wait_for_arrival(exult, window, kb, args, step)
                 if args.memory_file and step % 5 == 0:
                     kb.save(args.memory_file)
