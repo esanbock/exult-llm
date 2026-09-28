@@ -1222,13 +1222,17 @@ namespace LLM_agent {
 					const bool choices = conv->are_choices_active()
 							&& conv->get_num_answers() > 0;
 					std::string hint = choices
-						? "pick an \\\"answer\\\" (by index or the topic text), or "
-						  "choose the \\\"bye\\\" option to leave"
-						: "use \\\"continue\\\" to advance the NPC's speech";
+						? "Reply with {\\\"type\\\":\\\"answer\\\",\\\"index\\\":<n>} "
+						  "to pick a topic, or the \\\"bye\\\" option to leave."
+						: "The NPC is mid-speech and there are no choices yet - "
+						  "reply with {\\\"type\\\":\\\"continue\\\"} to advance the "
+						  "dialogue (repeat until choices appear or it ends). If it "
+						  "seems stuck, {\\\"type\\\":\\\"dismiss\\\"} closes it.";
 					return "{\"ok\":false,\"error\":\"you are IN A CONVERSATION "
 						   "(the game is paused) - '" + json_escape(type)
-						   + "' does nothing here. " + hint + ".\","
-						   "\"in_conversation\":true}";
+						   + "' does nothing here. " + hint + "\","
+						   "\"in_conversation\":true,\"must_use\":\""
+						   + std::string(choices ? "answer" : "continue") + "\"}";
 				}
 			}
 		}
