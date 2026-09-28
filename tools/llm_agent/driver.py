@@ -1047,7 +1047,18 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         "conversation_in_progress": in_convo,
         "conversation_active": state.get("conversation_active"),
         "npc_text": state.get("npc_text") if in_convo else None,
-        "answers": state.get("answers") if in_convo else [],
+        # SYNTHETIC CONTINUE: the model handles "pick an option from a list" well
+        # but doesn't reliably reach for the separate `continue` action when an
+        # NPC is mid-speech (no real choices). So when we're in a conversation
+        # with no answer choices yet, present a single synthetic option
+        # "(continue)" - selecting it (answer index 0) is translated to the real
+        # `continue` action in the dispatch. Meets the model where it's competent.
+        "answers": (
+            (state.get("answers") or [])
+            if (in_convo and (state.get("answers")))
+            else (["(continue - the speaker has more to say; select this to hear it)"]
+                  if in_convo else [])
+        ),
         "ambient_speech": state.get("ambient_speech") or [],
         "nearby": [
             {"name": n.get("name"),
@@ -2645,6 +2656,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # safety net - without those the engine simply rejects the action).
         _orig_action = dict(action) if isinstance(action, dict) else action
         _orig_reason = reason
+        # SYNTHETIC-CONTINUE translation: if we're in a conversation with NO real
+        # answer choices (NPC mid-speech) and the model "picked an option" (it
+        # only saw our synthetic "(continue)" option), route that to the real
+        # `continue` action. Runs BEFORE guards so it works with --no-guards too.
+        # This is the essential normalizer that makes the synthetic option work.
+        if (isinstance(action, dict) and action.get("type") == "answer"
+                and state.get("conversation_in_progress")
+                and not state.get("conversation_active")):
+            action = {"type": "continue"}
+            reason = "advance the NPC's speech"
+            _orig_action = dict(action)   # keep it under --no-guards revert too
+            _orig_reason = reason
         # (n/s/e/w/ne/nw/se/sw, optional "steps") OR game-tile "tx"/"ty".
         # Models often emit a delta {"dx":..,"dy":..} instead; translate that to
         # an absolute game-tile move (current tile + delta) - purely tile-based,
