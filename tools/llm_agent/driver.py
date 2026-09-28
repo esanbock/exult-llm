@@ -2560,7 +2560,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         res = ollama.chat_ex(get_effective_system_prompt(), _user)
         reply = res["content"]
         reason, action = parse_reply(reply)
-        # Movement normalizer: the "move" action takes EITHER a compass "dir"
+        # --no-guards experiment: snapshot the model's OWN parsed action so we
+        # can restore it before dispatch, letting the raw model drive with the
+        # guard overrides neutralized (we still keep the essential normalizers:
+        # dx/dy->tile, conversation answer-coercion, and the invalid-action
+        # safety net - without those the engine simply rejects the action).
+        _orig_action = dict(action) if isinstance(action, dict) else action
+        _orig_reason = reason
         # (n/s/e/w/ne/nw/se/sw, optional "steps") OR game-tile "tx"/"ty".
         # Models often emit a delta {"dx":..,"dy":..} instead; translate that to
         # an absolute game-tile move (current tile + delta) - purely tile-based,
@@ -4183,6 +4189,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 # Remember the subject we just asked about, so the NPC's reply
                 # next turn gets filed under this topic in the shared topic KB.
                 session["current_topic"] = _ans[_i]
+        # --no-guards: restore the model's OWN action, discarding any guard
+        # override this turn, to test raw model behavior. We keep it only if the
+        # original was a real engine action (not a driver-only pseudo type); the
+        # dx/dy->tile normalizer already ran on _orig via parse-time aliasing.
+        if getattr(args, "no_guards", False) and isinstance(_orig_action, dict):
+            _ot = _orig_action.get("type")
+            if _ot and _ot not in ("look",):   # look is driver-only -> keep guard's handling
+                action = dict(_orig_action)
+                reason = _orig_reason or "(raw model action; guards off)"
         # SAFETY NET: a driver-only pseudo-action (e.g. "look", which the
         # look-handler EARLIER in the turn normally converts, but a later guard
         # can re-introduce) must never reach the engine as 'unknown action
@@ -4774,6 +4789,10 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=50)
     ap.add_argument("--delay", type=float, default=1.5, help="seconds between turns")
     ap.add_argument("--dry-run", action="store_true", help="skip Ollama; scripted moves")
+    ap.add_argument("--no-guards", action="store_true",
+                    help="EXPERIMENT: neutralize guard overrides; let the raw model "
+                         "drive (keeps essential normalizers: conversation "
+                         "answer-coercion + the invalid-action safety net)")
     ap.add_argument("--show-thoughts", action="store_true", help="open the local LLM thinking window (tkinter)")
     ap.add_argument("--inspector", action="store_true",
                     help="serve the inspector over HTTP so a browser on another "
