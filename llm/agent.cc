@@ -1100,7 +1100,13 @@ namespace LLM_agent {
 		// Active conversation.
 		Usecode_machine* uc   = gwin->get_usecode();
 		Conversation*    conv = uc ? uc->get_conversation() : nullptr;
-		const bool       in_progress = conv && conv->get_num_faces_on_screen() > 0;
+		// A conversation is "in progress" (game paused; only conversation
+		// actions work) whenever faces are on screen OR the NPC has speech
+		// PENDING. This MUST match act()'s block condition, otherwise the model
+		// is told it's free while every move is rejected as "in conversation"
+		// (the deadlock: 30+ blocked gotos with no way to know it must continue).
+		const bool       in_progress = conv
+				&& (conv->get_num_faces_on_screen() > 0 || conv->is_npc_text_pending());
 		const bool       convo_active
 				= conv && conv->are_choices_active() && conv->get_num_answers() > 0;
 		os << ',' << json_bool("conversation_in_progress", in_progress);
@@ -1213,7 +1219,9 @@ namespace LLM_agent {
 		{
 			Usecode_machine* uc = gwin->get_usecode();
 			Conversation*    conv = uc ? uc->get_conversation() : nullptr;
-			const bool in_convo = conv && conv->get_num_faces_on_screen() > 0;
+			const bool in_convo = conv
+					&& (conv->get_num_faces_on_screen() > 0
+						|| conv->is_npc_text_pending());
 			if (in_convo) {
 				static const std::set<std::string> convo_ok = {
 					"answer", "continue", "dismiss", "set_number", "wait",
