@@ -57,6 +57,7 @@
 #include <cstdlib>
 #include <map>
 #include <sstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -1201,6 +1202,35 @@ namespace LLM_agent {
 		Game_window* gwin = Game_window::get_instance();
 		if (!gwin) {
 			return "{\"ok\":false,\"error\":\"no game window\"}";
+		}
+
+		// IN A CONVERSATION, the game is paused and the ONLY valid actions are
+		// conversation ones. If the model tries move/goto/open/etc. mid-dialog,
+		// return a clear ERROR so it LEARNS to answer/continue/bye instead of
+		// silently no-op'ing (which left it stuck with no feedback). Allowed
+		// while talking: answer/continue/dismiss/set_number, plus harmless
+		// wait and read-only/meta tools that don't move the world.
+		{
+			Usecode_machine* uc = gwin->get_usecode();
+			Conversation*    conv = uc ? uc->get_conversation() : nullptr;
+			const bool in_convo = conv && conv->get_num_faces_on_screen() > 0;
+			if (in_convo) {
+				static const std::set<std::string> convo_ok = {
+					"answer", "continue", "dismiss", "set_number", "wait",
+					"inventory", "stats", "save", "screenshot", "play_music"};
+				if (convo_ok.find(type) == convo_ok.end()) {
+					const bool choices = conv->are_choices_active()
+							&& conv->get_num_answers() > 0;
+					std::string hint = choices
+						? "pick an \\\"answer\\\" (by index or the topic text), or "
+						  "choose the \\\"bye\\\" option to leave"
+						: "use \\\"continue\\\" to advance the NPC's speech";
+					return "{\"ok\":false,\"error\":\"you are IN A CONVERSATION "
+						   "(the game is paused) - '" + json_escape(type)
+						   + "' does nothing here. " + hint + ".\","
+						   "\"in_conversation\":true}";
+				}
+			}
 		}
 
 		if (type == "wait") {
