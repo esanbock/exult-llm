@@ -488,3 +488,46 @@ then driver.py --music (auto-starts looping track 9 on connect).
 
 Meta-lesson: measure, don't theorize. Two wrong diagnoses (snd-aloop timers,
 then readback) were each overturned by a direct measurement.
+
+
+================================================================================
+CONTEXT & DECISION BUDGET: focus the LLM on STRATEGY, not navigation (2026-09-27)
+================================================================================
+
+PROBLEM (measured, not theorized): over a ~1700-turn run the action mix was
+  890 goto + 421 move + 177 wait = 1488 turns (87%) on low-level navigation/idle,
+  vs ~85 strategic acts (talk 11, answer 58, open 7, take 1, eat 1). The LLM is a
+  joystick picking tiles, not a strategist solving the mystery. Separately, the
+  static system prompt is ~8.3k tokens sent EVERY turn, plus ~24 dynamic view
+  sections (objects/nearby/navigation/doors/room) largely there to support
+  tile-picking. Guard stats corroborate: wedged/oscillation (556) +
+  goto-not-moving (402) + thrash (141) dominate.
+
+OPTIONS (highest leverage first):
+
+  1. HIGH-LEVEL NAVIGATION (chosen to try first). Make navigation ONE command
+     that runs to completion across many engine ticks WITHOUT consuming LLM
+     turns: the model says "travel to <place>" once and doesn't re-decide until
+     it ARRIVES or is genuinely stuck. Collapses ~890 gotos into ~20 travel
+     decisions -> frees ~850 turns for strategy AND lets us shrink the
+     navigation-support prompt sections. Also directly attacks the navigation
+     wedging that dominates the guards. (Today `goto` = one turn = one A*
+     attempt; if it doesn't arrive the LLM re-decides tile by tile.)
+
+  2. TRIM THE STATIC PROMPT (~8.3k tok/turn). Compact the action reference to a
+     cheat-sheet (verbose explanations behind a rarely-needed "help"); rotate
+     wisdom bullets instead of sending all 15 every turn. (On Bedrock this is
+     where prompt caching would save ~80%; locally the win is just trimming.)
+
+  3. COLLAPSE DYNAMIC NAV-SUPPORT SECTIONS. objects/nearby/navigation/doors/
+     room_description partly exist to help pick tiles. With high-level travel
+     (#1), most can shrink to "what's here to interact with," not per-tile
+     walkability.
+
+  4. TWO-TIER REASONING (strategic vs tactical). Only invoke the full strategic
+     prompt when a decision matters (arrived, in conversation, found an item);
+     use a tiny/no LLM call for pure transit. Don't spend an 8k-token strategic
+     prompt to decide one walking step.
+
+DECISION: implement #1 first (biggest lever, attacks tokens + decisions + the #1
+guard failure at once), measure, then consider #2-#4.

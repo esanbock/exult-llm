@@ -4589,8 +4589,53 @@ def _write_overlay(path: str, step: int, action: dict, reason: str,
 
 
 
+def _wait_for_arrival(exult, window, kb, args, step) -> None:
+    """After a goto starts a walk, poll the game (NO LLM call) until the avatar
+    ARRIVES, stops, or times out - so a whole multi-tile journey costs ONE LLM
+    turn instead of one per tile. Only engine ticks are consumed; the video
+    keeps flowing. Bounded so a stuck/looping walk can't hang the loop; the
+    normal per-turn guards then handle a genuine block on the next real turn."""
+    import time as _t
+    _MAX_POLLS = 40            # hard cap (~ a long cross-town walk)
+    _POLL_DELAY = 0.25         # seconds between polls (engine keeps moving)
+    _STILL_LIMIT = 3           # consecutive same-tile polls = arrived/stopped
+    _last_xy = None
+    _still = 0
+    for _i in range(_MAX_POLLS):
+        _t.sleep(_POLL_DELAY)
+        try:
+            st = exult.observe()
+        except Exception:
+            break
+        p = st.get("player") or {}
+        xy = (p.get("tx"), p.get("ty"))
+        moving = bool(st.get("moving"))
+        # Keep the inspector/overlay lively during the walk.
+        if window is not None and getattr(window, "available", False):
+            try:
+                window.set_gstatus(f"walking to destination... at {xy}")
+            except Exception:
+                pass
+        if not moving:
+            break                       # engine says the walk finished
+        if xy == _last_xy:
+            _still += 1
+            if _still >= _STILL_LIMIT:
+                break                   # position hasn't changed = arrived/blocked
+        else:
+            _still = 0
+            _last_xy = xy
+    # Mark walked tiles as visited so fog-of-war exploration stays accurate.
+    try:
+        p = (exult.observe().get("player") or {})
+        if p.get("tx") is not None and kb is not None:
+            kb.record_visit(p.get("tx", 0), p.get("ty", 0))
+    except Exception:
+        pass
 
-def run_loop(args, window: ThoughtsWindow, ollama, exult_proc=None) -> None:
+
+
+def run_loop(args, window: "ThoughtsWindow", ollama, exult_proc=None) -> None:
     recent_positions: list = []
     session = {"picked": set(), "searched_body": False}
     kb = KnowledgeBase.load(args.memory_file) if args.memory_file else KnowledgeBase()
@@ -4630,6 +4675,15 @@ def run_loop(args, window: ThoughtsWindow, ollama, exult_proc=None) -> None:
         for step in range(args.steps):
             try:
                 _do_turn(args, window, ollama, exult, step, recent_positions, kb, session)
+                # HIGH-LEVEL NAVIGATION: if the turn issued a goto (walk started),
+                # let the avatar WALK TO COMPLETION here - poll the game WITHOUT
+                # calling the LLM again until it arrives, stops, or times out. This
+                # turns navigation into ONE strategic decision instead of a
+                # per-tile joystick loop (was ~87% of turns), freeing the model's
+                # turns/context for strategy. Video keeps flowing (engine ticks);
+                # only LLM turns are saved.
+                if session.get("last_action_type") == "goto":
+                    _wait_for_arrival(exult, window, kb, args, step)
                 if args.memory_file and step % 5 == 0:
                     kb.save(args.memory_file)
                 # Periodically save the GAME so progress survives a crash/close.
