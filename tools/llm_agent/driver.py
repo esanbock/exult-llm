@@ -226,8 +226,10 @@ periodically). For finer detail you have the recall/quests tools.
 
 # GAME MECHANICS: CONVERSATIONS (how talking actually works - read this)
 Talking to an NPC is a MODAL, SYNCHRONOUS state - like a menu that takes over.
-It is NOT a spatial situation, so movement and world actions do NOTHING while
-you are in it.
+The GAME PAUSES while you are in a conversation: time stops, nothing moves, and
+NOTHING ELSE can happen until the conversation ends. So there is no rush and
+nothing to react to - just work the dialogue tree. Movement and world actions do
+NOTHING while you are in it (it is not a spatial situation).
   * You ENTER a conversation with "talk" (once, when adjacent to the NPC). While
     "conversation_in_progress" is true you are ALREADY talking to them - do NOT
     "talk" again and do NOT "goto"/"move" toward them (you're already there;
@@ -238,8 +240,11 @@ you are in it.
     Picking a topic often reveals NEW topics (deeper branches).
   * When "conversation_in_progress" is true but "conversation_active" is false,
     the NPC is mid-speech: use "continue" to advance to the next line.
-  * You LEAVE by choosing a "bye"/"goodbye"/"leave" answer (or the tree ends).
-    Only AFTER leaving do movement and other actions work again.
+  * You LEAVE a conversation by selecting the "bye" answer (also shown as
+    "goodbye"/"farewell"/"leave") whenever it is among the choices - that is the
+    normal, general way to end ANY conversation. If no bye-type option is
+    offered, the tree ends on its own. Only AFTER leaving do movement and other
+    actions work again.
   * The tree is mostly FIXED, but branches can OPEN UP as the game progresses
     (after you complete a quest, learn a name, or acquire an item, an NPC may
     have new topics). So revisiting someone later - AFTER real progress - can be
