@@ -113,8 +113,13 @@ RPG PLAYER WISDOM (seasoned-player habits):
     try levers/switches. SELF-CHECK "what_i_have_actually_done": if opened/
     picked-up are ~0 while you keep talking, the answer you need is a PHYSICAL
     thing to find - go open containers and bodies.
-  * GATHER USEFUL THINGS: take gold, food, keys, weapons, armour, potions,
-    scrolls, reagents, tools - and any ODD item (may be needed for a quest).
+  * GATHER USEFUL THINGS: COLLECTING ITEMS IS ALMOST ALWAYS BENEFICIAL - a
+    seasoned RPG player hoards. Take gold, food, keys, weapons, armour, potions,
+    scrolls, reagents, tools - and any ODD or unremarkable item too: it may be a
+    quest item, sellable for gold, or useful later. Inventory is cheap; a missed
+    item can block progress. When you 'open' a container or body, 'loot' it
+    (take everything) unless something is clearly owned. Err on the side of
+    picking things up.
   * WHERE SUPPLIES COME FROM: if you're low on food or need gear (food, potions,
     weapons, armour, clothing, torches, reagents), you get them two general ways:
     (1) BUY from a vendor/shopkeeper - 'talk' to a merchant and trade your gold;
@@ -263,7 +268,8 @@ MOVEMENT & NAVIGATION: the world is a 2D tile grid seen top-down; north = up.
 ELEVATION (Z): the world has floors/levels. tz 0 = ground. You go UP via stairs/
   ladders and can end up on a wall-top or upper floor (tz>0). Items/people on a
   DIFFERENT floor than you can't be interacted with until you're on their level;
-  "descend" gets you back down to the ground.
+  to get back down, just 'goto' a ground tile or a known place - goto is z-aware
+  and walks you down stairs/ramps automatically.
 
 BUILDINGS, DOORS, CHESTS, KEYS: towns are full of buildings; the interesting
   things (people, loot, clues) are usually INSIDE. Enter through DOORS ('+' =
@@ -333,7 +339,8 @@ TIME: the game clock advances; NPCs follow schedules (sleeping at night, working
                                 (cave/cellar/dungeon). The "level" field states
                                 this in words. The world is 3D: people & items on
                                 a DIFFERENT level than you are NOT reachable until
-                                you change levels (climb stairs up, or descend).
+                                you change levels (climb stairs up, or goto a
+                                ground tile to come down).
                                 If you are at elevation 0 you are ALREADY at
                                 ground - do not try to "descend to ground".
                                 HEALTH: hp is CURRENT, max_hp is your MAXIMUM
@@ -456,9 +463,15 @@ TIME: the game clock advances; NPCs follow schedules (sleeping at night, working
             so repeating goto to a far target makes steady progress; you do NOT
             need a clear line.
   stop    - Stop walking. params: none.
-  descend - Get DOWN off an elevated surface (wall/roof/stairs) to the ground.
-            params: none. Use when your elevation (tz) is >0; walks to the
-            nearest reachable lower ground. (already_ground = you're at tz 0.)
+  map     - Index a PLACE in your own gazetteer so you can return to it later.
+            params: {"name":"<place>", "x":<tx>, "y":<ty>} (x,y default to your
+            CURRENT tile if omitted). Like a human noting "the stables are here"
+            - map any spot you may want to revisit (shops, quest sites, your
+            home base, a locked door to come back to). Afterwards you can
+            'goto {"name":"<place>"}' or 'recall {"name":"<place>"}' it.
+  recall  - Look something up from memory. params: {"name":"<X>"}. If X is a
+            place you mapped, returns its {tx,ty}; otherwise returns notes on
+            that NPC/topic. Use before travel to get a place's coordinates.
   talk    - START a conversation with a nearby NPC. params: {"name":"<NPC>"}.
             The only way to begin dialog. Prefer to be CLOSE first. NPC must be
             AWAKE (sleeping ones need wait_until morning). Party = nothing new.
@@ -499,9 +512,8 @@ TIME: the game clock advances; NPCs follow schedules (sleeping at night, working
   inventory - Report YOUR worn/carried items AND a "party" list of what each
             companion carries (so you can balance food/gear across the party).
             params: none. (Your own worn/carrying is also shown each turn.)
-  annotate - Mark a spot on your map to return to. params: {"label":"<name>"}
-            (current pos) or add {"tx","ty"} and optional {"note"}; then "goto"
-            it by name.
+  annotate - Synonym for "map" (above): index the current spot (or given
+            {tx,ty}) under a {"label"/"name"} so you can "goto"/"recall" it.
   equip   - Wear/wield an item (auto-placed in its slot). params: {"name":"<item>"}.
   unequip - Take a worn item off, back into your pack. params: {"name":"<item>"}.
   drop    - Drop a carried/worn item at your feet. params: {"name":"<item>"}.
@@ -2977,14 +2989,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         reason = "(checked the area map to orient myself)"
 
     if isinstance(action, dict) and action.get("type") == "recall":
-        who = str(action.get("name") or action.get("npc") or action.get("topic") or "").strip()
-        rec = kb.recall_npc(who) if who else {"known": False, "name": who}
-        # If it's not a known person, try the shared topic KB (e.g. "Fellowship").
-        if who and not rec.get("known"):
-            trec = kb.recall_topic(who)
-            if trec.get("known"):
-                rec = {"topic": trec["name"], "known": True,
-                       "notes": trec.get("notes", [])}
+        who = str(action.get("name") or action.get("npc") or action.get("topic") or action.get("location") or "").strip()
+        # PLACE recall first: if it's a location the agent mapped, return its
+        # coordinates (the gazetteer lookup - x,y). Then NPC, then topic.
+        _ppos = kb.place_pos(who) if who else None
+        if _ppos and _ppos[0] is not None:
+            rec = {"place": who, "known": True, "tx": _ppos[0], "ty": _ppos[1],
+                   "hint": f"goto {who} (or {{tx:{_ppos[0]},ty:{_ppos[1]}}}) to travel there"}
+        else:
+            rec = kb.recall_npc(who) if who else {"known": False, "name": who}
+            # If it's not a known person, try the shared topic KB (e.g. "Fellowship").
+            if who and not rec.get("known"):
+                trec = kb.recall_topic(who)
+                if trec.get("known"):
+                    rec = {"topic": trec["name"], "known": True,
+                           "notes": trec.get("notes", [])}
         session["recalled"] = rec
         kb.record_action(f"recalled {who}")
         if window.available:
@@ -2994,23 +3013,25 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         action = {"type": "wait", "_counted": True}
         reason = f"(recalled {who})"
 
-    # --- "annotate": mark a location on the mental map so the agent can find
-    #     its way back later (via goto <label> or known_places). Records the
-    #     given tile, or the avatar's current position if none given.
-    if isinstance(action, dict) and action.get("type") == "annotate":
-        label = str(action.get("label") or action.get("name") or "").strip()
+    # --- "map" / "annotate": the agent's own GAZETTEER. Index a location by
+    #     NAME with coordinates (x,y[,z]) - defaults to the avatar's current
+    #     tile if none given - so it can build its own mental map of places and
+    #     'goto <name>' or 'recall <name>' them later. ("annotate" is a synonym.)
+    if isinstance(action, dict) and action.get("type") in ("map", "annotate"):
+        label = str(action.get("label") or action.get("name")
+                    or action.get("location") or "").strip()
         pp = state.get("player") or {}
-        tx = action.get("tx", pp.get("tx", 0))
-        ty = action.get("ty", pp.get("ty", 0))
+        tx = action.get("tx", action.get("x", pp.get("tx", 0)))
+        ty = action.get("ty", action.get("y", pp.get("ty", 0)))
         if label:
             kb.record_place(label, tx, ty, kind="marked", note=str(action.get("note", "")))
-            kb.record_action(f"annotated '{label}' @({tx},{ty})")
+            kb.record_action(f"mapped '{label}' @({tx},{ty})")
             if window.available:
-                window.set_action(f"[annotate] {label} @ ({tx},{ty})")
-            print(f"[{step:03d}] annotate: {label} @ ({tx},{ty})")
-        kb.record_tool("annotate", True)
+                window.set_action(f"[map] {label} @ ({tx},{ty})")
+            print(f"[{step:03d}] map: {label} @ ({tx},{ty})")
+        kb.record_tool("map", True)
         action = {"type": "wait", "_counted": True}
-        reason = f"(marked '{label}' on the map)"
+        reason = f"(mapped '{label}' @({tx},{ty}))"
 
     # --- "look": produce a detailed description of the surroundings. It does
     #     not advance the game; we record it so the model sees it next turn and
@@ -3743,10 +3764,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 action = _explore_far(state, session, wedged)
                 reason = f"(guard) '{_pn}' below us, can't reach after retries; moving on"
             else:
-                action = {"type": "descend"}
-                reason = f"(guard) '{_pn}' is below you (you're up high); descending to its level to take it"
+                # goto the item's own tile at GROUND (tz 0) - goto is z-aware
+                # and walks us down to the item's level (descend tool removed).
+                _pp2 = state.get("player") or {}
+                action = {"type": "goto",
+                          "tx": _pp2.get("tx", 0) + match.get("dx", 0),
+                          "ty": _pp2.get("ty", 0) + match.get("dy", 0), "tz": 0}
+                reason = f"(guard) '{_pn}' is below you; going down to its tile to take it"
                 session.setdefault("pickup_fails", {})[_pn] = _fails + 1
-                print(f"[{step:03d}] reach-guard: descend to '{_pn}' (dz={_dz}) before take")
+                print(f"[{step:03d}] reach-guard: goto-down to '{_pn}' (dz={_dz}) before take")
         elif match:
             # Adjacent AND same level - clear the fail counter; let take proceed.
             session.setdefault("pickup_fails", {}).pop(_pn, None)

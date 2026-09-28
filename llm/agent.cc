@@ -2844,13 +2844,15 @@ namespace LLM_agent {
 		}
 
 		if (type == "descend") {
-			// Reliably get DOWN from an elevated surface (wall-top, roof,
-			// stairs) to the ground. The driver's old approach - goto a far
-			// ground tile - pathed unreliably from a wall-top and fought the
-			// wedge guard, causing loops. Here the engine, which knows every
-			// tile's elevation, walks the avatar toward the NEAREST reachable
-			// lower ground: it BFS-scans outward for the closest tile at tz 0
-			// (or the lowest tz found) that is standable, and goto-paths there.
+			// 'descend' is REMOVED as a tool. To get down off a wall/roof/upper
+			// floor, just goto a GROUND tile or a known place - goto is z-aware
+			// and routes down stairs/ramps for you.
+			return "{\"ok\":false,\"error\":\"there is no 'descend' action - to get "
+				   "down, 'goto' a ground tile or a known place by name; goto "
+				   "walks you down automatically.\"}";
+		}
+		if (false && type == "descend") {
+			// (old implementation retained under a disabled guard for reference)
 			Actor* av = gwin->get_main_actor();
 			if (!av) {
 				return "{\"ok\":false,\"error\":\"no avatar\"}";
