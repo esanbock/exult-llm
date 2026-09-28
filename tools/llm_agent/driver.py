@@ -262,14 +262,15 @@ MOVEMENT & NAVIGATION: the world is a 2D tile grid seen top-down; north = up.
   "goto" is your main travel tool - give a place/NPC/object NAME or a {tx,ty}
   tile and the game PATHFINDS there automatically over several steps (you don't
   steer tile by tile). "move" nudges a few steps in a compass dir. To reach a
-  building/person, goto it on the GROUND - don't climb walls/roofs. If a goto
-  says "partial", it walked as far as it could; just goto again to continue.
+  building/person, goto it by name or tile. If a goto says "partial", it walked
+  as far as it could; just goto again to continue.
 
-ELEVATION (Z): the world has floors/levels. tz 0 = ground. You go UP via stairs/
-  ladders and can end up on a wall-top or upper floor (tz>0). Items/people on a
-  DIFFERENT floor than you can't be interacted with until you're on their level;
-  to get back down, just 'goto' a ground tile or a known place - goto is z-aware
-  and walks you down stairs/ramps automatically.
+ELEVATION (Z): the "elevation" field tells you your level - 0 is ground (the
+  normal case). ONLY IF it is not 0 does level matter: if you climbed stairs to a
+  wall/upper floor (elevation > 0), things on the ground are out of reach until
+  you goto a ground tile to come down; if underground (< 0), go up to the
+  surface. At elevation 0 you are already on the ground - there is nothing to
+  descend; ignore elevation entirely.
 
 BUILDINGS, DOORS, CHESTS, KEYS: towns are full of buildings; the interesting
   things (people, loot, clues) are usually INSIDE. Enter through DOORS ('+' =
@@ -334,13 +335,9 @@ TIME: the game clock advances; NPCs follow schedules (sleeping at night, working
                                 price higher than your gold (e.g. a 600-gold ship
                                 if you have 50). Don't commit to purchases you
                                 can't pay for.
-                                ELEVATION: 0 = GROUND level. >0 = UP (on a wall
-                                walkway / upper floor / rooftop). <0 = UNDERGROUND
-                                (cave/cellar/dungeon). The "level" field states
-                                this in words. The world is 3D: people & items on
-                                a DIFFERENT level than you are NOT reachable until
-                                you change levels (climb stairs up, or goto a
-                                ground tile to come down).
+                                ELEVATION: 0 = ground (normal). Only matters if
+                                it is not 0: >0 = up (goto a ground tile to come
+                                down); <0 = underground (go up). At 0, ignore it.
                                 If you are at elevation 0 you are ALREADY at
                                 ground - do not try to "descend to ground".
                                 HEALTH: hp is CURRENT, max_hp is your MAXIMUM
@@ -1018,19 +1015,13 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
             "tx": p.get("tx"), "ty": p.get("ty"), "tz": p.get("tz", 0),
             "elevation": p.get("tz", 0),
             "level": (
-                "GROUND LEVEL (elevation 0 - you are NOT up high and NOT "
-                "underground; do NOT try to climb down or up to 'reach ground', "
-                "you are already at ground level)"
+                "ground"
                 if (p.get("tz", 0) or 0) == 0
-                else (f"UP HIGH at elevation {p.get('tz')} (on a wall / upper "
-                      "floor / rooftop). To get DOWN, 'goto' a ground tile with "
-                      "tz:0 (e.g. a place you know) - the engine walks you down "
-                      "the ramp. Ground-level people & items are only reachable "
-                      "once you are back down."
+                else (f"up high (elevation {p.get('tz')}); to come down, goto a "
+                      "ground tile or known place"
                       if (p.get("tz", 0) or 0) > 0
-                      else f"UNDERGROUND at elevation {p.get('tz')} (in a "
-                           "cave/cellar/dungeon below ground - go UP to return "
-                           "to the surface)")),
+                      else f"underground (elevation {p.get('tz')}); go up to reach "
+                           "the surface")),
             "hp": p.get("hp"), "max_hp": p.get("max_hp"),
             "hp_pct": (round(100 * p.get("hp", 0) / p["max_hp"])
                        if p.get("max_hp") else None),
