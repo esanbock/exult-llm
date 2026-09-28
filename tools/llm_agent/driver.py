@@ -95,9 +95,13 @@ INTERACTION RULES (how the world works - know these so you don't waste turns):
     not abandon a locked chest/door - the key is usually findable.
   * DOORS: '+' = closed (a passage, not a wall - "open" it or "goto" beyond it),
     '/' = open. Locked doors need a key as above.
-  * CONTAINERS: chests, desks, drawers, cabinets, bags, barrels, crates, sacks
-    are all openable ("open" a specific one to reveal contents; "take" pulls
-    items out; "loot" takes all). A slain creature/person's body is openable too.
+  * CONTAINERS & LOOT: only objects tagged "lootable" in the state can be
+    opened/looted/taken from - chests, desks, drawers, bags, barrels, crates,
+    and a slain body that still has items ("open" one to see contents, "take" or
+    "loot"). Anything NOT tagged lootable (scenery, blood, furniture, or a
+    "corpse"/staged remains tagged lootable:false) has NOTHING to take - do not
+    open/loot/take it or 'goto' it repeatedly; just "look" to examine, then move
+    on to a real lead.
   * COMBAT: enemies show HOSTILE. "attack" (by name or nearest hostile) engages
     one; "combat" toggles auto-fight. You must be near a foe to hit it (melee)
     or have a ranged weapon. Flee fights you cannot win."""
@@ -877,6 +881,15 @@ def describe_room(state: dict, place: str = "") -> str:
         d = _dir_word(o.get("dx", 0), o.get("dy", 0))
         add_obj(f"{_article(o.get('name','body')).capitalize()} lies to the {d} - it can be searched.")
 
+    # Non-lootable corpses / staged remains: describe them as a SCENE to observe,
+    # not a container - so the model examines with 'look' and does not loop
+    # trying to open/loot something with nothing in it.
+    corpses = [o for o in objs if o.get("corpse") and near(o, 10)]
+    for o in sorted(corpses, key=lambda o: abs(o.get("dx", 0)) + abs(o.get("dy", 0)))[:2]:
+        d = _dir_word(o.get("dx", 0), o.get("dy", 0))
+        add_obj(f"{_article(o.get('name','remains')).capitalize()} is to the {d} - "
+                "part of the scene; there is nothing to loot here ('look' to examine).")
+
     containers = [o for o in objs if o.get("container") and not o.get("body") and near(o, 8)]
     for o in sorted(containers, key=lambda o: abs(o.get("dx", 0)) + abs(o.get("dy", 0)))[:2]:
         d = _dir_word(o.get("dx", 0), o.get("dy", 0))
@@ -1055,6 +1068,15 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
              "ty": p.get("ty", 0) + o.get("dy", 0),
              "tz": (p.get("tz", 0) or 0) + (o.get("dz", 0) or 0),
              "dir": _compass(o.get("dx", 0), o.get("dy", 0)),
+             # LOOTABLE affordance made EXPLICIT and POSITIVE: a body-container
+             # or a chest/bag/etc gets lootable:true; a corpse with nothing in it
+             # gets lootable:false. Everything else (scenery: blood, a staged
+             # "victim" tableau, furniture) has NO lootable tag => it is NOT
+             # openable/lootable. The prompt tells the model to only open/loot
+             # things tagged lootable.
+             **({"lootable": True} if (o.get("body") or o.get("container")) else {}),
+             **({"lootable": False, "note": "scenery - nothing to loot; 'look' to examine"}
+                if o.get("corpse") else {}),
              **({"body": True} if o.get("body") else {}),
              **({"searchable_container": True} if o.get("container") else {}),
              **({"contents": o.get("contents")} if o.get("contents") else {}),
