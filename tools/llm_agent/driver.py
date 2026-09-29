@@ -806,6 +806,17 @@ def _dir_word(dx: int, dy: int) -> str:
     return (ns + ew) or "right here"
 
 
+# A remembered place is ONE tile (usually the centroid of the objects that
+# identified it), but a building/area is a REGION. Standing anywhere inside it
+# counts as being there - otherwise the agent 9 tiles from the stables' centroid
+# (but inside the stables) keeps goto-ing "stables" forever.
+_REGION_KINDS = {"building", "area", "home", "shop", "temple", "inn"}
+
+
+def _arrival_radius(kind: str) -> int:
+    return 10 if (kind or "").lower() in _REGION_KINDS else 2
+
+
 # Mass nouns / already-plural that read wrong with "A " (a hay -> just "hay").
 _NO_ARTICLE = ("hay", "straw", "water", "gold", "grass", "sand", "equipment",
                "furniture", "clothing", "food")
@@ -1333,8 +1344,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
                 # BEFORE deciding - and stops re-issuing goto to a place it's
                 # standing in (the #1 wasted-turn loop). General: works for any
                 # landmark in any quest.
+                _hx, _hy = _pp_nav.get("tx", 0), _pp_nav.get("ty", 0)
                 _at_now = [n["name"] for n in _nav
-                           if abs(n.get("dx", 9)) + abs(n.get("dy", 9)) <= 2 and n.get("name")]
+                           if n.get("name") and n.get("tile")
+                           and max(abs(n["tile"][0] - _hx), abs(n["tile"][1] - _hy))
+                               <= _arrival_radius(n.get("kind"))]
                 nav = {
                     "you_are_at": [_pp_nav.get("tx", 0), _pp_nav.get("ty", 0)],
                     "known_places_nearest_first": _nav,
@@ -2606,7 +2620,16 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         del _ph[:-10]
         del _ph2[:-10]
         _recent_tiles = set(zip(_ph, _ph2))
-        if len(_ph) >= 8 and len(_recent_tiles) <= 2:
+        # STUCK if barely moving (<=2 distinct tiles) OR confined to a SMALL
+        # bounding box for many turns - the latter catches a two-spot ping-pong
+        # (e.g. bouncing between the victim tile and the stables-entrance tile ~9
+        # apart), which slips past the distinct-tiles test but is still a loop.
+        _xs = [x for x in _ph if x is not None]
+        _ys = [y for y in _ph2 if y is not None]
+        _bbox_small = (len(_xs) >= 8
+                       and (max(_xs) - min(_xs)) <= 12
+                       and (max(_ys) - min(_ys)) <= 12)
+        if len(_ph) >= 8 and (len(_recent_tiles) <= 2 or _bbox_small):
             state["stuck_in_place"] = True
         # Turns-since-real-progress: a stronger "you're wasting time" signal than
         # a raw turn count. Progress = a quest resolved or a NEW npc met. If many
@@ -2710,8 +2733,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             _vis = {(n.get("name") or "").lower() for n in (state.get("nearby") or [])}
             _vis |= {(o.get("name") or "").lower() for o in (state.get("objects") or [])}
             if _gn.lower() not in _vis:   # not visible -> resolve from memory
-                _pos = kb.place_pos(_gn) or kb.npc_last_pos(_gn)
-                if _pos and _pos[0] is not None:
+                _prec = kb.place_rec(_gn)
+                _pos = ([_prec.get("tx"), _prec.get("ty")] if _prec
+                        else kb.npc_last_pos(_gn))
+                _pp = state.get("player") or {}
+                if (_prec and _prec.get("tx") is not None and _pp.get("tx") is not None
+                        and max(abs(_prec["tx"] - _pp["tx"]), abs(_prec["ty"] - _pp["ty"]))
+                            <= _arrival_radius(_prec.get("kind"))):
+                    # Already INSIDE this place: a goto would just walk to its
+                    # centroid and back. Hand it to the redundant-arrival
+                    # normalizer below as "arrived", which turns it into a look.
+                    session["last_goto_arrived_target"] = str(_gn)
+                elif _pos and _pos[0] is not None:
                     action = {"type": "goto", "tx": _pos[0], "ty": _pos[1]}
                     reason = f"{reason} [->({_pos[0]},{_pos[1]})]"
                     _orig_action = dict(action)

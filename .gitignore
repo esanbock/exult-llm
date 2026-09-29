@@ -362,6 +362,7 @@ tools/llm_agent/agent_memory*.json
 # Logs and runtime state
 tools/llm_agent/driver_log.txt
 tools/llm_agent/driver_err.txt
+tools/llm_agent/raw_comms.log
 tools/llm_agent/twitch_bridge_log.txt
 tools/llm_agent/monitor_history.tsv
 tools/llm_agent/.gui_geometry

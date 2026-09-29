@@ -1414,17 +1414,20 @@ class KnowledgeBase:
         if note:
             rec["note"] = note[:120]
 
-    def place_pos(self, name: str):
-        key = _slug(name)
-        rec = self.places.get(key)
+    def place_rec(self, name: str):
+        rec = self.places.get(_slug(name))
         if rec:
-            return [rec.get("tx"), rec.get("ty")]
+            return rec
         # fuzzy: substring match on names
         low = (name or "").lower()
         for r in self.places.values():
             if low and low in r.get("name", "").lower():
-                return [r.get("tx"), r.get("ty")]
+                return r
         return None
+
+    def place_pos(self, name: str):
+        rec = self.place_rec(name)
+        return [rec.get("tx"), rec.get("ty")] if rec else None
 
     def places_view(self, here_tx: int = 0, here_ty: int = 0, limit: int = 12) -> list:
         """Known places, nearest first, with rough direction from 'here'."""

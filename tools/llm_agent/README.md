@@ -60,13 +60,16 @@ streaming stack, the web inspector, and the Twitch chat bridge.
 
 ## Configuration
 
-### `agent.env` (committed defaults; safe, no secrets)
+### `agent.env` (gitignored — deployment-specific; create locally)
+Copy `agent.env.example` to `agent.env` and fill in your values:
 ```
-AGENT_MODEL=granite4.2:30b
-AGENT_OLLAMA_HOST=http://alien1.esanbock.com:11434
+AGENT_MODEL=your-model:tag
+AGENT_OLLAMA_HOST=http://your-ollama-host:11434
 AGENT_BRIDGE_HOST=127.0.0.1
 AGENT_BRIDGE_PORT=45999
 ```
+Keep host names, model choices and other per-machine settings here, never in
+tracked files.
 
 ### `twitch.env` (gitignored — holds secrets; create locally)
 ```
@@ -220,8 +223,6 @@ socket, so it can't disturb the agent).
 - **`exult_client.py`** — thin TCP client for the Exult bridge (`:45999`).
 - **`thoughts_window.py`** — the original local tkinter inspector (`--show-thoughts`);
   the web `inspector_server.py` is the network-capable replacement.
-- **`avstream.sh`** — older single-client VLC mux (superseded by `go_live.sh`'s
-  HLS approach).
 
 ---
 

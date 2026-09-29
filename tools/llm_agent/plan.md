@@ -367,7 +367,7 @@ principle (Principle 1).
 ## Headless A/V streaming — architecture + the real bottleneck (2026-09-26)
 
 Goal this session: run Exult fully headless on Gentoo, have qwen3.6 (via ollama
-on alien1) play, and stream continuous VIDEO + AUDIO to a viewer (VLC now,
+on a remote host) play, and stream continuous VIDEO + AUDIO to a viewer (VLC now,
 Twitch later) with NO X server.
 
 ### What was built (all committed)

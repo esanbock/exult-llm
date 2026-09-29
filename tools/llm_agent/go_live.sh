@@ -20,7 +20,12 @@ SIZE=512x384
 # Optional Twitch output. Set TWITCH_STREAM_KEY (env or tools/llm_agent/twitch.env,
 # gitignored). Leave unset for local-HLS-only (default). Ingest is Twitch's
 # recommended RTMPS endpoint; pick a nearer server if you like.
-[ -f tools/llm_agent/twitch.env ] && . tools/llm_agent/twitch.env
+# LOCAL_ONLY=1 skips twitch.env entirely (no broadcast, no chat bridge).
+if [ "${LOCAL_ONLY:-0}" = 1 ]; then
+  unset TWITCH_STREAM_KEY TWITCH_OAUTH TWITCH_NICK TWITCH_CHANNEL
+elif [ -f tools/llm_agent/twitch.env ]; then
+  . tools/llm_agent/twitch.env
+fi
 TWITCH_INGEST="${TWITCH_INGEST:-rtmps://live.twitch.tv/app}"
 TWITCH_STREAM_KEY="${TWITCH_STREAM_KEY:-}"
 
