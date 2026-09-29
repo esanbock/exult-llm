@@ -291,6 +291,15 @@ namespace {
 		// climbing stairs, walking elevated walkways, and refusing side
 		// approaches. A tile is '.' (walkable) iff the BFS can stand on it.
 		const int move_flags = av->get_type_flags();
+		const int av_h       = std::max(1, av->get_info().get_3d_height());
+		// A 2D map shows ONE z-slice: the band the avatar's body occupies. An
+		// object is part of that slice iff its vertical span overlaps it - so
+		// the wall you stand ON (top == your feet) and the ground below are
+		// not drawn, while anything rising into your space is.
+		auto on_our_level = [&](const Game_object* o) {
+			const int oz = o->get_tile().tz;
+			return oz < at.tz + av_h && oz + o->get_info().get_3d_height() > at.tz;
+		};
 		{
 			// Per-cell best-known standing tz reached by the BFS (-128 = unseen).
 			std::vector<int> reach(dimx * dimy, -128);
@@ -360,17 +369,17 @@ namespace {
 						pc->setup_cache();
 						const int plx = probe.tx % c_tiles_per_chunk;
 						const int ply = probe.ty % c_tiles_per_chunk;
-						// If a standable surface exists anywhere from just below
-						// us down to ground, this is open air over ground, not a
-						// wall. Use a generous max_drop to see the ground below.
+						// One test at OUR height, allowed to fall all the way to
+						// the ground: blocked only if something occupies our
+						// level there. (A max_drop of 0 made the engine report
+						// "no floor" as blocked, so the air beside a narrow wall
+						// rendered as solid.) Landing lower = open air over
+						// ground; landing at our height = a floor at this level
+						// the BFS just couldn't reach.
 						int nl = at.tz;
-						const bool solid_here = pc->is_blocked(
-								2, at.tz, plx, ply, nl, move_flags, 0, 0);
-						int nl2 = 0;
-						const bool ground_below = !pc->is_blocked(
-								2, 0, plx, ply, nl2, move_flags, at.tz + 2, 0);
-						if (!solid_here && ground_below) {
-							rows[gy][gx] = 'v';   // drop-off: open ground below
+						if (!pc->is_blocked(av_h, at.tz, plx, ply, nl, move_flags,
+											at.tz, 0)) {
+							rows[gy][gx] = nl < at.tz ? 'v' : '.';
 						}
 					}
 				}
@@ -407,30 +416,19 @@ namespace {
 				}
 				const Shape_info& info = obj->get_info();
 				const Tile_coord  ot   = obj->get_tile();
-				// Z-LEVEL RULE (2D map of the avatar's CURRENT floor):
-				//   * STRUCTURE (building-class: walls/roofs/floors/windows) is
-				//     shown ONLY if it is on the avatar's z - i.e. the avatar's
-				//     height falls within the structure's vertical span. A roof
-				//     or upper-storey wall (base lift >= 5, above us) is dropped
-				//     so it can't bleed onto this floor's outline.
-				//   * NON-STRUCTURE OBJECTS (items, containers, bodies, signs,
-				//     furniture) are shown regardless of z if nearby - so you
-				//     can still see a chest on the floor above or a body below.
-				//     Stairs/ladders (transitions) are objects and always show.
-				if (info.get_shape_class() == Shape_info::building) {
-					// Floor-based rule, matching Exult's own convention
-					// (get_lift() / 5 == floor, used throughout schedule.cc):
-					// a building-class structure belongs to the avatar's floor
-					// only when its BASE lift is on the same 5-tz storey. This
-					// fixes the "standing on top of a wall" case, where the
-					// avatar's elevated tz (e.g. 5) previously fell inside a
-					// tall GROUND wall's span [0..3+] and let lower/other-floor
-					// structures bleed onto the current-floor outline.
-					const int struct_floor = ot.tz / 5;
-					const int avatar_floor = at.tz / 5;
-					if (struct_floor != avatar_floor) {
-						continue;    // structure on a different floor
-					}
+				// Z-LEVEL RULE (2D map = the avatar's current z-slice):
+				//   * STRUCTURE (building-class walls/roofs/floors/windows, and
+				//     the blocking glyphs below: scenery, fences, water) is
+				//     drawn ONLY if it occupies the avatar's height band
+				//     (on_our_level). Standing on a wall, the ground-level
+				//     buildings, trees and the wall itself are not drawn.
+				//   * NON-STRUCTURE OBJECTS (items, containers, bodies, signs)
+				//     are shown regardless of z if nearby - so you can still
+				//     see a chest on the floor above or a body below.
+				//     Stairs/ladders (transitions) always show.
+				const bool at_level = on_our_level(obj);
+				if (info.get_shape_class() == Shape_info::building && !at_level) {
+					continue;    // structure not at our level
 				}
 				if (info.is_door()) {
 					// '+' = closed door (can be opened), '/' = open door.
@@ -485,6 +483,10 @@ namespace {
 					g = '#';
 				} else {
 					g = '*';    // a loose named item on the ground (pickup-able)
+				}
+				// Blocking glyphs are structure too: only at our level.
+				if ((g == '#' || g == '=' || g == '~') && !at_level) {
+					g = 0;
 				}
 				if (g) {
 					plot(ot.tx, ot.ty, g);
