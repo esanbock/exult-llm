@@ -500,6 +500,10 @@ TIME: the game clock advances; NPCs follow schedules (sleeping at night, working
   map     - Town-scale overview: your position, explored area (fog-of-war), and
             labeled landmarks. params: none. Orient toward unexplored areas or
             known landmarks.
+  local_map - Top-down character map of the tiles right around you, at YOUR
+            height, with a legend and how to read it. params: none. Shown next
+            turn as "local_map". Use it when you can't work out how to get
+            somewhere nearby (walls, a narrow walkway, a way around).
   recall  - Retrieve your full saved knowledge about a CHARACTER or TOPIC.
             params: {"name":"<character or topic>"} (fuzzy). Person = transcript
             + asked/unasked topics; topic = every line said about it + who said
@@ -1465,6 +1469,9 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     if state.get("area_map") is not None:
         # Town-scale explored-area overview the agent requested via the map tool.
         view["area_map"] = state["area_map"]
+    if state.get("local_map") is not None:
+        # Local z-slice grid the agent requested via the local_map tool.
+        view["local_map"] = state["local_map"]
     # ACTION LOG LAST: the continuously-appended temporal memory goes at the very
     # BOTTOM of the context so the newest turns are the final thing the model
     # reads (best for recency/attention) and nothing static sits below it.
@@ -1694,6 +1701,46 @@ def _where(px: int, py: int, dx: int, dy: int) -> str:
     return f"{where} at ({tx},{ty})"
 
 
+_LOCAL_MAP_LEGEND = {
+    "@": "you",
+    "C": "a companion in your party",
+    "&": "another person",
+    "b": "a body you can loot",
+    "x": "a body with nothing to take",
+    "n": "a container you can open",
+    "*": "a loose item you can pick up",
+    "E": "an exit or route to another level: gate, stairs, ladder, trapdoor",
+    "+": "a closed door (open it to pass)",
+    "/": "an open door",
+    "W": "a building wall or roof at your height",
+    "=": "a fence or barrier (look for a gap or gate)",
+    "~": "water",
+    "#": "blocked at your height (wall, tree, furniture...)",
+    ".": "floor you can stand on at your height",
+    "v": "open air: nothing at your height, ground below (you can't walk there)",
+}
+
+
+def _local_map_view(state: dict) -> dict:
+    """The engine's grid, packaged for the model with its legend and reading
+    instructions (returned by the local_map tool)."""
+    grid = state.get("grid") or ""
+    rows = grid.split("\n") if grid else []
+    ox, oy = state.get("grid_origin_tx"), state.get("grid_origin_ty")
+    return {
+        "rows": rows,
+        "legend": _LOCAL_MAP_LEGEND,
+        "how_to_read": (
+            "Each character is one tile, seen from above. North is up, east is "
+            "right. You are the @ in the centre. Row 0 is the top row and "
+            f"column 0 the left column; the character at row r, column c is "
+            f"tile ({ox}+c, {oy}+r), which you can goto. The map is a slice at "
+            "YOUR height: walls and scenery only show if they are at your "
+            "level, while people and items show from any level. Routes between "
+            "levels are the E tiles."),
+    }
+
+
 def describe_scene(state: dict, kb=None) -> str:
     """A detailed natural-language description of what the Avatar sees now,
     built from the same observation data. General - narrates whatever is present
@@ -1745,8 +1792,8 @@ def describe_scene(state: dict, kb=None) -> str:
     for ch in grid:
         if ch not in "\n.@":
             counts[ch] = counts.get(ch, 0) + 1
-    feat = {"T": "trees", "W": "walls/buildings", "=": "fences/gates",
-            "~": "water", "n": "containers", "H": "furniture", "#": "blocked areas"}
+    feat = {"W": "walls/buildings", "=": "fences/gates",
+            "~": "water", "n": "containers", "#": "blocked areas"}
     present = [feat[c] for c in counts if c in feat and counts[c] >= 2]
     if present:
         lines.append("\nThe surroundings include: " + ", ".join(present) + ".")
@@ -2047,7 +2094,6 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                              "gold": _pp0.get("gold")}
     if window.available:
         window.update_turn(kb.turn_counter)   # persistent monotonic turn, not per-run step
-        window.set_map(state.get("grid") or "(no map)")
         window.set_dialog(format_dialog(state))
         # Zork-style room description for the Room panel (guarded: tkinter window
         # may not implement set_room).
@@ -2589,6 +2635,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _am = session.pop("area_map", None)
         if _am is not None:
             state["area_map"] = _am
+        _lm = session.pop("local_map", None)
+        if _lm is not None:
+            state["local_map"] = _lm
         # Time/progress awareness: give the model the turn number and how many
         # recent turns it has pursued the SAME goal, so it can notice it is
         # stuck in a cycle and change tack (self-sufficiency, not steering).
@@ -3069,6 +3118,19 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         kb.record_tool("map", True)
         action = {"type": "wait", "_counted": True}
         reason = "(checked the area map to orient myself)"
+
+    # LOCAL_MAP tool: the engine's z-slice grid around the avatar, on demand.
+    # Not part of the always-on prompt (models read ASCII maps poorly when it's
+    # always there); when asked for, it comes with its legend + how to read it.
+    if isinstance(action, dict) and action.get("type") == "local_map":
+        session["local_map"] = _local_map_view(state)
+        kb.record_action("checked the local map")
+        if window.available:
+            window.set_action("[local_map] reviewed the local map")
+        print(f"[{step:03d}] local_map: rendered")
+        kb.record_tool("local_map", True)
+        action = {"type": "wait", "_counted": True}
+        reason = "(checked the local map)"
 
     if isinstance(action, dict) and action.get("type") == "recall":
         who = str(action.get("name") or action.get("npc") or action.get("topic") or action.get("location") or "").strip()

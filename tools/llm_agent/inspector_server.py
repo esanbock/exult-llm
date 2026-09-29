@@ -10,7 +10,7 @@ Design
 `InspectorServer` implements the *same* interface as `ThoughtsWindow`
 (`available`, `start`, `mainloop`, `close`, every `set_*`, plus `get_ask`,
 `get_hint`, `consume_save_request`, `get_turn_window`). That makes it a drop-in:
-the driver keeps calling `window.set_map(...)`, `window.get_ask()`, etc. exactly
+the driver keeps calling `window.set_room(...)`, `window.get_ask()`, etc. exactly
 as before. Instead of drawing widgets, each `set_*` stores the value in a
 thread-safe snapshot and pushes a delta to every connected browser over
 Server-Sent Events (SSE).
@@ -40,7 +40,7 @@ from typing import Any, Dict, List, Optional
 # Panels the driver pushes as plain text (key -> latest string).
 _TEXT_KEYS = (
     "room", "action_digest",
-    "gstatus", "plot", "map", "inventory", "dialog", "quests",
+    "gstatus", "plot", "inventory", "dialog", "quests",
     "tool_stats", "context_dump", "area_map", "answer", "thinking",
 )
 # Panels pushed as structured data (lists/dicts) rendered specially by the client.
@@ -223,9 +223,6 @@ class InspectorServer:
 
     def set_plot(self, text: str) -> None:
         self._broadcast("plot", text)
-
-    def set_map(self, text: str) -> None:
-        self._broadcast("map", text)
 
     def set_inventory(self, text: str) -> None:
         self._broadcast("inventory", text)
@@ -615,12 +612,9 @@ _INDEX_HTML = r"""<!DOCTYPE html>
     <div class="card tall"><h2>Inventory</h2><div class="body pre" id="p-inventory"></div></div>
   </div>
 
-  <!-- FULL WIDTH BELOW: map + tool stats side by side, then collapsible debug -->
+  <!-- FULL WIDTH BELOW: tool stats, then collapsible debug -->
   <div id="wide">
-    <div class="row2">
-      <div class="card"><h2>Tool stats</h2><div class="body pre" id="p-tool_stats"></div></div>
-      <div class="card"><h2>Map</h2><div class="body mono" id="p-map"></div></div>
-    </div>
+    <div class="card"><h2>Tool stats</h2><div class="body pre" id="p-tool_stats"></div></div>
     <details><summary>NPCs met</summary><div class="body" id="p-npc_tree"></div></details>
     <details><summary>Topics</summary><div class="body" id="p-topics_tree"></div></details>
     <details><summary>Area map</summary><div class="body mono" id="p-area_map"></div></details>
@@ -774,7 +768,7 @@ function applySnapshot(s){
   setText("c-turn","turn "+(s.turn||0));
   setText("c-model", s.title? "" : "");
   apply("context",{pct:s.context_pct||0,label:s.context_label||""});
-  ["gstatus","plot","map","area_map","inventory","dialog","tool_stats","context_dump","room","action_digest"].forEach(k=>apply(k,s[k]));
+  ["gstatus","plot","area_map","inventory","dialog","tool_stats","context_dump","room","action_digest"].forEach(k=>apply(k,s[k]));
   apply("turn_log",s.turn_log||[]);apply("stats_kv",s.stats_kv||{});apply("notes",s.notes||[]);
   apply("npc_tree",s.npc_tree||[]);apply("topics_tree",s.topics_tree||[]);apply("resolved",s.resolved||[]);
   apply("quests_data",s.quests_data||{});
