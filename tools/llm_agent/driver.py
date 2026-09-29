@@ -1701,6 +1701,37 @@ def _where(px: int, py: int, dx: int, dy: int) -> str:
     return f"{where} at ({tx},{ty})"
 
 
+def _explain_open_failure(state: dict, action: dict) -> str:
+    """Turn the engine's generic 'nothing to open there' into the actual
+    reason, using what's visible: too far away, or not an openable thing."""
+    nm = str(action.get("name") or "").lower().strip()
+    if not nm:
+        return ""
+    for o in (state.get("objects") or []):
+        on = (o.get("name") or "").lower()
+        if not on or not (nm in on or on in nm):
+            continue
+        dist = max(abs(o.get("dx", 0)), abs(o.get("dy", 0)))
+        pp = state.get("player") or {}
+        where = f"({pp.get('tx', 0) + o.get('dx', 0)},{pp.get('ty', 0) + o.get('dy', 0)})"
+        if not (o.get("container") or o.get("body")):
+            return (f"the {o.get('name')} at {where} can't be opened: only "
+                    "containers, bodies and doors open")
+        if dist > 1:
+            return (f"the {o.get('name')} is {dist} tiles away at {where}; you "
+                    "must stand right next to it to open it")
+        return ""
+    if "door" in nm:
+        doors = state.get("doors") or []
+        if doors:
+            d = min(doors, key=lambda d: max(abs(d.get("dx", 0)), abs(d.get("dy", 0))))
+            dist = max(abs(d.get("dx", 0)), abs(d.get("dy", 0)))
+            if dist > 1:
+                return (f"the nearest door is {dist} tiles away; you must stand "
+                        "right next to a door to open it")
+    return ""
+
+
 _LOCAL_MAP_LEGEND = {
     "@": "you",
     "C": "a companion in your party",
@@ -2554,8 +2585,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             session["hint_ttl"] -= 1
             if session["hint_ttl"] <= 0:
                 session.pop("hint", None)
+        # One-shot: shown on the turn after it was set, then gone.
         if session.get("last_bump"):
-            alert_parts.append(session["last_bump"])
+            alert_parts.append(session.pop("last_bump"))
         # Periodically remind the agent to refresh its running plot summary so
         # 'story_so_far' stays current (it's the always-in-context memory; detail
         # is in recall/quests tools). Every ~15 turns.
@@ -4484,7 +4516,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # dx/dy->tile normalizer already ran on _orig via parse-time aliasing.
         if getattr(args, "no_guards", False) and isinstance(_orig_action, dict):
             _ot = _orig_action.get("type")
-            if _ot and _ot not in ("look",):   # look is driver-only -> keep guard's handling
+            if _ot == "look":
+                # look was already handled (scene description for next turn);
+                # don't let a guard substitute its own action for it.
+                action = {"type": "wait", "_counted": True}
+                reason = _orig_reason or "(looked around)"
+            elif _ot:
                 action = dict(_orig_action)
                 reason = _orig_reason or "(raw model action; guards off)"
         # SAFETY NET: a driver-only pseudo-action (e.g. "look", which the
@@ -4510,6 +4547,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # arrived:true, so a repeated goto to the SAME reached target next turn is
     # recognized as a no-op loop and routed to 'look' (redundant-arrival
     # normalizer). Cleared when we do something other than re-arrive/look.
+    if _atype == "goto" and isinstance(result, dict) and result.get("ok") \
+            and result.get("tx") is not None:
+        session["goto_target"] = (result.get("toward_tx", result["tx"]),
+                                  result.get("toward_ty", result["ty"]),
+                                  action.get("name") or "")
     if _atype == "goto" and isinstance(result, dict) and result.get("arrived"):
         _atgt = action.get("name") or f"({action.get('tx')},{action.get('ty')})"
         session["last_goto_arrived_target"] = str(_atgt)
@@ -4597,8 +4639,6 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         d = action.get("dir", "")
         session["last_bump"] = f"Your last move {d} was BLOCKED - something (a wall/obstacle) is that way. Try a different direction or use goto to route around it."
         kb.record_action(f"bumped a wall moving {d}")
-    else:
-        session.pop("last_bump", None)
 
     # Log meaningful actions (not routine moves/waits) to the short action
     # history so the agent can avoid repeating itself. Record the OUTCOME, not
@@ -4631,6 +4671,10 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             else:
                 _e = result.get("error", "") if isinstance(result, dict) else ""
                 outcome = f" -> could not open: {_e}" if _e else " -> nothing to open here"
+                _why = _explain_open_failure(state, action)
+                if _why:
+                    outcome += f" ({_why})"
+                    session["last_bump"] = _why
         elif atype == "loot":
             if _ok:
                 looted_str = result.get("looted") if isinstance(result, dict) else None
@@ -4917,7 +4961,7 @@ def _write_overlay(path: str, step: int, action: dict, reason: str,
 
 
 
-def _wait_for_arrival(exult, window, kb, args, step) -> None:
+def _wait_for_arrival(exult, window, kb, args, step, session=None) -> None:
     """After a goto starts a walk, poll the game (NO LLM call) until the avatar
     ARRIVES, stops, or times out - so a whole multi-tile journey costs ONE LLM
     turn instead of one per tile. Only engine ticks are consumed; the video
@@ -4959,7 +5003,23 @@ def _wait_for_arrival(exult, window, kb, args, step) -> None:
         if p.get("tx") is not None and kb is not None:
             kb.record_visit(p.get("tx", 0), p.get("ty", 0))
     except Exception:
-        pass
+        p = {}
+    # Tell the model if the walk ended short of the target. The engine's goto
+    # says ok when it STARTS a walk, so without this a target with no open path
+    # (inside a closed building, behind a wall) looks like a success.
+    _tgt = session.pop("goto_target", None) if session is not None else None
+    if _tgt and p.get("tx") is not None:
+        _gx, _gy, _gname = _tgt
+        _d = max(abs(_gx - p["tx"]), abs(_gy - p["ty"]))
+        _prec = kb.place_rec(_gname) if (kb is not None and _gname) else None
+        if _d > (_arrival_radius(_prec.get("kind")) if _prec else 1):
+            _what = f"the {_gname}" if _gname else f"({_gx},{_gy})"
+            session["last_bump"] = (
+                f"Your goto did NOT reach {_what}: you stopped at "
+                f"({p['tx']},{p['ty']}), {_d} tiles from ({_gx},{_gy}). There may "
+                "be no open path to it - e.g. it is inside a closed building or "
+                "behind a wall. Look for a door into that area (local_map can "
+                "help), rather than repeating the same goto.")
 
 
 
@@ -5011,7 +5071,7 @@ def run_loop(args, window: "ThoughtsWindow", ollama, exult_proc=None) -> None:
                 # turns/context for strategy. Video keeps flowing (engine ticks);
                 # only LLM turns are saved.
                 if session.get("last_action_type") in ("goto", "move"):
-                    _wait_for_arrival(exult, window, kb, args, step)
+                    _wait_for_arrival(exult, window, kb, args, step, session)
                 if args.memory_file and step % 5 == 0:
                     kb.save(args.memory_file)
                 # Periodically save the GAME so progress survives a crash/close.
