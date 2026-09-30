@@ -1811,7 +1811,7 @@ def _tiles(d: int) -> str:
     return f" ({d} tile{'s' if d != 1 else ''})"
 
 
-def _examine_view(state: dict, name: str) -> dict:
+def _examine_view(state: dict, name: str, exult=None) -> dict:
     """A close look at one visible thing or person: what it is, whether it
     opens, and what lies within a few tiles of it."""
     pp = state.get("player") or {}
@@ -1828,6 +1828,7 @@ def _examine_view(state: dict, name: str) -> dict:
                         + ", ".join(seen[:25])}
     t = min(matches, key=lambda t: max(abs(t.get("dx", 99)), abs(t.get("dy", 99))))
     tdx, tdy = t.get("dx", 0), t.get("dy", 0)
+    it_says = ""
     if t["_kind"] == "person":
         what = "a dead person" if t.get("dead") else "a person or creature"
     elif t.get("body"):
@@ -1838,9 +1839,26 @@ def _examine_view(state: dict, name: str) -> dict:
         what = "a container you can open"
     elif any(w in t["name"].lower() for w in _READABLE_WORDS):
         d = max(abs(tdx), abs(tdy))
-        what = (f"something with writing on it - use read {{\"name\":\"{t['name']}\"}} "
-                "to see what it says" + (" (you're close enough now)" if d <= 4
-                                         else " (get within 4 tiles first)"))
+        what = "something with writing on it"
+        # Looking closely at a sign means reading it: include the text (the
+        # game's read works within 4 tiles). The model reliably walks up to a
+        # sign "to read it" but then doesn't call read.
+        blank = False
+        if exult is not None and d <= 4:
+            try:
+                r = exult.act({"type": "read", "name": t["name"]})
+                if isinstance(r, dict) and r.get("ok"):
+                    it_says = (r.get("text") or "").strip()
+                    blank = not it_says
+            except Exception:
+                pass
+        if blank:
+            # Shop signs are pictures (a horse over the stables door): there
+            # is nothing to read, and the model kept walking back to try.
+            what = "a sign with no writing on it (just a picture) - nothing to read"
+        elif not it_says:
+            what += (f" - use read {{\"name\":\"{t['name']}\"}} to see what it says"
+                     + ("" if d <= 4 else " (get within 4 tiles first)"))
     else:
         what = "an object; it has nothing inside to open"
     near = []
@@ -1860,6 +1878,7 @@ def _examine_view(state: dict, name: str) -> dict:
         "at": [px + tdx, py + tdy],
         "from_you": f"{_tiles(max(abs(tdx), abs(tdy))).strip(' ()')} {_dir_word(tdx, tdy)}",
         "what_it_is": what,
+        **({"it_says": it_says} if it_says else {}),
         "right_around_it": [e[1] for e in near[:12]] or ["nothing notable"],
     }
 
@@ -2994,7 +3013,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 # Say it plainly: a silent goto->look left the model unaware
                 # its goto did nothing, so it kept re-issuing it. If the target
                 # is something visible, hand over the close look it wanted.
-                _ex = _examine_view(state, str(action.get("name") or ""))
+                _ex = _examine_view(state, str(action.get("name") or ""), exult)
                 if _ex.get("found"):
                     session["examined"] = _ex
                 session["last_bump"] = (
@@ -3310,7 +3329,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # always there); when asked for, it comes with its legend + how to read it.
     if isinstance(action, dict) and action.get("type") == "examine":
         _nm = str(action.get("name") or action.get("target") or "").strip()
-        session["examined"] = _examine_view(state, _nm)
+        session["examined"] = _examine_view(state, _nm, exult)
         kb.record_action(f"examined {_nm}")
         if window.available:
             window.set_action(f"[examine] {_nm}")
@@ -4723,7 +4742,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # Walking up to a visible thing is how the model tries to look at it
         # ("go to the victim to examine it"); goto alone teaches nothing, so
         # hand over the close look right away.
-        _ex = _examine_view(state, action["name"])
+        _ex = _examine_view(state, action["name"], exult)
         if _ex.get("found"):
             _ex.pop("from_you", None)   # state is from before the walk
             session["examined"] = _ex
@@ -5199,7 +5218,7 @@ def _wait_for_arrival(exult, window, kb, args, step, session=None) -> None:
             # Ended beside a visible thing (arrived, or a tile or two short):
             # give the close look the walk was for.
             try:
-                _ex = _examine_view(exult.observe(), _gname)
+                _ex = _examine_view(exult.observe(), _gname, exult)
                 if _ex.get("found"):
                     session["examined"] = _ex
             except Exception:
