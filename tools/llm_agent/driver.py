@@ -2898,9 +2898,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # cool the LLM box when it runs hot (spaces out the GPU-heavy inference
         # calls). Default 0 (no effect); live-adjustable 1-1000 ms via the
         # inspector "throttle ms" control.
-        if window is not None and hasattr(window, "get_throttle_ms"):
+        if True:
             try:
-                _throttle = window.get_throttle_ms()
+                _throttle = (window.get_throttle_ms()
+                             if window is not None and hasattr(window, "get_throttle_ms")
+                             else getattr(args, "throttle_ms", 0))
                 if _throttle and _throttle > 0:
                     time.sleep(min(int(_throttle), 5000) / 1000.0)
             except Exception:
@@ -5331,6 +5333,9 @@ def main() -> int:
                          "machine (e.g. a Windows box) can watch all agent data")
     ap.add_argument("--inspector-port", type=int, default=8092,
                     help="port for the remote inspector (default 8092)")
+    ap.add_argument("--throttle-ms", type=int, default=0,
+                    help="pause before each LLM call to let the GPU cool (0-5000 ms; "
+                         "the inspector's throttle control starts at this value)")
     ap.add_argument("--inspector-host", default="0.0.0.0",
                     help="bind address for the remote inspector (default all interfaces)")
     ap.add_argument("--screenshot", action="store_true",
@@ -5439,6 +5444,8 @@ def main() -> int:
         from inspector_server import InspectorServer
         window = InspectorServer(host=args.inspector_host, port=args.inspector_port)
         window.start()
+        if args.throttle_ms:
+            window._remote_throttle(args.throttle_ms)
         run_loop(args, window, ollama)
     else:
         window = ThoughtsWindow()
