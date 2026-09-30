@@ -821,6 +821,12 @@ def _dir_word(dx: int, dy: int) -> str:
 # standing outside its closed door, converting every goto into a no-op look.
 _ARRIVAL_RADIUS = 2
 
+# Height of one storey in lift units (Exult's floor = lift / 5). Anything less
+# is standing on straw, a step or a floorboard - NOT "up high". Calling tz 1
+# "on a wall-top" sent the model into 40 turns of trying to descend while it
+# stood on the key it had just walked to.
+_STOREY = 5
+
 
 # Mass nouns / already-plural that read wrong with "A " (a hay -> just "hay").
 _NO_ARTICLE = ("hay", "straw", "water", "gold", "grass", "sand", "equipment",
@@ -857,7 +863,7 @@ def describe_room(state: dict, place: str = "") -> str:
     # 1) Where you are.
     if place:
         sentences.append(f"You are in {place}.")
-    elif (p.get("tz", 0) or 0) > 0:
+    elif (p.get("tz", 0) or 0) >= _STOREY:
         sentences.append("You are up high, on a wall-top or upper floor.")
     else:
         sentences.append("You are outdoors." if not objs else "You look around.")
@@ -927,7 +933,9 @@ def describe_room(state: dict, place: str = "") -> str:
         d = _dir_word(o.get("dx", 0), o.get("dy", 0))
         add_obj(f"{_article(o['name']).capitalize()} is to the {d}.")
 
-    return " ".join(sentences)
+    # _dir_word() gives "right here" for your own tile; "to the right here"
+    # reads like a direction.
+    return " ".join(sentences).replace(" to the right here", " right here, at your feet")
 
 
 def _reachable_offsets(state: dict):
@@ -1161,12 +1169,12 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     # are at ground" note keeps the concept salient and primes the model to
     # hallucinate being "on a wall". Teach it live, only when it is true.
     _tz = (p.get("tz", 0) or 0)
-    if _tz != 0:
+    if abs(_tz) >= _STOREY:
         view["player"]["elevation"] = _tz
         view["player"]["level"] = (
             f"up high (elevation {_tz}); to come down, goto a ground tile or "
             "known place"
-            if _tz > 0 else
+            if _tz >= _STOREY else
             f"underground (elevation {_tz}); go up to reach the surface")
 
     # Advisory: how many recent turns pursued the SAME goal. Surfacing this lets
@@ -2970,6 +2978,18 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                         and abs(action.get("ty", _py) - _py) <= 1)
             _arrived_here = (session.get("last_goto_arrived_target") == str(_tgt))
             if _at_tile or _arrived_here:
+                # Say it plainly: a silent goto->look left the model unaware
+                # its goto did nothing, so it kept re-issuing it. If the target
+                # is something visible, hand over the close look it wanted.
+                _ex = _examine_view(state, str(action.get("name") or ""))
+                if _ex.get("found"):
+                    session["examined"] = _ex
+                session["last_bump"] = (
+                    f"You are ALREADY at {_tgt} - goto does nothing here. "
+                    + ("A close look at it is under \"examined\". "
+                       if _ex.get("found") else "")
+                    + "Act on what is here (take/open/talk/read), or goto a "
+                    "DIFFERENT place.")
                 _looked = session.get("looked_at_target")
                 if _looked == str(_tgt):
                     # Already looked here last turn too - this spot is examined;
@@ -5159,7 +5179,13 @@ def _wait_for_arrival(exult, window, kb, args, step, session=None) -> None:
             # sending the model off to find a way in.
             session["last_bump"] = (
                 f"You are {_d} tiles from {_what} - as close as you can get to "
-                "it. You don't need to be closer to look at it: use examine.")
+                "it. A close look at it is under \"examined\".")
+            try:
+                _ex = _examine_view(exult.observe(), _gname)
+                if _ex.get("found"):
+                    session["examined"] = _ex
+            except Exception:
+                pass
         elif _d > (_ARRIVAL_RADIUS if _prec else 2):
             session["last_bump"] = (
                 f"Your goto did NOT reach {_what}: you stopped at "
