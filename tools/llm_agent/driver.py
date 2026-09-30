@@ -4707,6 +4707,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         session["goto_target"] = (result.get("toward_tx", result["tx"]),
                                   result.get("toward_ty", result["ty"]),
                                   action.get("name") or "")
+    if (_atype == "goto" and isinstance(result, dict) and result.get("arrived")
+            and action.get("name")):
+        # Walking up to a visible thing is how the model tries to look at it
+        # ("go to the victim to examine it"); goto alone teaches nothing, so
+        # hand over the close look right away.
+        _ex = _examine_view(state, action["name"])
+        if _ex.get("found"):
+            _ex.pop("from_you", None)   # state is from before the walk
+            session["examined"] = _ex
     if _atype == "goto" and isinstance(result, dict) and result.get("arrived"):
         _atgt = action.get("name") or f"({action.get('tx')},{action.get('ty')})"
         session["last_goto_arrived_target"] = str(_atgt)
