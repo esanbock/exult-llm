@@ -500,6 +500,10 @@ TIME: the game clock advances; NPCs follow schedules (sleeping at night, working
   map     - Town-scale overview: your position, explored area (fog-of-war), and
             labeled landmarks. params: none. Orient toward unexplored areas or
             known landmarks.
+  examine - Look closely at ONE thing or person you can see: what it is, whether
+            it can be opened, and what lies right around it. params:
+            {"name":"<thing>"}. Shown next turn as "examined". Works from a
+            distance - you don't need to walk up to it first.
   local_map - Top-down character map of the tiles right around you, at YOUR
             height, with a legend and how to read it. params: none. Shown next
             turn as "local_map". Use it when you can't work out how to get
@@ -926,7 +930,27 @@ def describe_room(state: dict, place: str = "") -> str:
     return " ".join(sentences)
 
 
-def _recognize_place(objects: list, nearby: list) -> str:
+def _reachable_offsets(state: dict):
+    """(dx,dy) offsets the avatar can walk to, from the engine grid's flood
+    fill ('.' cells; a closed door stops it). None if there's no grid."""
+    rows = (state.get("grid") or "").split("\n") if state else []
+    if not rows or not rows[0]:
+        return None
+    ry, rx = len(rows) // 2, len(rows[0]) // 2
+    return {(x - rx, y - ry) for y, row in enumerate(rows)
+            for x, ch in enumerate(row) if ch in ".@"}
+
+
+def _in_your_space(it: dict, reach) -> bool:
+    """True if the object sits in the space you can walk to: its tile, or a
+    tile next to it, is reachable. Hay behind a closed door or a wall is not."""
+    if reach is None:
+        return True
+    dx, dy = it.get("dx", 99), it.get("dy", 99)
+    return any((dx + i, dy + j) in reach for i in (-1, 0, 1) for j in (-1, 0, 1))
+
+
+def _recognize_place(objects: list, nearby: list, state: dict = None) -> str:
     """Give the LLM the 'sense of place' a human gets at a glance. The engine
     sends a flat object list with coordinates but no synthesis, so the model
     can't tell it is standing IN a stable (hay, stalls, pitchfork, a horse) vs
@@ -935,10 +959,15 @@ def _recognize_place(objects: list, nearby: list) -> str:
     knows it has arrived and can stop re-navigating to a place it is already in.
     Returns a short phrase like "the STABLES" or "a dwelling", or "" if unclear.
     """
+    # Only what's in the space you can walk to, so standing OUTSIDE a closed
+    # stable door (hay 5 tiles away, through the wall) isn't "in the stables".
+    reach = _reachable_offsets(state) if state else None
+
     def close(items):
         names = []
         for it in items or []:
-            if abs(it.get("dx", 99)) + abs(it.get("dy", 99)) <= 8:
+            if (abs(it.get("dx", 99)) + abs(it.get("dy", 99)) <= 8
+                    and _in_your_space(it, reach)):
                 nm = (it.get("name") or "").lower()
                 if nm:
                     names.append(nm)
@@ -1033,12 +1062,12 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         # Synthesized "sense of place" from nearby object clusters (a human sees
         # hay+stalls+horse and knows it's a stable; the flat object list doesn't
         # convey that). Only when NOT mid-conversation, to avoid clutter.
-        **({"you_appear_to_be_in": _recognize_place(objects, nearby)}
-           if (not in_convo and _recognize_place(objects, nearby)) else {}),
+        **({"you_appear_to_be_in": _recognize_place(objects, nearby, state)}
+           if (not in_convo and _recognize_place(objects, nearby, state)) else {}),
         # Zork-style narrated room description (LLMs read prose far better than a
         # coordinate table): where you are + people + actionable objects and
         # their state. Grounded in real fields; scenery de-prioritized.
-        **({"room_description": describe_room(state, _recognize_place(objects, nearby))}
+        **({"room_description": describe_room(state, _recognize_place(objects, nearby, state))}
            if not in_convo else {}),
         "conversation_in_progress": in_convo,
         "conversation_active": state.get("conversation_active"),
@@ -1359,6 +1388,15 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
                                    "climbing stairs. Use the 'map' tool only for a "
                                    "visual overview of explored vs unexplored areas."),
                 }
+                # Also "at" a known place when what you can see and walk to
+                # says you're in it (e.g. inside the stables, 9 tiles from the
+                # one tile remembered for it).
+                _seen_in = _recognize_place(state.get("objects") or [],
+                                            state.get("nearby") or [], state).lower()
+                if _seen_in:
+                    _at_now += [n["name"] for n in _nav
+                                if n.get("name") and n["name"] not in _at_now
+                                and n["name"].lower() in _seen_in]
                 if _at_now:
                     nav["you_are_ALREADY_AT"] = _at_now
                     nav["arrival_directive"] = (
@@ -1466,6 +1504,9 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
     if state.get("area_map") is not None:
         # Town-scale explored-area overview the agent requested via the map tool.
         view["area_map"] = state["area_map"]
+    if state.get("examined") is not None:
+        # Close look at one thing the agent asked to examine.
+        view["examined"] = state["examined"]
     if state.get("local_map") is not None:
         # Local z-slice grid the agent requested via the local_map tool.
         view["local_map"] = state["local_map"]
@@ -1727,6 +1768,58 @@ def _explain_open_failure(state: dict, action: dict) -> str:
                 return (f"the nearest door is {dist} tiles away; you must stand "
                         "right next to a door to open it")
     return ""
+
+
+def _tiles(d: int) -> str:
+    return f" ({d} tile{'s' if d != 1 else ''})"
+
+
+def _examine_view(state: dict, name: str) -> dict:
+    """A close look at one visible thing or person: what it is, whether it
+    opens, and what lies within a few tiles of it."""
+    pp = state.get("player") or {}
+    px, py = pp.get("tx", 0), pp.get("ty", 0)
+    things = [dict(o, _kind="object") for o in (state.get("objects") or [])]
+    things += [dict(n, _kind="person") for n in (state.get("nearby") or [])]
+    nm = name.lower()
+    matches = [t for t in things if (t.get("name") or "").lower()
+               and (nm in t["name"].lower() or t["name"].lower() in nm)]
+    if not nm or not matches:
+        seen = sorted({t.get("name") for t in things if t.get("name")})
+        return {"found": False, "name": name,
+                "note": f"You can't see '{name}' right now. Things you can see: "
+                        + ", ".join(seen[:25])}
+    t = min(matches, key=lambda t: max(abs(t.get("dx", 99)), abs(t.get("dy", 99))))
+    tdx, tdy = t.get("dx", 0), t.get("dy", 0)
+    if t["_kind"] == "person":
+        what = "a dead person" if t.get("dead") else "a person or creature"
+    elif t.get("body"):
+        what = "a body you can open to see what it carries"
+    elif t.get("corpse"):
+        what = "a body with nothing on it to take"
+    elif t.get("container"):
+        what = "a container you can open"
+    else:
+        what = "an object; it has nothing inside to open"
+    near = []
+    for o in things:
+        if o is t or not o.get("name"):
+            continue
+        ox, oy = o.get("dx", 0) - tdx, o.get("dy", 0) - tdy
+        d = max(abs(ox), abs(oy))
+        if d <= 4:
+            near.append((d, f"{o['name']} {_dir_word(ox, oy) if d else 'on the same spot'}"
+                            f"{_tiles(d) if d else ''} at "
+                            f"({px + o.get('dx', 0)},{py + o.get('dy', 0)})"))
+    near.sort(key=lambda e: e[0])
+    return {
+        "found": True,
+        "name": t["name"],
+        "at": [px + tdx, py + tdy],
+        "from_you": f"{_tiles(max(abs(tdx), abs(tdy))).strip(' ()')} {_dir_word(tdx, tdy)}",
+        "what_it_is": what,
+        "right_around_it": [e[1] for e in near[:12]] or ["nothing notable"],
+    }
 
 
 _LOCAL_MAP_LEGEND = {
@@ -2129,7 +2222,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             try:
                 _objs = state.get("objects") or []
                 _nb = state.get("nearby") or []
-                window.set_room(describe_room(state, _recognize_place(_objs, _nb)))
+                window.set_room(describe_room(state, _recognize_place(_objs, _nb, state)))
             except Exception:
                 pass
         # Inspector panels: quests, NPC knowledge, and stats.
@@ -2668,6 +2761,9 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _lm = session.pop("local_map", None)
         if _lm is not None:
             state["local_map"] = _lm
+        _ex = session.pop("examined", None)
+        if _ex is not None:
+            state["examined"] = _ex
         # Time/progress awareness: give the model the turn number and how many
         # recent turns it has pursued the SAME goal, so it can notice it is
         # stuck in a cycle and change tack (self-sufficiency, not steering).
@@ -2816,9 +2912,12 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 _pos = ([_prec.get("tx"), _prec.get("ty")] if _prec
                         else kb.npc_last_pos(_gn))
                 _pp = state.get("player") or {}
+                _seen_in = _recognize_place(state.get("objects") or [],
+                                            state.get("nearby") or [], state).lower()
                 if (_prec and _prec.get("tx") is not None and _pp.get("tx") is not None
-                        and max(abs(_prec["tx"] - _pp["tx"]), abs(_prec["ty"] - _pp["ty"]))
-                            <= _ARRIVAL_RADIUS):
+                        and (max(abs(_prec["tx"] - _pp["tx"]), abs(_prec["ty"] - _pp["ty"]))
+                             <= _ARRIVAL_RADIUS
+                             or (_seen_in and (_prec.get("name") or "").lower() in _seen_in))):
                     # Already INSIDE this place: a goto would just walk to its
                     # centroid and back. Hand it to the redundant-arrival
                     # normalizer below as "arrived", which turns it into a look.
@@ -3152,6 +3251,17 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # LOCAL_MAP tool: the engine's z-slice grid around the avatar, on demand.
     # Not part of the always-on prompt (models read ASCII maps poorly when it's
     # always there); when asked for, it comes with its legend + how to read it.
+    if isinstance(action, dict) and action.get("type") == "examine":
+        _nm = str(action.get("name") or action.get("target") or "").strip()
+        session["examined"] = _examine_view(state, _nm)
+        kb.record_action(f"examined {_nm}")
+        if window.available:
+            window.set_action(f"[examine] {_nm}")
+        print(f"[{step:03d}] examine {_nm}: found={session['examined'].get('found')}")
+        kb.record_tool("examine", bool(session["examined"].get("found")))
+        action = {"type": "wait", "_counted": True}
+        reason = f"(examined {_nm})"
+
     if isinstance(action, dict) and action.get("type") == "local_map":
         session["local_map"] = _local_map_view(state)
         kb.record_action("checked the local map")
