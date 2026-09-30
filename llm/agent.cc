@@ -701,6 +701,10 @@ namespace LLM_agent {
 		os << ',' << json_bool("in_combat", gwin->in_combat());
 		os << ',' << json_bool("moving", gwin->is_moving());
 		os << ',' << json_bool("in_dungeon", gwin->is_in_dungeon() != 0);
+		// Under a roof: the same test Exult uses to hide roofs when you walk
+		// into a building. Lets the agent tell inside a building from just
+		// outside its door.
+		os << ',' << json_bool("indoors", gwin->is_main_actor_inside());
 		// A container/body gump (or menu) is open, which blocks movement until
 		// you take what you want and "close" it.
 		{

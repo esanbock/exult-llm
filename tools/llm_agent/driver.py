@@ -941,6 +941,28 @@ def _reachable_offsets(state: dict):
             for x, ch in enumerate(row) if ch in ".@"}
 
 
+def _building_youre_in(state: dict, kb) -> str:
+    """The known building you're inside, or "". Uses the engine's "indoors"
+    (a roof overhead - how Exult decides to hide roofs), so standing just
+    outside a door never counts. A building is remembered as one tile, so pick
+    the nearest known building within a building's size of you."""
+    if not state.get("indoors") or kb is None:
+        return ""
+    pp = state.get("player") or {}
+    px, py = pp.get("tx", 0), pp.get("ty", 0)
+    best = None
+    for r in kb.places.values():
+        if (r.get("kind") or "").lower() not in ("building", "home", "shop",
+                                                   "temple", "inn"):
+            continue
+        if r.get("tx") is None or not r.get("name"):
+            continue
+        d = max(abs(r["tx"] - px), abs(r["ty"] - py))
+        if d <= 15 and (best is None or d < best[0]):
+            best = (d, r["name"])
+    return best[1] if best else ""
+
+
 def _in_your_space(it: dict, reach) -> bool:
     """True if the object sits in the space you can walk to: its tile, or a
     tile next to it, is reachable. Hay behind a closed door or a wall is not."""
@@ -1393,10 +1415,11 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
                 # one tile remembered for it).
                 _seen_in = _recognize_place(state.get("objects") or [],
                                             state.get("nearby") or [], state).lower()
-                if _seen_in:
-                    _at_now += [n["name"] for n in _nav
-                                if n.get("name") and n["name"] not in _at_now
-                                and n["name"].lower() in _seen_in]
+                _inside = {_building_youre_in(state, kb).lower()} - {""}
+                _at_now += [n["name"] for n in _nav
+                            if n.get("name") and n["name"] not in _at_now
+                            and ((_seen_in and n["name"].lower() in _seen_in)
+                                 or n["name"].lower() in _inside)]
                 if _at_now:
                     nav["you_are_ALREADY_AT"] = _at_now
                     nav["arrival_directive"] = (
@@ -2917,7 +2940,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 if (_prec and _prec.get("tx") is not None and _pp.get("tx") is not None
                         and (max(abs(_prec["tx"] - _pp["tx"]), abs(_prec["ty"] - _pp["ty"]))
                              <= _ARRIVAL_RADIUS
-                             or (_seen_in and (_prec.get("name") or "").lower() in _seen_in))):
+                             or (_seen_in and (_prec.get("name") or "").lower() in _seen_in)
+                             or _prec.get("name") == _building_youre_in(state, kb))):
                     # Already INSIDE this place: a goto would just walk to its
                     # centroid and back. Hand it to the redundant-arrival
                     # normalizer below as "arrived", which turns it into a look.
@@ -5128,8 +5152,15 @@ def _wait_for_arrival(exult, window, kb, args, step, session=None) -> None:
         _gx, _gy, _gname = _tgt
         _d = max(abs(_gx - p["tx"]), abs(_gy - p["ty"]))
         _prec = kb.place_rec(_gname) if (kb is not None and _gname) else None
-        if _d > (_ARRIVAL_RADIUS if _prec else 1):
-            _what = f"the {_gname}" if _gname else f"({_gx},{_gy})"
+        _what = f"the {_gname}" if _gname else f"({_gx},{_gy})"
+        if not _prec and 1 < _d <= 2:
+            # Blocked from the last step or two (it's inside a stall, on a
+            # table...). That's as close as it gets - say so, rather than
+            # sending the model off to find a way in.
+            session["last_bump"] = (
+                f"You are {_d} tiles from {_what} - as close as you can get to "
+                "it. You don't need to be closer to look at it: use examine.")
+        elif _d > (_ARRIVAL_RADIUS if _prec else 2):
             session["last_bump"] = (
                 f"Your goto did NOT reach {_what}: you stopped at "
                 f"({p['tx']},{p['ty']}), {_d} tiles from ({_gx},{_gy}). There may "
