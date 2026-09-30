@@ -810,15 +810,12 @@ def _dir_word(dx: int, dy: int) -> str:
     return (ns + ew) or "right here"
 
 
-# A remembered place is ONE tile (usually the centroid of the objects that
-# identified it), but a building/area is a REGION. Standing anywhere inside it
-# counts as being there - otherwise the agent 9 tiles from the stables' centroid
-# (but inside the stables) keeps goto-ing "stables" forever.
-_REGION_KINDS = {"building", "area", "home", "shop", "temple", "inn"}
-
-
-def _arrival_radius(kind: str) -> int:
-    return 10 if (kind or "").lower() in _REGION_KINDS else 2
+# How close (Chebyshev tiles) to a remembered place's tile counts as being
+# there. Deliberately small: a place is one tile (often the centroid of what
+# identified it), and a bigger radius around a building can't tell inside from
+# outside - a 10-tile radius left the agent "already at the stables" while
+# standing outside its closed door, converting every goto into a no-op look.
+_ARRIVAL_RADIUS = 2
 
 
 # Mass nouns / already-plural that read wrong with "A " (a hay -> just "hay").
@@ -1352,7 +1349,7 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
                 _at_now = [n["name"] for n in _nav
                            if n.get("name") and n.get("tile")
                            and max(abs(n["tile"][0] - _hx), abs(n["tile"][1] - _hy))
-                               <= _arrival_radius(n.get("kind"))]
+                               <= _ARRIVAL_RADIUS]
                 nav = {
                     "you_are_at": [_pp_nav.get("tx", 0), _pp_nav.get("ty", 0)],
                     "known_places_nearest_first": _nav,
@@ -2397,6 +2394,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             if _done:
                 kb.reset_talk_gate()
 
+    _orig_action, _orig_reason = None, None   # set once the model replies
     if args.dry_run:
         reason, action = scripted_reply(step, state)
     else:
@@ -2820,7 +2818,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 _pp = state.get("player") or {}
                 if (_prec and _prec.get("tx") is not None and _pp.get("tx") is not None
                         and max(abs(_prec["tx"] - _pp["tx"]), abs(_prec["ty"] - _pp["ty"]))
-                            <= _arrival_radius(_prec.get("kind"))):
+                            <= _ARRIVAL_RADIUS):
                     # Already INSIDE this place: a goto would just walk to its
                     # centroid and back. Hand it to the redundant-arrival
                     # normalizer below as "arrived", which turns it into a look.
@@ -4476,6 +4474,21 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         else:
             session["goto_stall"] = 0
 
+    # --no-guards: restore the model's OWN action, discarding any guard
+    # override this turn, to test raw model behavior. Runs BEFORE the talk
+    # dispatch below, which otherwise let guards that turn an action into a
+    # talk (greet-new-person, stuck-near-NPC) slip through.
+    if getattr(args, "no_guards", False) and isinstance(_orig_action, dict):
+        _ot = _orig_action.get("type")
+        if _ot == "look":
+            # look was already handled (scene description for next turn);
+            # don't let a guard substitute its own action for it.
+            action = {"type": "wait", "_counted": True}
+            reason = _orig_reason or "(looked around)"
+        elif _ot:
+            action = dict(_orig_action)
+            reason = _orig_reason or "(raw model action; guards off)"
+
     # "talk" is a top-level command, not an act() action.
     if isinstance(action, dict) and action.get("type") == "talk":
         tname = action.get("name", "")
@@ -4510,20 +4523,6 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 # Remember the subject we just asked about, so the NPC's reply
                 # next turn gets filed under this topic in the shared topic KB.
                 session["current_topic"] = _ans[_i]
-        # --no-guards: restore the model's OWN action, discarding any guard
-        # override this turn, to test raw model behavior. We keep it only if the
-        # original was a real engine action (not a driver-only pseudo type); the
-        # dx/dy->tile normalizer already ran on _orig via parse-time aliasing.
-        if getattr(args, "no_guards", False) and isinstance(_orig_action, dict):
-            _ot = _orig_action.get("type")
-            if _ot == "look":
-                # look was already handled (scene description for next turn);
-                # don't let a guard substitute its own action for it.
-                action = {"type": "wait", "_counted": True}
-                reason = _orig_reason or "(looked around)"
-            elif _ot:
-                action = dict(_orig_action)
-                reason = _orig_reason or "(raw model action; guards off)"
         # SAFETY NET: a driver-only pseudo-action (e.g. "look", which the
         # look-handler EARLIER in the turn normally converts, but a later guard
         # can re-introduce) must never reach the engine as 'unknown action
@@ -4639,6 +4638,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         d = action.get("dir", "")
         session["last_bump"] = f"Your last move {d} was BLOCKED - something (a wall/obstacle) is that way. Try a different direction or use goto to route around it."
         kb.record_action(f"bumped a wall moving {d}")
+    elif isinstance(result, dict) and result.get("ok") is False and result.get("error"):
+        # Any failed action: show the game's own error next turn. Without this
+        # a failed goto/move only logged "no progress", so the model never saw
+        # "not on your map" or "the NPC is still speaking - reply continue"
+        # and repeated the same action for dozens of turns.
+        _at = action.get("type") if isinstance(action, dict) else "action"
+        session["last_bump"] = f"Your last action ({_at}) FAILED: {result['error']}"
 
     # Log meaningful actions (not routine moves/waits) to the short action
     # history so the agent can avoid repeating itself. Record the OUTCOME, not
@@ -4674,7 +4680,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 _why = _explain_open_failure(state, action)
                 if _why:
                     outcome += f" ({_why})"
-                    session["last_bump"] = _why
+                    session["last_bump"] = (session.get("last_bump", "") + f" ({_why})").strip()
         elif atype == "loot":
             if _ok:
                 looted_str = result.get("looted") if isinstance(result, dict) else None
@@ -5012,7 +5018,7 @@ def _wait_for_arrival(exult, window, kb, args, step, session=None) -> None:
         _gx, _gy, _gname = _tgt
         _d = max(abs(_gx - p["tx"]), abs(_gy - p["ty"]))
         _prec = kb.place_rec(_gname) if (kb is not None and _gname) else None
-        if _d > (_arrival_radius(_prec.get("kind")) if _prec else 1):
+        if _d > (_ARRIVAL_RADIUS if _prec else 1):
             _what = f"the {_gname}" if _gname else f"({_gx},{_gy})"
             session["last_bump"] = (
                 f"Your goto did NOT reach {_what}: you stopped at "
