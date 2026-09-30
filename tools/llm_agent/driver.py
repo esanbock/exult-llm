@@ -1801,6 +1801,12 @@ def _explain_open_failure(state: dict, action: dict) -> str:
     return ""
 
 
+# Names the engine's read action treats as readable in the world (signs etc.)
+# plus the documents it can read from your pack.
+_READABLE_WORDS = ("sign", "plaque", "placard", "marker", "tombstone", "grave",
+                   "book", "scroll", "note", "letter", "journal", "diary")
+
+
 def _tiles(d: int) -> str:
     return f" ({d} tile{'s' if d != 1 else ''})"
 
@@ -1830,6 +1836,11 @@ def _examine_view(state: dict, name: str) -> dict:
         what = "a body with nothing on it to take"
     elif t.get("container"):
         what = "a container you can open"
+    elif any(w in t["name"].lower() for w in _READABLE_WORDS):
+        d = max(abs(tdx), abs(tdy))
+        what = (f"something with writing on it - use read {{\"name\":\"{t['name']}\"}} "
+                "to see what it says" + (" (you're close enough now)" if d <= 4
+                                         else " (get within 4 tiles first)"))
     else:
         what = "an object; it has nothing inside to open"
     near = []
@@ -5184,6 +5195,15 @@ def _wait_for_arrival(exult, window, kb, args, step, session=None) -> None:
         _d = max(abs(_gx - p["tx"]), abs(_gy - p["ty"]))
         _prec = kb.place_rec(_gname) if (kb is not None and _gname) else None
         _what = f"the {_gname}" if _gname else f"({_gx},{_gy})"
+        if not _prec and _gname and _d <= 2:
+            # Ended beside a visible thing (arrived, or a tile or two short):
+            # give the close look the walk was for.
+            try:
+                _ex = _examine_view(exult.observe(), _gname)
+                if _ex.get("found"):
+                    session["examined"] = _ex
+            except Exception:
+                pass
         if not _prec and 1 < _d <= 2:
             # Blocked from the last step or two (it's inside a stall, on a
             # table...). That's as close as it gets - say so, rather than
@@ -5191,12 +5211,6 @@ def _wait_for_arrival(exult, window, kb, args, step, session=None) -> None:
             session["last_bump"] = (
                 f"You are {_d} tiles from {_what} - as close as you can get to "
                 "it. A close look at it is under \"examined\".")
-            try:
-                _ex = _examine_view(exult.observe(), _gname)
-                if _ex.get("found"):
-                    session["examined"] = _ex
-            except Exception:
-                pass
         elif _d > (_ARRIVAL_RADIUS if _prec else 2):
             session["last_bump"] = (
                 f"Your goto did NOT reach {_what}: you stopped at "
