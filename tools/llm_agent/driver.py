@@ -5295,7 +5295,7 @@ def _wait_for_arrival(exult, window, kb, args, step, session=None) -> None:
         _prec = kb.place_rec(_gname) if (kb is not None and _gname) else None
         _what = f"the {_gname}" if _gname else f"({_gx},{_gy})"
         _z1 = p.get("tz", 0) or 0
-        if _z1 - _z0 >= 3 and _d <= 2:
+        if _z1 >= _STOREY and _z1 > _z0 and _d <= 2:
             # goto found the ground at the target blocked and settled for the
             # nearest place to stand - on TOP of the structure (a closed
             # gatehouse's wall-walk). Seen live: 30+ turns of gateway <-> stairs.
