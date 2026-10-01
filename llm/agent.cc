@@ -601,6 +601,7 @@ namespace LLM_agent {
 	std::string g_llm_last_sign_text;
 
 	string screenshot();    // fwd decl (defined after handle_request)
+	string talk_check(const string& name);    // fwd decl (defined below)
 
 	string observe() {
 		std::ostringstream os;
@@ -3166,6 +3167,10 @@ namespace LLM_agent {
 			// (blocking) conversation loop.
 			string name;
 			get_string(request_json, "name", name);
+			const string err = talk_check(name);
+			if (!err.empty()) {
+				return err;
+			}
 			return "@TALK@" + name;
 		}
 		if (cmd == "ping") {
@@ -3208,14 +3213,13 @@ namespace LLM_agent {
 		return "{\"ok\":false,\"error\":\"screenshot failed\"}";
 	}
 
-	bool begin_conversation(const string& name) {
+	// The person "talk" would address: name match (case-insensitive
+	// substring) if given, else the nearest living NPC. nullptr if none.
+	Actor* talk_target(const string& name) {
 		Game_window* gwin = Game_window::get_instance();
-		if (!gwin) {
-			return false;
-		}
-		Actor* av = gwin->get_main_actor();
+		Actor*       av   = gwin ? gwin->get_main_actor() : nullptr;
 		if (!av) {
-			return false;
+			return nullptr;
 		}
 		// Find the target NPC: matching name if given, else the nearest.
 		std::vector<Actor*> npcs;
@@ -3245,7 +3249,48 @@ namespace LLM_agent {
 				best   = npc;
 			}
 		}
-		if (!best) {
+		return best;
+	}
+
+	// Error reply for a talk whose person isn't here, or "" if they are.
+	// Checked BEFORE the bridge acks "starting": a talk to someone who has
+	// walked off (an NPC's schedule moves them) used to ack and then quietly
+	// fail, and the model "talked" to an absent Mayor 30+ times.
+	string talk_check(const string& name) {
+		if (talk_target(name)) {
+			return string();
+		}
+		Game_window* gwin = Game_window::get_instance();
+		std::vector<Actor*> npcs;
+		if (gwin) {
+			gwin->get_nearby_npcs(npcs);
+		}
+		std::string seen;
+		Actor* av = gwin ? gwin->get_main_actor() : nullptr;
+		for (Actor* a : npcs) {
+			if (a && a != av && !a->is_dead() && !a->get_name().empty()) {
+				seen += (seen.empty() ? "" : ", ") + a->get_name();
+			}
+		}
+		return "{\"ok\":false,\"error\":\"" + json_escape(
+				(name.empty() ? std::string("No one") : "'" + name + "' is not")
+				+ " near enough to talk to - people move around on their own "
+				"schedules. People you can see now: "
+				+ (seen.empty() ? std::string("nobody") : seen)
+				+ ". To find someone, ask others where they are or look for "
+				"them at home, work or the inn.") + "\"}";
+	}
+
+	bool begin_conversation(const string& name) {
+		Game_window* gwin = Game_window::get_instance();
+		if (!gwin) {
+			return false;
+		}
+		Actor* av = gwin->get_main_actor();
+		if (!av) {
+			return false;
+		}
+		Actor* best = talk_target(name);		if (!best) {
 			return false;
 		}
 		// A double-click on a party member shows their inventory instead of
