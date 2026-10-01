@@ -71,6 +71,7 @@ class OllamaClient:
         *,
         force_json: bool = True,
         temperature: float = 0.35,
+        images: list = None,
     ) -> dict:
         """Like chat() but returns {content, prompt_tokens, response_tokens,
         total_tokens} using Ollama's own token counts. If the model was given a
@@ -81,29 +82,32 @@ class OllamaClient:
         the retries bump temperature AND drop the JSON grammar (plain text, from
         which the caller extracts the JSON object), which reliably breaks the
         empty-output state."""
-        result = self._chat_once(system, user, force_json, temperature)
+        result = self._chat_once(system, user, force_json, temperature, images)
         if not (result.get("content") or "").strip():
             # Retry 1: higher temperature, still JSON-constrained.
             result = self._chat_once(system, user, force_json,
-                                     min(1.0, temperature + 0.3))
+                                     min(1.0, temperature + 0.3), images)
             result["retried"] = True
         if not (result.get("content") or "").strip() and force_json:
             # Retry 2: drop the JSON grammar entirely (plain text). The caller's
             # parse_reply extracts the {...} from free text, so this still works
             # and escapes the degenerate empty-under-json-grammar state.
             result = self._chat_once(system, user, False,
-                                     min(1.0, temperature + 0.5))
+                                     min(1.0, temperature + 0.5), images)
             result["retried"] = True
             result["dropped_json"] = True
         return result
 
     def _chat_once(self, system: str, user: str, force_json: bool,
-                   temperature: float) -> dict:
+                   temperature: float, images: list = None) -> dict:
+        user_msg = {"role": "user", "content": user}
+        if images:
+            user_msg["images"] = list(images)    # base64 PNG/JPEG (vision models)
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": user},
+                user_msg,
             ],
             "stream": False,
             # Reasoning models emit a separate chain-of-thought that consumes
@@ -179,6 +183,19 @@ class OllamaClient:
         except Exception:
             pass
         return 0
+
+    def capabilities(self) -> list:
+        """The model's capabilities from /api/show (e.g. "vision", "tools",
+        "thinking"); [] if unknown."""
+        try:
+            data = json.dumps({"model": self.model}).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self.host}/api/show", data=data,
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=10.0) as resp:
+                return list(json.loads(resp.read().decode("utf-8")).get("capabilities") or [])
+        except Exception:
+            return []
 
     def is_up(self) -> bool:
         try:

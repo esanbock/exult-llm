@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -505,6 +506,11 @@ TIME: the game clock advances; NPCs follow schedules (sleeping at night, working
             it can be opened, and what lies right around it. params:
             {"name":"<thing>"}. Shown next turn as "examined". Works from a
             distance - you don't need to walk up to it first.
+  screenshot - SEE the game screen: the picture is attached to your next turn.
+            params: none. The view is top-down at an angle, north up; you
+            are the Avatar (blond hair, red cape). Use it when the text doesn't tell
+            you enough - how a room is laid out, where a doorway or stairs
+            are, what something looks like. (Only works if you can see images.)
   local_map - Top-down character map of the tiles right around you, at YOUR
             height, with a legend and how to read it. params: none. Shown next
             turn as "local_map". Use it when you can't work out how to get
@@ -1888,6 +1894,19 @@ def _examine_view(state: dict, name: str, exult=None) -> dict:
     }
 
 
+def _capture_screen(exult):
+    """Ask the game for a fresh screenshot; return [base64 PNG] or None."""
+    try:
+        r = exult.request({"cmd": "screenshot"})
+        path = r.get("path") if isinstance(r, dict) else None
+        if r.get("ok") and path and os.path.isfile(path):
+            with open(path, "rb") as f:
+                return [base64.b64encode(f.read()).decode("ascii")]
+    except Exception:
+        pass
+    return None
+
+
 def _hand_examine(session: dict, kb, ex: dict, step: int) -> None:
     """Show an examine result next turn AND keep what it found in memory, so
     the agent doesn't walk back to re-examine the same victim/sign later."""
@@ -2079,7 +2098,7 @@ def ensure_exult_running(args) -> subprocess.Popen | None:
 META_TOOLS = {"add_quest", "update_quest", "note_npc", "add_topic"}
 # Tools the driver answers itself (never sent to the game).
 _DRIVER_TOOLS = META_TOOLS | {"look", "map", "annotate", "local_map", "examine",
-                              "recall", "quests"}
+                              "recall", "quests", "screenshot"}
 
 
 def _apply_meta(action: dict, kb: "KnowledgeBase") -> str:
@@ -2963,7 +2982,17 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     time.sleep(min(int(_throttle), 5000) / 1000.0)
             except Exception:
                 pass
-        res = ollama.chat_ex(get_effective_system_prompt(), _user)
+        _imgs = None
+        if session.pop("want_screenshot", False):
+            _imgs = _capture_screen(exult)
+            if _imgs:
+                _user += ("\n\nSCREENSHOT (attached image): the game screen right "
+                          "now, as you asked. Top-down view at an angle, north up; "
+                          "you are the Avatar (blond hair, red cape), usually "
+                          "near the middle.")
+            else:
+                _user += "\n\nSCREENSHOT: the capture failed this time."
+        res = ollama.chat_ex(get_effective_system_prompt(), _user, images=_imgs)
         reply = res["content"]
         reason, action = parse_reply(reply)
         # --no-guards experiment: snapshot the model's OWN parsed action so we
@@ -3363,6 +3392,19 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         kb.record_tool("examine", bool(session["examined"].get("found")))
         action = {"type": "wait", "_counted": True}
         reason = f"(examined {_nm})"
+
+    if isinstance(action, dict) and action.get("type") == "screenshot":
+        if getattr(args, "vision", False):
+            session["want_screenshot"] = True    # taken right before next call
+            reason = "(took a screenshot - it's attached to my next turn)"
+        else:
+            session["last_bump"] = ("screenshot: this model can't see images. "
+                                    "Use look, examine or local_map instead.")
+            reason = "(screenshot unavailable - model can't see images)"
+        kb.record_action("looked at the screen")
+        kb.record_tool("screenshot", bool(getattr(args, "vision", False)))
+        print(f"[{step:03d}] screenshot requested (vision={getattr(args, 'vision', False)})")
+        action = {"type": "wait", "_counted": True}
 
     if isinstance(action, dict) and action.get("type") == "local_map":
         session["local_map"] = _local_map_view(state)
@@ -5512,6 +5554,9 @@ def main() -> int:
             )
             return 2
         maxctx = ollama.context_size()
+        args.vision = "vision" in ollama.capabilities()
+        print(f"[+] Model '{args.model}': vision={'yes' if args.vision else 'no'} "
+              "(screenshot tool " + ("available)" if args.vision else "disabled)"))
         print(f"[+] Model '{args.model}': max context {maxctx or '?'} tokens; "
               f"using num_ctx={args.num_ctx} (full prompt must fit here or it is "
               f"silently truncated).")
