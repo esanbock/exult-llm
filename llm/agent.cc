@@ -2758,10 +2758,41 @@ namespace LLM_agent {
 					   "(stand next to the well/lever/winch/etc. and try again)\"}";
 			}
 			const std::string nm = best->get_name();
+			// Many items then ask the player to CLICK a target (food: "who
+			// eats?", potions, keys, tools). With no mouse that click never
+			// comes and the engine blocks forever - every hungry "use bread"
+			// timed out. Pre-answer it with Exult's own click intercept: the
+			// avatar, or the person named in "on" (feed Iolo).
+			Game_object* target = av;
+			string on;
+			if (get_string(action_json, "on", on) && !on.empty()) {
+				std::string olow = on;
+				std::transform(olow.begin(), olow.end(), olow.begin(), ::tolower);
+				std::vector<Actor*> people;
+				gwin->get_nearby_npcs(people);
+				for (Actor* a : people) {
+					std::string l = a ? a->get_name() : std::string();
+					std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+					if (a && !l.empty() && l.find(olow) != std::string::npos) {
+						target = a;
+						break;
+					}
+				}
+			}
+			Usecode_machine* ucm = gwin->get_usecode();
+			if (ucm) {
+				ucm->intercept_click_on_item(target);
+			}
 			// Double-click activation: runs the object's usecode (fill bucket,
 			// toggle gate, read sextant, board carriage/boat, etc.).
 			best->activate(Usecode_machine::double_click);
-			return "{\"ok\":true,\"did\":\"use\"," + json_str("object", nm) + "}";
+			// Not consumed (the item never asked for a click): clear it so it
+			// can't answer some later, unrelated click.
+			if (ucm && ucm->get_intercept_click_on_item() == target) {
+				ucm->intercept_click_on_item(nullptr);
+			}
+			return "{\"ok\":true,\"did\":\"use\"," + json_str("object", nm) + ","
+				   + json_str("on", target->get_name()) + "}";
 		}
 
 		if (type == "give") {

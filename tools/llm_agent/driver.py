@@ -475,7 +475,9 @@ TIME: the game clock advances; NPCs follow schedules (sleeping at night, working
             (sleep), plaque/book, moongate; and carried potions/scrolls/tools.
             TO EAT: "use" a food item in your pack (e.g. {"name":"bread"} or
             "apple") - this double-clicks/consumes it and restores your food.
-            Do this when food is low, BEFORE you starve.
+            Do this when food is low, BEFORE you starve. Things that need a
+            target (food, potions) go to YOU; add {"on":"<person>"} to use
+            it on someone else, e.g. {"name":"bread","on":"Iolo"}.
   read    - Read a nearby SIGN/readable object OR a book/scroll/document you are
             CARRYING. params: omit=nearest sign, or {"name":"<obj>"} (matches a
             world object or an item in your pack). Returns "text". Use this to
