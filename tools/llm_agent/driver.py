@@ -2077,6 +2077,9 @@ def ensure_exult_running(args) -> subprocess.Popen | None:
 
 
 META_TOOLS = {"add_quest", "update_quest", "note_npc", "add_topic"}
+# Tools the driver answers itself (never sent to the game).
+_DRIVER_TOOLS = META_TOOLS | {"look", "map", "annotate", "local_map", "examine",
+                              "recall", "quests"}
 
 
 def _apply_meta(action: dict, kb: "KnowledgeBase") -> str:
@@ -4689,11 +4692,13 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # talk (greet-new-person, stuck-near-NPC) slip through.
     if getattr(args, "no_guards", False) and isinstance(_orig_action, dict):
         _ot = _orig_action.get("type")
-        if _ot == "look":
-            # look was already handled (scene description for next turn);
-            # don't let a guard substitute its own action for it.
-            action = {"type": "wait", "_counted": True}
-            reason = _orig_reason or "(looked around)"
+        if _ot in _DRIVER_TOOLS:
+            # The driver already handled this tool (its result shows next
+            # turn) and turned it into a wait. Restoring the original would
+            # send e.g. "local_map" to the game: "unknown action type".
+            if _ot == "look" or action.get("type") != "wait":
+                action = {"type": "wait", "_counted": True}
+                reason = _orig_reason or reason
         elif _ot:
             action = dict(_orig_action)
             reason = _orig_reason or "(raw model action; guards off)"
@@ -4863,6 +4868,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # and repeated the same action for dozens of turns.
         _at = action.get("type") if isinstance(action, dict) else "action"
         session["last_bump"] = f"Your last action ({_at}) FAILED: {result['error']}"
+        if result["error"] == "no active conversation":
+            # The model says bye, then tries to "ask" a typed question.
+            _who = session.get("current_npc") or "them"
+            session["last_bump"] += (
+                ". No conversation is open, so answer/continue do nothing. "
+                "Conversations here are menus - you can't type your own "
+                f"question. To ask {_who} something, talk to them again "
+                f"({{\"type\":\"talk\",\"name\":\"{_who}\"}}) and pick one of "
+                "the topics they offer.")
 
     # Log meaningful actions (not routine moves/waits) to the short action
     # history so the agent can avoid repeating itself. Record the OUTCOME, not
