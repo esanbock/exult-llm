@@ -7,6 +7,7 @@
 #
 #   ./stop_all.sh            stop everything
 #   ./stop_all.sh relay      stop only the Twitch relay (go dark, keep playing)
+#   ./stop_all.sh driver     stop only the agent (it saves first)
 set -u
 cd "$(dirname "$0")"
 RUN=/tmp/exult_llm
@@ -30,11 +31,12 @@ stop() {   # name, grace-seconds
 
 case "${1:-all}" in
   relay) stop relay 5 ;;
+  driver) stop driver 60 ;;
   all)
     stop driver 60     # final game + memory save happens here
     stop relay 5
     stop game 5
     ;;
-  *) echo "usage: $0 [all|relay]"; exit 2 ;;
+  *) echo "usage: $0 [all|relay|driver]"; exit 2 ;;
 esac
 echo "[stop] done"
