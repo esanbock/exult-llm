@@ -4806,7 +4806,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             and result.get("tx") is not None:
         session["goto_target"] = (result.get("toward_tx", result["tx"]),
                                   result.get("toward_ty", result["ty"]),
-                                  action.get("name") or "")
+                                  action.get("name") or "",
+                                  (state.get("player") or {}).get("tz", 0) or 0)
     if (_atype == "goto" and isinstance(result, dict) and result.get("arrived")
             and action.get("name")):
         # Walking up to a visible thing is how the model tries to look at it
@@ -5289,10 +5290,22 @@ def _wait_for_arrival(exult, window, kb, args, step, session=None) -> None:
     # (inside a closed building, behind a wall) looks like a success.
     _tgt = session.pop("goto_target", None) if session is not None else None
     if _tgt and p.get("tx") is not None:
-        _gx, _gy, _gname = _tgt
+        _gx, _gy, _gname, _z0 = _tgt
         _d = max(abs(_gx - p["tx"]), abs(_gy - p["ty"]))
         _prec = kb.place_rec(_gname) if (kb is not None and _gname) else None
         _what = f"the {_gname}" if _gname else f"({_gx},{_gy})"
+        _z1 = p.get("tz", 0) or 0
+        if _z1 - _z0 >= 3 and _d <= 2:
+            # goto found the ground at the target blocked and settled for the
+            # nearest place to stand - on TOP of the structure (a closed
+            # gatehouse's wall-walk). Seen live: 30+ turns of gateway <-> stairs.
+            session["last_bump"] = (
+                f"Your goto to {_what} took you UP (height {_z0} -> {_z1}) onto "
+                "the top of a structure: the ground there is blocked (for "
+                "example a closed gate or portcullis), so this is the nearest "
+                "place to stand. Walking there again won't get you through at "
+                "ground level - something has to open first, or find another "
+                "way.")
         if not _prec and _gname and _d <= 2:
             # Ended beside a visible thing (arrived, or a tile or two short):
             # give the close look the walk was for.
