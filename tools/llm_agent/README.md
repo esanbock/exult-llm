@@ -85,24 +85,28 @@ Leave `twitch.env` absent to run **local-HLS-only** (no Twitch push, no chat).
 
 ## Quick start
 
-Two commands, in order:
-
 ```bash
 cd tools/llm_agent
+./start_all.sh               # resume the saved game; local stream + agent
+./start_all.sh --twitch      # ...and go live on Twitch (twitch.env)
+./start_all.sh --new-game    # start the world over (archives agent memory)
+./start_all.sh -- --model qwen3.6:latest   # extra args go to driver.py
 
-# 1) Start the game + A/V stack (headless Exult, ffmpeg → HLS + Twitch, chat bridge)
-./go_live.sh
-
-# 2) Start the agent (connects to the running game; opens the web inspector)
-python3 -u driver.py --no-launch --inspector \
-    --model granite4.2:30b --num-ctx 24576 \
-    --steps 5000 --delay 0.5 --music --music-track 9
+./stop_all.sh                # stop everything (driver saves game + memory first)
+./stop_all.sh relay          # go dark on Twitch, keep playing
+./twitch_relay.sh            # (via start_all --twitch) go live without a restart
 ```
+
+Each piece runs detached in its own process group with a PID file in
+`/tmp/exult_llm/` (logs there too); the turn log is `driver_log.txt`. The game
+**resumes** from its save by default - the driver saves periodically and on a
+clean stop - and the agent's memory (`agent_memory.json`) carries on with it.
+`--new-game` resets both together, so a fresh world never meets stale memory.
 
 Then:
 - **Web inspector:** `http://<this-host>:8092/` (works in any browser, incl. Windows)
 - **Local video (VLC):** `http://<this-host>:8090/stream.m3u8`
-- **Twitch:** live if `TWITCH_STREAM_KEY` is set.
+- **Twitch:** with `--twitch`.
 
 > **num-ctx note:** the system prompt is large and memory grows over a run.
 > Granite (and other strict models) return HTTP 400 if the prompt exceeds the

@@ -39,8 +39,24 @@ printf 'Exult LLM agent\nwaiting for the agent...' > "$OVERLAY"
 # ALSA (so the audio callback that produces the PCM keeps firing), but we no
 # longer CAPTURE from snd-aloop - the PCM is tapped in-engine and written to
 # $AFIFO, perfectly paced. This sidesteps the whole loopback-clock problem.
+# RESUME by default: Exult continues from its gamedat working copy (the driver
+# saves into it periodically and on a clean stop). NEWGAME=1 starts the world
+# over - and then the agent's memory of the old world is archived too, so a
+# fresh world never meets stale memory ("I already took the key").
+NEWGAME_ARG=""
+if [ "${NEWGAME:-0}" = 1 ]; then
+  NEWGAME_ARG="--newgame"
+  MEM=tools/llm_agent/agent_memory.json
+  if [ -f "$MEM" ]; then
+    ARCH="tools/llm_agent/agent_memory.before-newgame.$(date +%s).json"
+    mv "$MEM" "$ARCH"
+    echo "[go_live] NEW GAME: archived agent memory -> $ARCH"
+  fi
+else
+  echo "[go_live] resuming the saved game (NEWGAME=1 to start over)"
+fi
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  ./exult --bg --nomenu --llmagent --newgame \
+  ./exult --bg --nomenu --llmagent $NEWGAME_ARG \
   --llmstream "$FIFO" --llmstream-fps "$FPS" \
   --llmaudio "$AFIFO" \
   >/tmp/exult_stream.log 2>&1 &

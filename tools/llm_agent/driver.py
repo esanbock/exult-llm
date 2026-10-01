@@ -26,6 +26,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -1868,7 +1869,8 @@ def _examine_view(state: dict, name: str, exult=None) -> dict:
         ox, oy = o.get("dx", 0) - tdx, o.get("dy", 0) - tdy
         d = max(abs(ox), abs(oy))
         if d <= 4:
-            near.append((d, f"{o['name']} {_dir_word(ox, oy) if d else 'on the same spot'}"
+            near.append((d, o["_kind"] == "object", o["name"],
+                         f"{o['name']} {_dir_word(ox, oy) if d else 'on the same spot'}"
                             f"{_tiles(d) if d else ''} at "
                             f"({px + o.get('dx', 0)},{py + o.get('dy', 0)})"))
     near.sort(key=lambda e: e[0])
@@ -1879,8 +1881,29 @@ def _examine_view(state: dict, name: str, exult=None) -> dict:
         "from_you": f"{_tiles(max(abs(tdx), abs(tdy))).strip(' ()')} {_dir_word(tdx, tdy)}",
         "what_it_is": what,
         **({"it_says": it_says} if it_says else {}),
-        "right_around_it": [e[1] for e in near[:12]] or ["nothing notable"],
+        "right_around_it": [e[3] for e in near[:12]] or ["nothing notable"],
+        # for memory only (people wander off); stripped before the model sees it
+        "_objects_near": [e[2] for e in near[:12] if e[1]],
+        "_is_person": t["_kind"] == "person",
     }
+
+
+def _hand_examine(session: dict, kb, ex: dict, step: int) -> None:
+    """Show an examine result next turn AND keep what it found in memory, so
+    the agent doesn't walk back to re-examine the same victim/sign later."""
+    objs_near = ex.pop("_objects_near", [])
+    is_person = ex.pop("_is_person", False)
+    session["examined"] = ex
+    if not ex.get("found") or kb is None or is_person:
+        return    # people move; a remembered spot for them goes stale
+    at = ex.get("at") or ["?", "?"]
+    text = f"{ex['name']} at ({at[0]},{at[1]}): {ex.get('what_it_is', '')}"
+    if ex.get("it_says"):
+        text += f'; it says "{ex["it_says"]}"'
+    # Only things that stay put - people and companions wander off.
+    if objs_near:
+        text += "; near it: " + ", ".join(objs_near[:5])
+    kb.note_observation(text, kind="examined", step=step)
 
 
 _LOCAL_MAP_LEGEND = {
@@ -3015,7 +3038,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 # is something visible, hand over the close look it wanted.
                 _ex = _examine_view(state, str(action.get("name") or ""), exult)
                 if _ex.get("found"):
-                    session["examined"] = _ex
+                    _hand_examine(session, kb, _ex, step)
                 session["last_bump"] = (
                     f"You are ALREADY at {_tgt} - goto does nothing here. "
                     + ("A close look at it is under \"examined\". "
@@ -3329,7 +3352,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
     # always there); when asked for, it comes with its legend + how to read it.
     if isinstance(action, dict) and action.get("type") == "examine":
         _nm = str(action.get("name") or action.get("target") or "").strip()
-        session["examined"] = _examine_view(state, _nm, exult)
+        _hand_examine(session, kb, _examine_view(state, _nm, exult), step)
         kb.record_action(f"examined {_nm}")
         if window.available:
             window.set_action(f"[examine] {_nm}")
@@ -4745,7 +4768,7 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         _ex = _examine_view(state, action["name"], exult)
         if _ex.get("found"):
             _ex.pop("from_you", None)   # state is from before the walk
-            session["examined"] = _ex
+            _hand_examine(session, kb, _ex, step)
     if _atype == "goto" and isinstance(result, dict) and result.get("arrived"):
         _atgt = action.get("name") or f"({action.get('tx')},{action.get('ty')})"
         session["last_goto_arrived_target"] = str(_atgt)
@@ -5220,7 +5243,7 @@ def _wait_for_arrival(exult, window, kb, args, step, session=None) -> None:
             try:
                 _ex = _examine_view(exult.observe(), _gname, exult)
                 if _ex.get("found"):
-                    session["examined"] = _ex
+                    _hand_examine(session, kb, _ex, step)
             except Exception:
                 pass
         if not _prec and 1 < _d <= 2:
@@ -5420,6 +5443,13 @@ def main() -> int:
                          "built-in tee) so the turn log is visible LIVE in the "
                          "console AND saved. Robust and headless-friendly.")
     args = ap.parse_args()
+
+    # A plain `kill` (SIGTERM) must still run the normal shutdown - the final
+    # game + memory save in run_loop's finally. Python's default SIGTERM
+    # action exits without it, which is how restarts lost the game state.
+    def _on_sigterm(signum, frame):
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, _on_sigterm)
 
     # Built-in tee: mirror stdout/stderr to --log-file while still printing to
     # the console window, so the turn log is visible live (and works headless).
