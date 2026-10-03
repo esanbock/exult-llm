@@ -508,6 +508,9 @@ TIME: the game clock advances; NPCs follow schedules (sleeping at night, working
             it can be opened, and what lies right around it. params:
             {"name":"<thing>"}. Shown next turn as "examined". Works from a
             distance - you don't need to walk up to it first.
+  explore - Walk to the nearest ground you have NOT explored yet, to find a
+            place or person you've heard of but don't know the way to.
+            params: none, or {"dir":"n|ne|e|se|s|sw|w|nw"} to search that way.
   screenshot - SEE the game screen: the picture is attached to your next turn.
             params: none. The view is top-down at an angle, north up; you
             are the Avatar (blond hair, red cape). Use it when the text doesn't tell
@@ -1894,6 +1897,37 @@ def _examine_view(state: dict, name: str, exult=None) -> dict:
         "_objects_near": [e[2] for e in near[:12] if e[1]],
         "_is_person": t["_kind"] == "person",
     }
+
+
+_COMPASS = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0),
+            "ne": (1, -1), "nw": (-1, -1), "se": (1, 1), "sw": (-1, 1)}
+
+
+def _explore_target(state: dict, kb, direction: str = ""):
+    """Centre tile of the nearest map cell not yet explored (the map tool's
+    fog-of-war), optionally only in a compass direction. None if every cell
+    within reach is explored."""
+    p = state.get("player") or {}
+    if kb is None or p.get("tx") is None:
+        return None
+    cell = kb.MAP_CELL
+    cx, cy = p["tx"] // cell, p["ty"] // cell
+    seen = set(kb.visited_cells.get("world", []))
+    want = _COMPASS.get((direction or "").lower().strip())
+    for r in range(1, 13):
+        ring = [(i, j) for i in range(-r, r + 1) for j in range(-r, r + 1)
+                if max(abs(i), abs(j)) == r]
+        if want:
+            ring = [(i, j) for i, j in ring
+                    if i * want[0] + j * want[1] > 0
+                    and (want[0] == 0 or i * want[0] >= 0)
+                    and (want[1] == 0 or j * want[1] >= 0)]
+            # most directly in that direction first
+            ring.sort(key=lambda ij: -(ij[0] * want[0] + ij[1] * want[1]) / (abs(ij[0]) + abs(ij[1])))
+        for i, j in ring:
+            if f"{cx + i},{cy + j}" not in seen:
+                return ((cx + i) * cell + cell // 2, (cy + j) * cell + cell // 2)
+    return None
 
 
 def _capture_screen(exult):
@@ -3394,6 +3428,24 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         kb.record_tool("examine", bool(session["examined"].get("found")))
         action = {"type": "wait", "_counted": True}
         reason = f"(examined {_nm})"
+
+    if isinstance(action, dict) and action.get("type") == "explore":
+        _dir = str(action.get("dir") or action.get("direction") or "")
+        _t = _explore_target(state, kb, _dir)
+        if _t:
+            action = {"type": "goto", "tx": _t[0], "ty": _t[1]}
+            reason = (f"{reason} [explore{' ' + _dir if _dir else ''} -> "
+                      f"unexplored ground at ({_t[0]},{_t[1]})]")
+        else:
+            action = {"type": "wait", "_counted": True}
+            session["last_bump"] = (
+                "explore: everywhere within reach" + (f" to the {_dir}" if _dir else "")
+                + " is already explored. Try another direction, or ask someone "
+                "where the place is.")
+        kb.record_tool("explore", bool(_t))
+        print(f"[{step:03d}] explore {_dir or 'any'} -> {_t}")
+        _orig_action = dict(action)    # the model's own choice: keep it
+        _orig_reason = reason
 
     if isinstance(action, dict) and action.get("type") == "screenshot":
         if getattr(args, "vision", False):
@@ -4922,6 +4974,11 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 "old spot is forgotten. Ask someone where they are, or look "
                 "for them at home, at work or at the inn.")
             print(f"[{step:03d}] forgot stale last-seen spot for {action.get('name')}")
+        if "not on your map" in result["error"]:
+            session["last_bump"] += (
+                " If you've only HEARD of the place, use explore (e.g. "
+                "{\"type\":\"explore\",\"dir\":\"w\"}) to search unexplored "
+                "ground for it, or ask someone where it is.")
         if result["error"] == "no active conversation":
             # The model says bye, then tries to "ask" a typed question.
             _who = session.get("current_npc") or "them"
