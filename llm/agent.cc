@@ -2079,6 +2079,13 @@ namespace LLM_agent {
 			const std::string nm = best->get_name();
 			// Ownership: report theft if the loose item is someone's property,
 			// same as 'take' (consequences, not prohibitions).
+			if (!best->is_dragable()) {
+				// Exult's own "can this be picked up" test. Without it the agent
+				// took the murder victim's corpse (4 times) - the crime scene.
+				return "{\"ok\":false,\"error\":\"the " + json_escape(best->get_name())
+					   + " can't be picked up - it's fixed in place or far too "
+					     "heavy.\"}";
+			}
 			const bool stolen = !best->get_flag(Obj_flags::okay_to_take);
 			// Detach from the world, keeping a shared ref alive, then add to
 			// the avatar's inventory.
@@ -2245,6 +2252,14 @@ namespace LLM_agent {
 				}
 				return "{\"ok\":false,\"error\":\"no such item in a nearby "
 					   "container or on the ground within reach\"}";
+			}
+
+			if (!found->is_dragable()) {
+				// Exult's own "can this be picked up" test. Without it the agent
+				// took the murder victim's corpse (4 times) - the crime scene.
+				return "{\"ok\":false,\"error\":\"the " + json_escape(found->get_name())
+					   + " can't be picked up - it's fixed in place or far too "
+					     "heavy.\"}";
 			}
 			const std::string nm = found->get_name();
 			// Ownership: an item NOT flagged okay_to_take is someone's property;
