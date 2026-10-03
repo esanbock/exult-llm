@@ -93,6 +93,11 @@ Text_gump::~Text_gump() {
  *  Add to the text, starting a newline.
  */
 
+#ifdef USE_LLM_AGENT
+// Defined in llm/agent.cc: the text the bridge's "read" action returns.
+void LLM_agent_set_last_sign_text(const std::string& text);
+#endif
+
 void Text_gump::add_text(const char* str) {
 	std::string newtext;
 	if (textlen) {
@@ -111,6 +116,16 @@ void Text_gump::add_text(const char* str) {
 	text = new char[newtext.length() + 1];
 	strcpy(text, newtext.c_str());
 	textlen = newtext.length();
+#ifdef USE_LLM_AGENT
+	// Books and scrolls: let "read" return what's written (only signs were
+	// captured, so the agent could never read evidence like a note in a
+	// chest). '~' is a line break and '*' a page break in this markup.
+	std::string plain;
+	for (char ch : newtext) {
+		plain += (ch == '~') ? ' ' : (ch == '*') ? '\n' : ch;
+	}
+	LLM_agent_set_last_sign_text(plain);
+#endif
 }
 
 /*

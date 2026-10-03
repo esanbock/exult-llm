@@ -2594,8 +2594,13 @@ namespace LLM_agent {
 				cont->get_objects(contents, c_any_shapenum, c_any_qual, c_any_framenum);
 				for (Game_object* it : contents) {
 					if (!it) { continue; }
-					if (n) { items += ", "; }
-					if (n < 20) { items += json_escape(it->get_name()); }
+					// Quoted JSON strings, at most 20 (count still covers all).
+					// They were unquoted: any non-empty container produced
+					// invalid JSON, so the agent never saw inside one.
+					if (n < 20) {
+						if (n) { items += ","; }
+						items += "\"" + json_escape(it->get_name()) + "\"";
+					}
 					++n;
 				}
 			}
