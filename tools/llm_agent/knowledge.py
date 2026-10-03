@@ -75,6 +75,9 @@ class KnowledgeBase:
         # overheard, deduped and filtered so it is not just a dump of every tile
         # every turn. Each: {"step":int, "kind":str, "text":str}
         self.observations: list[dict] = []
+        # Leads: people/places an NPC told us to go to ("speak with Gilberto",
+        # "ask Christopher's son"), until we meet/visit them or they expire.
+        self.leads: list[dict] = []
         # Rolling EPISODIC SUMMARY: a compact running gist of older events that
         # have scrolled out of the raw dialogue/action windows. This is how we
         # keep clues/story alive within a bounded token budget - old detail is
@@ -106,6 +109,7 @@ class KnowledgeBase:
                 "places": self.places,
                 "hints": self.hints,
                 "observations": self.observations,
+                "leads": self.leads,
                 "episodic_summary": self.episodic_summary,
                 "tool_stats": self.tool_stats,
                 "topics": self.topics,
@@ -141,6 +145,7 @@ class KnowledgeBase:
             kb.places = dict(data.get("places", {}))
             kb.hints = list(data.get("hints", []))
             kb.observations = list(data.get("observations", []))
+            kb.leads = list(data.get("leads", []))
             kb.episodic_summary = str(data.get("episodic_summary", "") or "")
             ts = data.get("tool_stats") or {}
             kb.tool_stats = {"turns": int(ts.get("turns", 0)),
@@ -649,10 +654,68 @@ class KnowledgeBase:
             return
         self.dialogue_history.append(entry)
         self.dialogue_history = self.dialogue_history[-self.DIALOGUE_WINDOW:]
+        self.note_leads(npc, said)
         # Also append to the per-NPC full transcript (the dialogue TREE), which
         # persists across runs so the agent can recall exactly what each
         # character told it - including the Mayor's instructions.
         self._npc_transcript_add(npc, {"said": said})
+
+    # ----- leads: who/where NPCs told us to go ---------------------------
+    # The model heard "ask Christopher's son" and "speak with Gilberto" from
+    # the Mayor, kept them in its notes, and never followed either - it went
+    # back to re-take his quiz. Pull such pointers out of NPC speech and keep
+    # them visible until they're done.
+    _LEAD_NAME = (r"((?:[A-Z][a-z]+)(?:'s (?:son|daughter|wife|husband|father|"
+                  r"mother|brother|sister|house|home|shop|office))?)")
+    _LEAD_DESC = r"(?:, (?:the|a|my|his|her) ([a-z][\w ]{2,50}?)(?=[.,;:!?\"]|$| and ))?"
+    _LEAD_PATTERNS = [
+        (r"\b(?:speak|talk|speaking|talking|speakest|talkest)(?: with| to) "
+         + _LEAD_NAME + _LEAD_DESC, "person"),
+        (r"\bask " + _LEAD_NAME + _LEAD_DESC, "person"),
+        (r"\b(?:find|seek out|seek|visit|look for|see) " + _LEAD_NAME + _LEAD_DESC, "person"),
+        (r"\blook in the ([a-z]+)", "place"),
+    ]
+    _LEAD_STOP = {"Avatar", "Thou", "Thee", "Thy", "I", "Yes", "No", "The", "A",
+                  "Lord", "Lady", "Sir", "Milord", "Milady", "Father", "Mother",
+                  "Him", "Her", "Them", "It", "Me", "Us", "Everyone", "Anyone"}
+    LEAD_TTL = 150    # turns before an unresolved lead drops off
+
+    def note_leads(self, npc: str, said: str) -> None:
+        import re as _re
+        for pat, kind in self._LEAD_PATTERNS:
+            for m in _re.finditer(pat, said or ""):
+                who = m.group(1).strip()
+                if not who or who.split("'")[0] in self._LEAD_STOP:
+                    continue
+                if (npc or "").lower() == who.lower() or self._lead_done(who, kind):
+                    continue
+                if any(l["who"].lower() == who.lower() for l in self.leads):
+                    continue
+                desc = (m.group(2) or "").strip() if m.lastindex and m.lastindex >= 2 else ""
+                i = max(0, m.start() - 40)
+                self.leads.append({"who": who, "kind": kind, "desc": desc,
+                                   "from": npc or "?", "turn": self.turn_counter,
+                                   "said": said[i:m.end() + 60].strip()})
+        self.leads = self.leads[-12:]
+
+    def _lead_done(self, who: str, kind: str) -> bool:
+        w = who.lower()
+        if kind == "place":
+            return any(w in (r.get("name") or "").lower() for r in self.places.values())
+        if "'s " in w:
+            return False    # "Christopher's son" - no name to check; expires
+        rec = next((r for k, r in self.npcs.items() if k.lower() == w), None)
+        return bool(rec and rec.get("times_talked", 0) > 0)
+
+    def open_leads(self, limit: int = 5) -> list:
+        self.leads = [l for l in self.leads
+                      if not self._lead_done(l["who"], l["kind"])
+                      and self.turn_counter - l.get("turn", 0) <= self.LEAD_TTL]
+        out = []
+        for l in self.leads[-limit:]:
+            what = l["who"] + (f" ({l['desc']})" if l.get("desc") else "")
+            out.append(f"{what} - {l['from']} said: \"...{l['said']}...\"")
+        return out
 
     # ----- per-NPC dialogue tree (persistent, retrievable via recall) ----
     def _npc_rec(self, npc: str) -> dict:

@@ -1319,6 +1319,10 @@ def summarize_state(state: dict, kb: "KnowledgeBase | None" = None, last_look: s
         # and the operator's hint history so earlier steering isn't forgotten.
         if kb.episodic_summary:
             view["story_so_far"] = kb.episodic_summary
+        # People/places NPCs told you to go to that you haven't yet.
+        _leads = kb.open_leads(5)
+        if _leads:
+            view["leads_to_follow"] = _leads
         # Operator/viewer HINTS, but AGE-BOUNDED so chat guidance scrolls out
         # with the turn-memory window instead of accumulating forever. Anything
         # important enough to keep became a QUEST (persists in the quest log).
