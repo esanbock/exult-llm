@@ -4913,6 +4913,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # and repeated the same action for dozens of turns.
         _at = action.get("type") if isinstance(action, dict) else "action"
         session["last_bump"] = f"Your last action ({_at}) FAILED: {result['error']}"
+        if (_at == "talk" and "not near enough" in result["error"]
+                and kb.forget_npc_pos(action.get("name", ""))):
+            # Their remembered spot is stale; without this the model walked
+            # back to the Mayor's old spot 25+ times.
+            session["last_bump"] += (
+                f" You no longer know where {action.get('name')} is: their "
+                "old spot is forgotten. Ask someone where they are, or look "
+                "for them at home, at work or at the inn.")
+            print(f"[{step:03d}] forgot stale last-seen spot for {action.get('name')}")
         if result["error"] == "no active conversation":
             # The model says bye, then tries to "ask" a typed question.
             _who = session.get("current_npc") or "them"

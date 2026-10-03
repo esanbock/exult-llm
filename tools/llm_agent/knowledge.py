@@ -563,6 +563,16 @@ class KnowledgeBase:
     def npc_last_pos(self, name: str):
         return self.npcs.get(name, {}).get("last_pos")
 
+    def forget_npc_pos(self, name: str) -> bool:
+        """They weren't where we last saw them (people follow schedules):
+        drop the stale spot so a goto by name doesn't keep sending us back
+        there. Returns True if there was one to forget."""
+        for key, rec in self.npcs.items():
+            if key.lower() == (name or "").lower() and rec.get("last_pos"):
+                rec.pop("last_pos", None)
+                return True
+        return False
+
     def talked_recently(self, name: str) -> int:
         """How many times we've talked to this NPC since the last meaningful
         progress. Resets when the world changes (quest/item/area), so NPCs
