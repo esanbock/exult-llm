@@ -49,6 +49,8 @@
 #include "effects.h"
 #include "utils.h"
 #include "Audio.h"
+#include "items.h"
+#include "shapeid.h"
 
 #include <SDL3/SDL.h>
 
@@ -601,6 +603,76 @@ namespace LLM_agent {
 	std::string g_llm_last_sign_text;
 
 	string screenshot();    // fwd decl (defined after handle_request)
+
+	// Name to show for an object. A dead person's body keeps who it was
+	// ("body of Inamo"); plain get_name() said just "body", so the agent
+	// couldn't tell the murdered gargoyle from any other corpse.
+	// What kind of creature leaves a body of this shape/frame ("gargoyle"),
+	// from each creature shape's own body entry. "" when ambiguous.
+	std::string body_kind(int shape, int frame) {
+		static std::map<std::pair<int, int>, std::set<std::string>> kinds;
+		if (kinds.empty()) {
+			const int n = get_num_item_names();
+			for (int sh = 0; sh < n && sh < 1024; ++sh) {
+				const Shape_info& info = ShapeID::get_info(sh);
+				const auto cls = info.get_shape_class();
+				if (cls != Shape_info::human && cls != Shape_info::monster) {
+					continue;
+				}
+				const char* nm = get_item_name(sh);
+				if (nm && *nm) {
+					kinds[{info.get_body_shape(), info.get_body_frame()}].insert(nm);
+				}
+			}
+			kinds[{-1, -1}];    // mark built even if nothing matched
+		}
+		auto it = kinds.find({shape, frame});
+		return (it != kinds.end() && it->second.size() == 1) ? *it->second.begin()
+															 : std::string();
+	}
+
+	std::string agent_obj_name(Game_object* obj) {
+		const int npc_num = obj ? obj->get_live_npc_num() : -1;
+		if (npc_num > 0) {
+			Game_window* gwin = Game_window::get_instance();
+			Actor*       npc  = gwin ? gwin->get_npc(npc_num) : nullptr;
+			if (npc && !npc->get_npc_name().empty()) {
+				return "body of " + npc->get_npc_name();
+			}
+		}
+		// A placed corpse (not a dead NPC) at least says what it was.
+		if (obj && obj->get_info().is_body_shape()) {
+			const std::string kind = body_kind(obj->get_shapenum(), obj->get_framenum());
+			if (!kind.empty()) {
+				return kind + " body";
+			}
+		}
+		return obj ? obj->get_name() : std::string();
+	}
+
+	// Put a picked-up item in the backpack. Actor::add() fills empty
+	// equipment slots first, so the key went into a hand, gold coins became
+	// the "weapon" and a medallion an amulet - none of it under "carrying".
+	bool put_in_pack(Actor* av, Game_object* item) {
+		Game_object* bp = av->get_readied(backpack);
+		Container_game_object* pack = bp ? bp->as_container() : nullptr;
+		if (pack && pack->add(item, false, true)) {
+			return true;
+		}
+		return av->add(item, false, true);
+	}
+
+	// Close any open container/body windows before walking: Exult blocks
+	// movement while one is up, and goto/move used to report "ok" and do
+	// nothing. A player just closes them and walks on.
+	bool close_windows(Game_window* gwin) {
+		Gump_manager* gm = gwin->get_gump_man();
+		if (gm && gm->showing_gumps(true)) {
+			gm->close_all_gumps();
+			return true;
+		}
+		return false;
+	}
 	string talk_check(const string& name);    // fwd decl (defined below)
 
 	string observe() {
@@ -934,7 +1006,7 @@ namespace LLM_agent {
 				if (count >= 24) {
 					break;
 				}
-				const std::string nm = obj->get_name();
+				const std::string nm = agent_obj_name(obj);
 				if (rank == 2) {
 					int& n = scenery_seen[nm];
 					++n;
@@ -1089,7 +1161,11 @@ namespace LLM_agent {
 					break;
 				}
 				const Tile_coord ot     = obj->get_tile();
-				const bool       closed = (obj->get_framenum() % 4) < 2;
+				// Closed iff the door's tile blocks a walker (the frame-number
+				// guess was wrong for some door shapes: reported closed after
+				// the avatar had opened it and walked through).
+				Tile_coord dt = ot;
+				const bool closed = Map_chunk::is_blocked(dt, 1, MOVE_WALK, 0, 0);
 				if (!first) {
 					os << ',';
 				}
@@ -1776,6 +1852,15 @@ namespace LLM_agent {
 					   "(name one, give tx,ty, or stand next to it)\"}";
 			}
 			const std::string nm = best->get_name();
+			{
+				std::string llow = nm;
+				std::transform(llow.begin(), llow.end(), llow.begin(), ::tolower);
+				if (llow.find("locked") != std::string::npos) {
+					return "{\"ok\":false,\"error\":\"the " + json_escape(nm)
+						   + " is LOCKED. Try 'unlock' (uses a key you carry) or a "
+						     "lockpick on it.\",\"locked\":true}";
+				}
+			}
 			best->activate();    // ensure it's open
 			Container_game_object* cont = best->as_container();
 			std::string took;
@@ -1788,7 +1873,7 @@ namespace LLM_agent {
 					const std::string inm = it->get_name();
 					Game_object_shared keep;
 					it->remove_this(&keep);
-					if (av->add(it, false, true)) {
+					if (put_in_pack(av, it)) {
 						if (took_n < 12) {
 							if (took_n) { took += ", "; }
 							took += inm;
@@ -1999,7 +2084,7 @@ namespace LLM_agent {
 			// the avatar's inventory.
 			Game_object_shared keep;
 			best->remove_this(&keep);
-			if (av->add(best, false, true)) {
+			if (put_in_pack(av, best)) {
 				std::string r = "{\"ok\":true,\"did\":\"pickup\",\"item\":\""
 								+ json_escape(nm) + "\"";
 				if (stolen) {
@@ -2169,7 +2254,7 @@ namespace LLM_agent {
 			const bool stolen = !found->get_flag(Obj_flags::okay_to_take);
 			Game_object_shared keep;
 			found->remove_this(&keep);
-			if (av->add(found, false, true)) {
+			if (put_in_pack(av, found)) {
 				std::string r = "{\"ok\":true,\"did\":\"take\",\"item\":\""
 								+ json_escape(nm) + "\"";
 				if (stolen) {
@@ -2235,7 +2320,7 @@ namespace LLM_agent {
 			found->remove_this(&keep);   // detach (also un-readies if worn)
 			if (type == "unequip") {
 				// Put it back into the pack rather than the ground.
-				if (av->add(found, false, true)) {
+				if (put_in_pack(av, found)) {
 					return "{\"ok\":true,\"did\":\"unequip\",\"item\":\""
 						   + json_escape(nm) + "\"}";
 				}
@@ -2253,6 +2338,7 @@ namespace LLM_agent {
 			// Bound the A* work so a far/unreachable goto can't stall the frame
 			// loop (reset automatically when this branch returns).
 			Bounded_pathfind_guard bounded_guard;
+			close_windows(gwin);
 			Actor* av = gwin->get_main_actor();
 			if (!av) {
 				return "{\"ok\":false,\"error\":\"no avatar\"}";
@@ -2474,7 +2560,11 @@ namespace LLM_agent {
 				Game_map* gmap = gwin->get_map();
 				const int ddx  = (dest.tx > at.tx) - (dest.tx < at.tx);
 				const int ddy  = (dest.ty > at.ty) - (dest.ty < at.ty);
-				if ((ddx || ddy) && gmap) {
+				// Only for a target that's really close. For a far one, a
+				// single blind step said "ok" and went nowhere useful (once
+				// onto a forge's firepit).
+				const int far  = std::max(std::abs(dest.tx - at.tx), std::abs(dest.ty - at.ty));
+				if ((ddx || ddy) && gmap && far <= 3) {
 					const Tile_coord step(
 							(at.tx + ddx + c_num_tiles) % c_num_tiles,
 							(at.ty + ddy + c_num_tiles) % c_num_tiles, at.tz);
@@ -2489,7 +2579,9 @@ namespace LLM_agent {
 					}
 				}
 			}
-			return "{\"ok\":false,\"error\":\"no path to destination\"}";
+			return "{\"ok\":false,\"error\":\"no path to destination - it may be "
+				   "too far to plan in one go, or walled off. Try a nearer point on the way "
+				   "(or explore), or look for a door.\"}";
 		}
 
 		if (type == "open") {
@@ -2570,6 +2662,18 @@ namespace LLM_agent {
 			const std::string onm = best->get_name();
 			const bool is_door_t = best->get_info().is_door();
 			const int  frame0    = best->get_framenum();
+			if (!is_door_t && best->as_container()) {
+				std::string olow = onm;
+				std::transform(olow.begin(), olow.end(), olow.begin(), ::tolower);
+				if (olow.find("locked") != std::string::npos) {
+					// Locked chests are their own shape ("locked chest").
+					// We used to list the contents anyway, so a lock meant
+					// nothing to the agent.
+					return "{\"ok\":false,\"error\":\"the " + json_escape(onm)
+						   + " is LOCKED. Try 'unlock' (uses a key you carry) or a "
+						     "lockpick on it.\",\"locked\":true}";
+				}
+			}
 			best->activate();    // toggles a door; opens a container/body
 			if (is_door_t && best->get_framenum() == frame0) {
 				// Nothing changed: the door is locked. Reporting "did open"
@@ -3100,6 +3204,7 @@ namespace LLM_agent {
 		}
 
 		if (type == "move") {
+			close_windows(gwin);    // an open container window blocks walking
 			// Tile-based movement. Accepts EITHER a compass direction
 			//   {"type":"move","dir":"n|s|e|w|ne|nw|se|sw","steps":<n>}
 			// (walks <n> tiles that way, default 1), OR explicit GAME-TILE

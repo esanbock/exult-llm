@@ -1019,10 +1019,14 @@ def _recognize_place(objects: list, nearby: list, state: dict = None) -> str:
     def has(*words):
         return sum(1 for w in words if w in blob)
     # Signature clusters (need >=2 signals to avoid false positives).
-    if has("hay", "stall", "pitchfork", "trough", "horseshoe", "horse", "manger") >= 2:
-        return "the STABLES (hay/stalls/horse tack around you)"
-    if has("anvil", "forge", "bellows", "tongs", "smith", "furnace") >= 2:
+    # Smithy first: it has horseshoes and a water trough too, and was being
+    # called "the STABLES".
+    if has("anvil", "forge", "bellows", "tongs", "smith", "furnace", "firepit",
+           "sword blank") >= 2:
         return "a SMITHY / forge (anvil/tongs/forge)"
+    if (has("hay", "stall", "pitchfork", "trough", "horseshoe", "horse", "manger") >= 2
+            and (has("hay", "stall", "manger") >= 1 or "horse" in names)):
+        return "the STABLES (hay/stalls/horse tack around you)"
     if has("altar", "pew", "candelabra", "shrine", "reliquary") >= 2:
         return "a TEMPLE / shrine"
     if has("counter", "barrel", "keg", "mug", "tankard", "bottle", "bar") >= 2:
@@ -4821,6 +4825,23 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
             # first menu is a root, not nested under a prior conversation's topic.
             kb.begin_npc_conversation(tname)
         result = exult.talk(tname)
+        # The bridge says "starting" before the game decides whether they'll
+        # talk. Someone asleep, badly hurt or busy just barks ("Arghh") and
+        # no conversation opens - the model thought it had talked to them.
+        if isinstance(result, dict) and result.get("ok"):
+            time.sleep(0.6)
+            try:
+                _st = exult.observe()
+            except Exception:
+                _st = {}
+            if not _st.get("conversation_in_progress"):
+                _barks = [a.get("said", "") for a in (_st.get("ambient_speech") or [])
+                          if tname and tname.lower() in (a.get("who") or "").lower()]
+                result = {"ok": False, "error": (
+                    f"{tname or 'They'} didn't talk to you"
+                    + (f" - they only said {_barks[0]}" if _barks else "")
+                    + ". They may be asleep, badly hurt or busy: try someone "
+                    "else, or come back later.")}
     else:
         # If answering a dialogue choice, record which TOPIC branch we took for
         # the current NPC (builds the per-NPC dialogue tree of asked topics).
