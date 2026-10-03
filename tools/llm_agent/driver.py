@@ -5077,6 +5077,25 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         elif atype == "use":
             if _ok:
                 outcome = f" -> used {result.get('object', detail)}"
+                # "use cup" x12, then "use garbage": using a non-food item
+                # "succeeds" (its usecode runs), so the starving model never
+                # learned it hadn't eaten. Check the food level.
+                _f0 = (state.get("player") or {}).get("food")
+                _eating = any(w in (reason or "").lower()
+                              for w in ("eat", "food", "starv", "hungry"))
+                if _eating and _f0 is not None:
+                    try:
+                        _f1 = (exult.observe().get("player") or {}).get("food")
+                    except Exception:
+                        _f1 = None
+                    if _f1 is not None and _f1 <= _f0:
+                        outcome += " (did NOT feed you)"
+                        session["last_bump"] = (
+                            f"Using the {result.get('object', detail)} did NOT feed "
+                            f"you (food still {_f1}) - it isn't food. Eat real food "
+                            "from your pack (bread, apple, meat, fish...). If you "
+                            "have none, buy some where food is sold (an inn, tavern "
+                            "or market) or find some.")
             else:
                 _e = result.get("error", "") if isinstance(result, dict) else ""
                 outcome = f" -> could not use: {_e}" if _e else " -> could not use"
