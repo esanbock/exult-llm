@@ -2564,7 +2564,7 @@ namespace LLM_agent {
 				// single blind step said "ok" and went nowhere useful (once
 				// onto a forge's firepit).
 				const int far  = std::max(std::abs(dest.tx - at.tx), std::abs(dest.ty - at.ty));
-				if ((ddx || ddy) && gmap && far <= 3) {
+				if ((ddx || ddy) && gmap && far <= 6) {
 					const Tile_coord step(
 							(at.tx + ddx + c_num_tiles) % c_num_tiles,
 							(at.ty + ddy + c_num_tiles) % c_num_tiles, at.tz);

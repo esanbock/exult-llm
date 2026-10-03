@@ -4986,6 +4986,22 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
         # and repeated the same action for dozens of turns.
         _at = action.get("type") if isinstance(action, dict) else "action"
         session["last_bump"] = f"Your last action ({_at}) FAILED: {result['error']}"
+        if _at == "goto" and isinstance(action, dict):
+            # Can't walk to it - but if it's in view you can still look at it
+            # from here (the victim's corpse: "nothing inside to open"), which
+            # is usually what the walk was for.
+            _gn = action.get("name")
+            if not _gn and action.get("tx") is not None:
+                _pp = state.get("player") or {}
+                _gn = next((o.get("name") for o in (state.get("objects") or [])
+                            if _pp.get("tx", 0) + o.get("dx", 99) == action["tx"]
+                            and _pp.get("ty", 0) + o.get("dy", 99) == action["ty"]), None)
+            if _gn:
+                _ex = _examine_view(state, _gn, exult)
+                if _ex.get("found"):
+                    _hand_examine(session, kb, _ex, step)
+                    session["last_bump"] += (" You can still see it from here - a "
+                                             "close look is under \"examined\".")
         if (_at == "talk" and "not near enough" in result["error"]
                 and kb.forget_npc_pos(action.get("name", ""))):
             # Their remembered spot is stale; without this the model walked
