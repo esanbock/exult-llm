@@ -2569,7 +2569,18 @@ namespace LLM_agent {
 			}
 			const std::string onm = best->get_name();
 			const bool is_door_t = best->get_info().is_door();
+			const int  frame0    = best->get_framenum();
 			best->activate();    // toggles a door; opens a container/body
+			if (is_door_t && best->get_framenum() == frame0) {
+				// Nothing changed: the door is locked. Reporting "did open"
+				// here sent the model back to the same door for dozens of
+				// turns. Say so, and how to get through.
+				return "{\"ok\":false,\"error\":\"the " + json_escape(onm)
+					   + " didn't open - it's LOCKED. Try 'unlock' (uses a key "
+					     "you carry) or use a lockpick on it ({\\\"type\\\":\\\"use\\\","
+					     "\\\"name\\\":\\\"lockpick\\\",\\\"on\\\":\\\"door\\\"}), or find "
+					     "another way in or out.\",\"locked\":true}";
+			}
 			if (is_door_t) {
 				return "{\"ok\":true,\"did\":\"open\",\"target\":\""
 					   + json_escape(onm) + "\",\"kind\":\"door\"}";
@@ -2769,20 +2780,72 @@ namespace LLM_agent {
 			if (get_string(action_json, "on", on) && !on.empty()) {
 				std::string olow = on;
 				std::transform(olow.begin(), olow.end(), olow.begin(), ::tolower);
+				Game_object* found = nullptr;
 				std::vector<Actor*> people;
 				gwin->get_nearby_npcs(people);
 				for (Actor* a : people) {
 					std::string l = a ? a->get_name() : std::string();
 					std::transform(l.begin(), l.end(), l.begin(), ::tolower);
 					if (a && !l.empty() && l.find(olow) != std::string::npos) {
-						target = a;
+						found = a;
 						break;
 					}
 				}
+				// ...or a nearby THING: a lockpick or key used on a door or
+				// chest, a bucket on a well.
+				if (!found) {
+					Game_object_vector near;
+					Game_object::find_nearby(near, at, -1, 4, 128);
+					int nd = 1 << 30;
+					for (Game_object* o : near) {
+						if (!o || o == best || o->as_actor()) {
+							continue;
+						}
+						std::string l = o->get_name();
+						std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+						if (l.empty() || l.find(olow) == std::string::npos) {
+							continue;
+						}
+						const Tile_coord ot = o->get_tile();
+						const int d = std::abs(ot.tx - at.tx) + std::abs(ot.ty - at.ty);
+						if (d < nd) {
+							nd = d;
+							found = o;
+						}
+					}
+				}
+				if (!found) {
+					return "{\"ok\":false,\"error\":\"nothing called '" + json_escape(on)
+						   + "' within reach to use it on - stand next to it\"}";
+				}
+				target = found;
 			}
 			Usecode_machine* ucm = gwin->get_usecode();
 			if (ucm) {
 				ucm->intercept_click_on_item(target);
+			}
+			// Belt and braces: some items wait for a click in their own way
+			// (a lockpick hung the engine even with the intercept set). Queue a
+			// real left click on the target's spot on screen; if nothing waits
+			// for it, the main loop just "identifies" the target (shows its
+			// name) - harmless.
+			{
+				int gx = 0;
+				int gy = 0;
+				gwin->get_shape_location(target, gx, gy);
+				int sx = 0;
+				int sy = 0;
+				gwin->get_win()->game_to_screen(gx - 4, gy - 4, gwin->get_fastmouse(), sx, sy);
+				SDL_Event ev       = {};
+				ev.type            = SDL_EVENT_MOUSE_BUTTON_DOWN;
+				ev.button.button   = SDL_BUTTON_LEFT;
+				ev.button.down     = true;
+				ev.button.x        = static_cast<float>(sx);
+				ev.button.y        = static_cast<float>(sy);
+				SDL_PushEvent(&ev);
+				ev.type          = SDL_EVENT_MOUSE_BUTTON_UP;
+				ev.button.down   = false;
+				SDL_PushEvent(&ev);
 			}
 			// Double-click activation: runs the object's usecode (fill bucket,
 			// toggle gate, read sextant, board carriage/boat, etc.).
