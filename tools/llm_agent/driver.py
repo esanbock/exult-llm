@@ -3125,7 +3125,15 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 # Say it plainly: a silent goto->look left the model unaware
                 # its goto did nothing, so it kept re-issuing it. If the target
                 # is something visible, hand over the close look it wanted.
-                _ex = _examine_view(state, str(action.get("name") or ""), exult)
+                _exn = str(action.get("name") or "")
+                if not _exn and action.get("tx") is not None:
+                    # Coordinates of a thing (the portcullis tile): look at it.
+                    _exn = next((o.get("name") for o in (state.get("objects") or [])
+                                 if _px is not None
+                                 and abs(_px + o.get("dx", 99) - action["tx"]) <= 1
+                                 and abs(_py + o.get("dy", 99) - action.get("ty", _py)) <= 1
+                                 and not o.get("container")), "") or ""
+                _ex = _examine_view(state, _exn, exult) if _exn else {}
                 if _ex.get("found"):
                     _hand_examine(session, kb, _ex, step)
                 session["last_bump"] = (
