@@ -4913,6 +4913,38 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                                   result.get("toward_ty", result["ty"]),
                                   action.get("name") or "",
                                   (state.get("player") or {}).get("tz", 0) or 0)
+    if _atype == "goto" and isinstance(action, dict):
+        # Same destination, over and over, with no progress: the goal is
+        # blocked. qwen3.8 spent a full hour (200+ gotos) between a closed
+        # town gate and the wall stairs while an open lead sat in its prompt.
+        # Say so plainly and point at the leads - its call what to do.
+        _pp = state.get("player") or {}
+        if isinstance(result, dict) and result.get("tx") is not None:
+            _gt = (result.get("toward_tx", result["tx"]), result.get("toward_ty", result["ty"]))
+        elif action.get("tx") is not None:
+            _gt = (action["tx"], action.get("ty", _pp.get("ty", 0)))
+        else:
+            _gt = (_pp.get("tx", 0), _pp.get("ty", 0))
+        _gh = session.setdefault("goto_hist", [])
+        _gh.append(_gt)
+        del _gh[:-24]
+        if (len(_gh) >= 20 and (state.get("turns_since_progress") or 0) >= 20
+                and step - session.get("blocked_goal_warned", -99) >= 12):
+            _xs = sorted(g[0] for g in _gh)
+            _ys = sorted(g[1] for g in _gh)
+            _cx, _cy = _xs[len(_xs) // 2], _ys[len(_ys) // 2]
+            if sum(1 for g in _gh if max(abs(g[0] - _cx), abs(g[1] - _cy)) <= 12) >= 16:
+                session["blocked_goal_warned"] = step
+                _leads = kb.open_leads(5)
+                session["last_bump"] = (
+                    f"For your last {len(_gh)} moves you've been trying to get "
+                    f"somewhere around ({_cx},{_cy}) and nothing has changed. That "
+                    "goal isn't working right now: the way is likely blocked (a "
+                    "closed gate, a locked door) or you need something first. Set "
+                    "it aside and do something else - "
+                    + ("follow a lead: " + "; ".join(_leads) if _leads else
+                       "talk to people you haven't met, or explore elsewhere") + ".")
+                print(f"[{step:03d}] blocked-goal: {len(_gh)} gotos near ({_cx},{_cy})")
     if (_atype in ("open", "unlock") and isinstance(result, dict) and result.get("ok")):
         kb.note_opened(str(result.get("target") or action.get("name") or "chest"))
     if (_atype == "goto" and isinstance(result, dict) and result.get("arrived")
