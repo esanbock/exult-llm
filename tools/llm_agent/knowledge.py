@@ -78,6 +78,7 @@ class KnowledgeBase:
         # Leads: people/places an NPC told us to go to ("speak with Gilberto",
         # "ask Christopher's son"), until we meet/visit them or they expire.
         self.leads: list[dict] = []
+        self.opened_things: list[str] = []    # names of containers/doors opened
         # Rolling EPISODIC SUMMARY: a compact running gist of older events that
         # have scrolled out of the raw dialogue/action windows. This is how we
         # keep clues/story alive within a bounded token budget - old detail is
@@ -110,6 +111,7 @@ class KnowledgeBase:
                 "hints": self.hints,
                 "observations": self.observations,
                 "leads": self.leads,
+                "opened_things": self.opened_things,
                 "episodic_summary": self.episodic_summary,
                 "tool_stats": self.tool_stats,
                 "topics": self.topics,
@@ -146,6 +148,14 @@ class KnowledgeBase:
             kb.hints = list(data.get("hints", []))
             kb.observations = list(data.get("observations", []))
             kb.leads = list(data.get("leads", []))
+            kb.opened_things = list(data.get("opened_things", []))
+            # Re-read what people said, so leads the tracker learned to spot
+            # later (e.g. "the key to Father's chest") aren't lost for
+            # dialogue heard before it existed. Resolved ones are skipped.
+            for _nm, _rec in kb.npcs.items():
+                for _t in _rec.get("transcript", []):
+                    if _t.get("said"):
+                        kb.note_leads(_nm, _t["said"])
             kb.episodic_summary = str(data.get("episodic_summary", "") or "")
             ts = data.get("tool_stats") or {}
             kb.tool_stats = {"turns": int(ts.get("turns", 0)),
@@ -674,6 +684,10 @@ class KnowledgeBase:
         (r"\bask " + _LEAD_NAME + _LEAD_DESC, "person"),
         (r"\b(?:find|seek out|seek|visit|look for|see) " + _LEAD_NAME + _LEAD_DESC, "person"),
         (r"\blook in the ([a-z]+)", "place"),
+        # "That looks like the key to Father's chest" - where an item belongs
+        # is a lead too (Spark said exactly this; the model never acted on it).
+        (r"\bkey to (?:the |my |his |her |thy )?((?:[A-Za-z]+'s )?(?:chest|door|box|room|house|cell|gate))",
+         "thing"),
     ]
     _LEAD_STOP = {"Avatar", "Thou", "Thee", "Thy", "I", "Yes", "No", "The", "A",
                   "Lord", "Lady", "Sir", "Milord", "Milady", "Father", "Mother",
@@ -685,7 +699,7 @@ class KnowledgeBase:
         for pat, kind in self._LEAD_PATTERNS:
             for m in _re.finditer(pat, said or ""):
                 who = m.group(1).strip()
-                if not who or who.split("'")[0] in self._LEAD_STOP:
+                if not who or (kind != "thing" and who.split("'")[0] in self._LEAD_STOP):
                     continue
                 if (npc or "").lower() == who.lower() or self._lead_done(who, kind):
                     continue
@@ -698,8 +712,17 @@ class KnowledgeBase:
                                    "said": said[i:m.end() + 60].strip()})
         self.leads = self.leads[-12:]
 
+    def note_opened(self, name: str) -> None:
+        """A container/door was opened or unlocked - resolves 'key to X's chest'."""
+        if name and name.lower() not in self.opened_things:
+            self.opened_things.append(name.lower())
+            self.opened_things = self.opened_things[-50:]
+
     def _lead_done(self, who: str, kind: str) -> bool:
         w = who.lower()
+        if kind == "thing":
+            noun = w.split()[-1]
+            return any(noun in o for o in self.opened_things)
         if kind == "place":
             return any(w in (r.get("name") or "").lower() for r in self.places.values())
         if "'s " in w:
@@ -729,7 +752,7 @@ class KnowledgeBase:
         # son" while the model was still hunting for him).
         self.leads = [l for l in self.leads
                       if not self._lead_done(l["who"], l["kind"])
-                      and ("'s " in l["who"]
+                      and ("'s " in l["who"] or l["kind"] == "thing"
                            or self.turn_counter - l.get("turn", 0) <= self.LEAD_TTL)]
         out = []
         for l in self.leads[-limit:]:

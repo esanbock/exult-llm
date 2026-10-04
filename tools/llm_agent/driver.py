@@ -1864,6 +1864,12 @@ def _examine_view(state: dict, name: str, exult=None) -> dict:
         what = "a body with nothing on it to take"
     elif t.get("container"):
         what = "a container you can open"
+    elif any(w in t["name"].lower() for w in ("portcullis", "gateway")) or (
+            "gate" in t["name"].lower() and "fence" not in t["name"].lower()):
+        what = ("a gate. If you can't walk through it, it's closed - walking at "
+                "it or 'use' won't open it. Gates are opened by whoever controls "
+                "them: a guard, or a lever/winch nearby. Look for one, or find "
+                "out what they need from you.")
     elif any(w in t["name"].lower() for w in _READABLE_WORDS):
         d = max(abs(tdx), abs(tdy))
         what = "something with writing on it"
@@ -4907,6 +4913,8 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                                   result.get("toward_ty", result["ty"]),
                                   action.get("name") or "",
                                   (state.get("player") or {}).get("tz", 0) or 0)
+    if (_atype in ("open", "unlock") and isinstance(result, dict) and result.get("ok")):
+        kb.note_opened(str(result.get("target") or action.get("name") or "chest"))
     if (_atype == "goto" and isinstance(result, dict) and result.get("arrived")
             and action.get("name")):
         # Walking up to a visible thing is how the model tries to look at it
