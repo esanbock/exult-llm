@@ -5090,6 +5090,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 "old spot is forgotten. Ask someone where they are, or look "
                 "for them at home, at work or at the inn.")
             print(f"[{step:03d}] forgot stale last-seen spot for {action.get('name')}")
+        if (_at == "goto" and "no path" in result["error"]
+                and "[explore" in (reason or "") and action.get("tx") is not None):
+            # An explore target that can't be reached (beyond a wall, over
+            # water) stayed "unexplored" and was picked again and again - ~200
+            # turns of "no path". Count it as explored so explore moves on.
+            kb.record_visit(action["tx"], action["ty"])
+            session["last_bump"] += (" That unexplored spot can't be reached; "
+                                     "explore again to try somewhere else.")
         if "not on your map" in result["error"]:
             # Count tries per name: "goto Chantu" failed 61 times in one hour.
             _nm = str(action.get("name") or "").lower()
