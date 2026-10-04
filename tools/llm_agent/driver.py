@@ -4954,7 +4954,14 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                        "talk to people you haven't met, or explore elsewhere") + ".")
                 print(f"[{step:03d}] blocked-goal: {len(_gh)} gotos near ({_cx},{_cy})")
     if (_atype in ("open", "unlock") and isinstance(result, dict) and result.get("ok")):
-        kb.note_opened(str(result.get("target") or action.get("name") or "chest"))
+        _what = str(result.get("target") or action.get("name") or "")
+        if _atype == "unlock":
+            # The engine's unlock targets the nearest locked thing; name it
+            # from what's in view if the result doesn't.
+            _what = _what or next((o.get("name") for o in (state.get("objects") or [])
+                                   if "locked" in (o.get("name") or "").lower()), "chest")
+            _what = "unlocked " + _what
+        kb.note_opened(_what or "container")
     if (_atype == "goto" and isinstance(result, dict) and result.get("arrived")
             and action.get("name")):
         # Walking up to a visible thing is how the model tries to look at it

@@ -721,8 +721,11 @@ class KnowledgeBase:
     def _lead_done(self, who: str, kind: str) -> bool:
         w = who.lower()
         if kind == "thing":
+            # "the key to Father's chest" is done when a KEY unlocked one -
+            # opening any old chest (a sextant and a gold bar across town)
+            # wrongly closed it.
             noun = w.split()[-1]
-            return any(noun in o for o in self.opened_things)
+            return any(o.startswith("unlocked ") and noun in o for o in self.opened_things)
         if kind == "place":
             return any(w in (r.get("name") or "").lower() for r in self.places.values())
         if "'s " in w:
