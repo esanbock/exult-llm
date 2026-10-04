@@ -5084,6 +5084,16 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                 "for them at home, at work or at the inn.")
             print(f"[{step:03d}] forgot stale last-seen spot for {action.get('name')}")
         if "not on your map" in result["error"]:
+            # Count tries per name: "goto Chantu" failed 61 times in one hour.
+            _nm = str(action.get("name") or "").lower()
+            _uc = session.setdefault("unmapped_goto", {})
+            _uc[_nm] = _uc.get(_nm, 0) + 1
+            if _uc[_nm] >= 3:
+                session["last_bump"] += (
+                    f" This is attempt #{_uc[_nm]} at goto '{_nm}' - it CANNOT "
+                    "work until you have actually seen them/it. Stop retrying; "
+                    "go look (explore, or walk into buildings you haven't "
+                    "entered) or do something else.")
             session["last_bump"] += (
                 " If you've only HEARD of the place, use explore (e.g. "
                 "{\"type\":\"explore\",\"dir\":\"w\"}) to search unexplored "
