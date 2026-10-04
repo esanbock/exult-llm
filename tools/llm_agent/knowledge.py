@@ -703,14 +703,34 @@ class KnowledgeBase:
         if kind == "place":
             return any(w in (r.get("name") or "").lower() for r in self.places.values())
         if "'s " in w:
-            return False    # "Christopher's son" - no name to check; expires
+            # "Christopher's son": no name to check. Done once we've talked to
+            # someone who speaks of their father/mother (Spark: "Father was
+            # the blacksmith"), i.e. probably the person meant.
+            rel = w.split("'s ", 1)[1]
+            inverse = {"son": ("father", "mother"), "daughter": ("father", "mother"),
+                       "wife": ("husband",), "husband": ("wife",),
+                       "father": ("my son", "my daughter"), "mother": ("my son", "my daughter"),
+                       "brother": ("brother",), "sister": ("sister",)}.get(rel)
+            if not inverse:
+                return False
+            for rec in self.npcs.values():
+                if rec.get("times_talked", 0) <= 0:
+                    continue
+                said = " ".join(t.get("said", "") for t in rec.get("transcript", [])).lower()
+                if any(word in said for word in inverse):
+                    return True
+            return False
         rec = next((r for k, r in self.npcs.items() if k.lower() == w), None)
         return bool(rec and rec.get("times_talked", 0) > 0)
 
     def open_leads(self, limit: int = 5) -> list:
+        # Named leads expire after LEAD_TTL turns; "X's son"-style ones stay
+        # until resolved (expiring the unnamed one is what lost "Christopher's
+        # son" while the model was still hunting for him).
         self.leads = [l for l in self.leads
                       if not self._lead_done(l["who"], l["kind"])
-                      and self.turn_counter - l.get("turn", 0) <= self.LEAD_TTL]
+                      and ("'s " in l["who"]
+                           or self.turn_counter - l.get("turn", 0) <= self.LEAD_TTL)]
         out = []
         for l in self.leads[-limit:]:
             what = l["who"] + (f" ({l['desc']})" if l.get("desc") else "")
@@ -901,12 +921,20 @@ class KnowledgeBase:
                     break
             # 2) match against what they said / notes (e.g. "mayor" -> Finnigan
             #    who said "I am the Mayor"), so titles/roles resolve too.
+            # Only lines where they describe THEMSELVES - matching anything
+            # they said made "Christopher's son" resolve to Finnigan (who only
+            # mentioned him), and the model re-read the Mayor's transcript as
+            # "the son's" record for 100+ turns.
             if rec is None and low:
+                import re as _re
+                _selfpat = _re.compile(
+                    r"\b(?:i am|i'm|my name is|i am called|i have always been "
+                    r"called|i work as|i am the)\b[^.!?\"]{0,40}?"
+                    + _re.escape(low))
                 for v in self.npcs.values():
-                    hay = " ".join(
-                        [t.get("said", "") for t in v.get("transcript", [])]
-                        + list(v.get("notes", []))).lower()
-                    if low in hay:
+                    lines = [t.get("said", "") for t in v.get("transcript", [])]
+                    lines += [str(n) for n in v.get("notes", [])]
+                    if any(_selfpat.search(l.lower()) for l in lines):
                         rec = v
                         break
         if rec is None:

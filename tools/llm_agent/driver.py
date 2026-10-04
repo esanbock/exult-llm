@@ -67,6 +67,13 @@ step. If you've been in one building/spot for many turns, you are almost
 certainly done there - LEAVE and advance. The world is enormous; the story is
 out there, not in this room.
 
+Finding someone you only know by description ("the blacksmith's son", "the
+mayor"): you can't type a question - conversations offer fixed topics. Talk to
+people you haven't met yet (names appear once you've met them) and choose the
+topics that relate, and look inside homes and workplaces; people keep schedules,
+so they're at home, at work or at the inn depending on the hour. Re-reading
+your notes won't reveal what you were never told.
+
 General principles (apply to ANY situation, not one specific puzzle):
   * INVESTIGATE by talking: NPCs are your main source of information and quests.
     Ask them their name, job, and EVERY topic offered. Asking one topic often
@@ -3495,6 +3502,19 @@ def _do_turn(args, window, ollama, exult, step, recent_positions, kb, session) -
                     rec = {"topic": trec["name"], "known": True,
                            "notes": trec.get("notes", [])}
         session["recalled"] = rec
+        # Same subject, same answer as last time: say so. qwen3.8 recalled
+        # "Christopher's son" every turn for 100+ turns hoping notes would
+        # reveal where he is.
+        _sig = json.dumps(rec, sort_keys=True, default=str)[:4000]
+        _prev = session.setdefault("recall_seen", {})
+        if who and _prev.get(who.lower()) == _sig:
+            session["last_bump"] = (
+                f"You already recalled '{who}' and nothing has changed - your "
+                "notes can't tell you more. Find out by DOING something: talk to "
+                "people you haven't met (or ask those you have about the "
+                "murder and the people involved), or explore buildings where "
+                "they might live or work.")
+        _prev[who.lower()] = _sig
         kb.record_action(f"recalled {who}")
         if window.available:
             window.set_action(f"[recall] {who}: {rec}")
